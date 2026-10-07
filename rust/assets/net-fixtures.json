@@ -1,0 +1,958 @@
+{
+  "generated_from": "src/net/netmatch.js (sliced packers)",
+  "fixtures": {
+    "actors": {
+      "kid_idle": {
+        "input": {
+          "nid": 0,
+          "pos": {
+            "x": 0,
+            "y": 0,
+            "z": 0,
+            "isVector3": true
+          },
+          "vel": {
+            "x": 0,
+            "y": 0,
+            "z": 0,
+            "isVector3": true
+          },
+          "yaw": 0,
+          "aimYaw": 0,
+          "aimPitch": 0,
+          "hp": 100,
+          "ink": 100,
+          "special": 0,
+          "stats": {
+            "turf": 0
+          },
+          "netTp": 0,
+          "alive": true,
+          "form": "kid",
+          "submerged": false,
+          "climbing": false,
+          "grounded": true,
+          "groundTeam": 0,
+          "onEnemy": false,
+          "invuln": 0,
+          "specialActive": null,
+          "superJumpState": null,
+          "weapon": {
+            "kind": "shooter"
+          },
+          "smoothY": 0,
+          "wallN": null,
+          "weaponRunner": {
+            "charging": false,
+            "rolling": false,
+            "streaming": false,
+            "dodge": false,
+            "aimingSub": false,
+            "firingT": 0,
+            "flick": -1,
+            "slosh": -1,
+            "lockT": 0,
+            "charge": 0,
+            "burstFrac": 0
+          }
+        },
+        "wire": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          17,
+          100,
+          100,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "wire_str": "[0,0,0,0,0,0,0,0,0,0,17,100,100,0,0,0,0,0,0,0,0,0,0,0]",
+        "unpacked": {
+          "t": 12.345,
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "vx": 0,
+          "vy": 0,
+          "vz": 0,
+          "yaw": 0,
+          "aimYaw": 0,
+          "aimPitch": 0,
+          "f": 17,
+          "hp": 100,
+          "ink": 100,
+          "sp": 0,
+          "ch": 0,
+          "turf": 0,
+          "tp": 0,
+          "wx": 0,
+          "wy": 0,
+          "wz": 0,
+          "lock": 0,
+          "ks": 0,
+          "spx": 0,
+          "spst": 0
+        }
+      },
+      "squid_grounded_enemy": {
+        "input": {
+          "nid": 0,
+          "pos": {
+            "x": 1.2345678,
+            "y": 2,
+            "z": -3.456789,
+            "isVector3": true
+          },
+          "vel": {
+            "x": 0.5,
+            "y": -9.81,
+            "z": 1.5,
+            "isVector3": true
+          },
+          "yaw": 0.7123456,
+          "aimYaw": -1.1,
+          "aimPitch": 0.33,
+          "hp": 61.25,
+          "ink": 80,
+          "special": 0,
+          "stats": {
+            "turf": 4096.5
+          },
+          "netTp": 0,
+          "alive": true,
+          "form": "squid",
+          "submerged": true,
+          "climbing": false,
+          "grounded": true,
+          "groundTeam": 2,
+          "onEnemy": true,
+          "invuln": 0,
+          "specialActive": null,
+          "superJumpState": null,
+          "weapon": {
+            "kind": "shooter"
+          },
+          "smoothY": 0,
+          "wallN": null,
+          "weaponRunner": {
+            "charging": false,
+            "rolling": false,
+            "streaming": false,
+            "dodge": false,
+            "aimingSub": false,
+            "firingT": 0,
+            "flick": -1,
+            "slosh": -1,
+            "lockT": 0,
+            "charge": 0,
+            "burstFrac": 0
+          },
+          "turf": 0
+        },
+        "wire": [
+          0,
+          1.23,
+          2,
+          -3.46,
+          0.5,
+          -9.81,
+          1.5,
+          0.712,
+          -1.1,
+          0.33,
+          524375,
+          61,
+          80,
+          0,
+          0,
+          4097,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "wire_str": "[0,1.23,2,-3.46,0.5,-9.81,1.5,0.712,-1.1,0.33,524375,61,80,0,0,4097,0,0,0,0,0,0,0,0]",
+        "unpacked": {
+          "t": 12.345,
+          "x": 1.23,
+          "y": 2,
+          "z": -3.46,
+          "vx": 0.5,
+          "vy": -9.81,
+          "vz": 1.5,
+          "yaw": 0.712,
+          "aimYaw": -1.1,
+          "aimPitch": 0.33,
+          "f": 524375,
+          "hp": 61,
+          "ink": 80,
+          "sp": 0,
+          "ch": 0,
+          "turf": 4097,
+          "tp": 0,
+          "wx": 0,
+          "wy": 0,
+          "wz": 0,
+          "lock": 0,
+          "ks": 0,
+          "spx": 0,
+          "spst": 0
+        }
+      },
+      "firing_invuln_gt1": {
+        "input": {
+          "nid": 0,
+          "pos": {
+            "x": 0,
+            "y": 0,
+            "z": 0,
+            "isVector3": true
+          },
+          "vel": {
+            "x": 0,
+            "y": 0,
+            "z": 0,
+            "isVector3": true
+          },
+          "yaw": 0,
+          "aimYaw": 0,
+          "aimPitch": 0,
+          "hp": 100,
+          "ink": 100,
+          "special": 0,
+          "stats": {
+            "turf": 4096.5
+          },
+          "netTp": 0,
+          "alive": true,
+          "form": "kid",
+          "submerged": false,
+          "climbing": false,
+          "grounded": true,
+          "groundTeam": 1,
+          "onEnemy": false,
+          "invuln": 1,
+          "specialActive": null,
+          "superJumpState": null,
+          "weapon": {
+            "kind": "shooter"
+          },
+          "smoothY": 0,
+          "wallN": null,
+          "weaponRunner": {
+            "charging": false,
+            "rolling": false,
+            "streaming": false,
+            "dodge": false,
+            "aimingSub": false,
+            "firingT": 0.05,
+            "flick": -1,
+            "slosh": -1,
+            "lockT": 0,
+            "charge": 0,
+            "burstFrac": 0
+          }
+        },
+        "wire": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          266289,
+          100,
+          100,
+          0,
+          0,
+          4097,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "wire_str": "[0,0,0,0,0,0,0,0,0,0,266289,100,100,0,0,4097,0,0,0,0,0,0,0,0]",
+        "unpacked": {
+          "t": 12.345,
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "vx": 0,
+          "vy": 0,
+          "vz": 0,
+          "yaw": 0,
+          "aimYaw": 0,
+          "aimPitch": 0,
+          "f": 266289,
+          "hp": 100,
+          "ink": 100,
+          "sp": 0,
+          "ch": 0,
+          "turf": 4097,
+          "tp": 0,
+          "wx": 0,
+          "wy": 0,
+          "wz": 0,
+          "lock": 0,
+          "ks": 0,
+          "spx": 0,
+          "spst": 0
+        }
+      },
+      "respawn_tp_jump": {
+        "input": {
+          "nid": 0,
+          "pos": {
+            "x": 0,
+            "y": 0,
+            "z": 0,
+            "isVector3": true
+          },
+          "vel": {
+            "x": 0,
+            "y": 0,
+            "z": 0,
+            "isVector3": true
+          },
+          "yaw": 0,
+          "aimYaw": 0,
+          "aimPitch": 0,
+          "hp": 0,
+          "ink": 100,
+          "special": 0,
+          "stats": {
+            "turf": 0
+          },
+          "netTp": 7,
+          "alive": false,
+          "form": "kid",
+          "submerged": false,
+          "climbing": false,
+          "grounded": true,
+          "groundTeam": 0,
+          "onEnemy": false,
+          "invuln": 0,
+          "specialActive": null,
+          "superJumpState": null,
+          "weapon": {
+            "kind": "shooter"
+          },
+          "smoothY": 0,
+          "wallN": null,
+          "weaponRunner": {
+            "charging": false,
+            "rolling": false,
+            "streaming": false,
+            "dodge": false,
+            "aimingSub": false,
+            "firingT": 0,
+            "flick": -1,
+            "slosh": -1,
+            "lockT": 0,
+            "charge": 0,
+            "burstFrac": 0
+          }
+        },
+        "wire": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          16,
+          0,
+          100,
+          0,
+          0,
+          0,
+          7,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "wire_str": "[0,0,0,0,0,0,0,0,0,0,16,0,100,0,0,0,7,0,0,0,0,0,0,0]",
+        "unpacked": {
+          "t": 12.345,
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "vx": 0,
+          "vy": 0,
+          "vz": 0,
+          "yaw": 0,
+          "aimYaw": 0,
+          "aimPitch": 0,
+          "f": 16,
+          "hp": 0,
+          "ink": 100,
+          "sp": 0,
+          "ch": 0,
+          "turf": 0,
+          "tp": 7,
+          "wx": 0,
+          "wy": 0,
+          "wz": 0,
+          "lock": 0,
+          "ks": 0,
+          "spx": 0,
+          "spst": 0
+        }
+      },
+      "full_flags": {
+        "input": {
+          "nid": 0,
+          "pos": {
+            "x": 0,
+            "y": 0,
+            "z": 0,
+            "isVector3": true
+          },
+          "vel": {
+            "x": 0,
+            "y": 0,
+            "z": 0,
+            "isVector3": true
+          },
+          "yaw": 0,
+          "aimYaw": 0,
+          "aimPitch": 0,
+          "hp": 100,
+          "ink": 100,
+          "special": 0,
+          "stats": {
+            "turf": 0
+          },
+          "netTp": 0,
+          "alive": true,
+          "form": "squid",
+          "submerged": true,
+          "climbing": true,
+          "grounded": true,
+          "groundTeam": 2,
+          "onEnemy": true,
+          "invuln": 1,
+          "specialActive": {
+            "def": 1
+          },
+          "superJumpState": {
+            "phase": "flight"
+          },
+          "weapon": {
+            "kind": "shooter"
+          },
+          "smoothY": 0,
+          "wallN": {
+            "x": 0,
+            "y": 1,
+            "z": 0,
+            "isVector3": true
+          },
+          "weaponRunner": {
+            "charging": true,
+            "rolling": true,
+            "streaming": true,
+            "dodge": true,
+            "aimingSub": true,
+            "firingT": 0.05,
+            "flick": 0.5,
+            "slosh": 0.5,
+            "lockT": 1.2,
+            "charge": 0.7,
+            "burstFrac": 0.3
+          }
+        },
+        "wire": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1032159,
+          100,
+          100,
+          0,
+          0.3,
+          0,
+          0,
+          0,
+          1,
+          0,
+          1.2,
+          0,
+          0,
+          0
+        ],
+        "wire_str": "[0,0,0,0,0,0,0,0,0,0,1032159,100,100,0,0.3,0,0,0,1,0,1.2,0,0,0]",
+        "unpacked": {
+          "t": 12.345,
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "vx": 0,
+          "vy": 0,
+          "vz": 0,
+          "yaw": 0,
+          "aimYaw": 0,
+          "aimPitch": 0,
+          "f": 1032159,
+          "hp": 100,
+          "ink": 100,
+          "sp": 0,
+          "ch": 0.3,
+          "turf": 0,
+          "tp": 0,
+          "wx": 0,
+          "wy": 1,
+          "wz": 0,
+          "lock": 1.2,
+          "ks": 0,
+          "spx": 0,
+          "spst": 0
+        }
+      },
+      "round_edges": {
+        "input": {
+          "nid": 0,
+          "pos": {
+            "x": 0,
+            "y": 0.125,
+            "z": -0.125,
+            "isVector3": true
+          },
+          "vel": {
+            "x": 0.0005,
+            "y": -0.0005,
+            "z": 0.005,
+            "isVector3": true
+          },
+          "yaw": 0.0005,
+          "aimYaw": -0.0005,
+          "aimPitch": 0.125,
+          "hp": 61.5,
+          "ink": 0.5,
+          "special": 0,
+          "stats": {
+            "turf": 0
+          },
+          "netTp": 0,
+          "alive": true,
+          "form": "kid",
+          "submerged": false,
+          "climbing": false,
+          "grounded": true,
+          "groundTeam": 0,
+          "onEnemy": false,
+          "invuln": 0,
+          "specialActive": null,
+          "superJumpState": null,
+          "weapon": {
+            "kind": "shooter"
+          },
+          "smoothY": 0,
+          "wallN": null,
+          "weaponRunner": {
+            "charging": false,
+            "rolling": false,
+            "streaming": false,
+            "dodge": false,
+            "aimingSub": false,
+            "firingT": 0,
+            "flick": -1,
+            "slosh": -1,
+            "lockT": 0,
+            "charge": 0,
+            "burstFrac": 0
+          }
+        },
+        "wire": [
+          0,
+          0,
+          0.13,
+          -0.12,
+          0,
+          0,
+          0.01,
+          0.001,
+          0,
+          0.125,
+          17,
+          62,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "wire_str": "[0,0,0.13,-0.12,0,0,0.01,0.001,0,0.125,17,62,1,0,0,0,0,0,0,0,0,0,0,0]",
+        "unpacked": {
+          "t": 12.345,
+          "x": 0,
+          "y": 0.13,
+          "z": -0.12,
+          "vx": 0,
+          "vy": 0,
+          "vz": 0.01,
+          "yaw": 0.001,
+          "aimYaw": 0,
+          "aimPitch": 0.125,
+          "f": 17,
+          "hp": 62,
+          "ink": 1,
+          "sp": 0,
+          "ch": 0,
+          "turf": 0,
+          "tp": 0,
+          "wx": 0,
+          "wy": 0,
+          "wz": 0,
+          "lock": 0,
+          "ks": 0,
+          "spx": 0,
+          "spst": 0
+        }
+      }
+    },
+    "tick": {
+      "guest": {
+        "wire_str": "{\"k\":\"t\",\"ts\":12.345,\"a\":[[0,0,0,0,0,0,0,0,0,0,17,100,100,0,0,0,0,0,0,0,0,0,0,0],[0,1.23,2,-3.46,0.5,-9.81,1.5,0.712,-1.1,0.33,524375,61,80,0,0,4097,0,0,0,0,0,0,0,0]]}",
+        "ts": 12.345,
+        "actorNames": [
+          "kid_idle",
+          "squid_grounded_enemy"
+        ]
+      },
+      "host": {
+        "wire_str": "{\"k\":\"t\",\"ts\":12.345,\"a\":[[0,0,0,0,0,0,0,0,0,0,17,100,100,0,0,0,0,0,0,0,0,0,0,0],[0,1.23,2,-3.46,0.5,-9.81,1.5,0.712,-1.1,0.33,524375,61,80,0,0,4097,0,0,0,0,0,0,0,0]],\"c\":[\"playing\",90]}",
+        "ts": 12.345,
+        "clock": [
+          "playing",
+          90
+        ],
+        "actorNames": [
+          "kid_idle",
+          "squid_grounded_enemy"
+        ]
+      },
+      "with_events": {
+        "wire_str": "{\"k\":\"t\",\"ts\":12.345,\"a\":[[0,0,0,0,0,0,0,0,0,0,17,100,100,0,0,0,0,0,0,0,0,0,0,0],[0,1.23,2,-3.46,0.5,-9.81,1.5,0.712,-1.1,0.33,524375,61,80,0,0,4097,0,0,0,0,0,0,0,0]],\"e\":[[12.34,\"s\",0,0,0,0.9,1,0.123,0,0,0,0,0],[12.345,\"tr\",0,\"fire\",0]]}",
+        "ts": 12.345,
+        "actorNames": [
+          "kid_idle",
+          "squid_grounded_enemy"
+        ]
+      }
+    },
+    "events": {
+      "splat": {
+        "wire": [
+          "s",
+          1.23,
+          2,
+          -3.46,
+          0.9,
+          1,
+          0.123,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "wire_str": "[\"s\",1.23,2,-3.46,0.9,1,0.123,0,0,0,0,0]"
+      },
+      "splat_stretch": {
+        "wire": [
+          "s",
+          0,
+          0,
+          0,
+          1,
+          0,
+          0.5,
+          "blast",
+          0.5,
+          0,
+          0.5,
+          1.5
+        ],
+        "wire_str": "[\"s\",0,0,0,1,0,0.5,\"blast\",0.5,0,0.5,1.5]"
+      },
+      "proj": {
+        "wire": [
+          "p",
+          3,
+          "shot",
+          "shooter",
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          0,
+          1.235,
+          0.13,
+          0.9,
+          0.4,
+          1,
+          0.02,
+          0.3,
+          0,
+          0.1,
+          0.8,
+          1.3,
+          0.035,
+          26,
+          0.3,
+          3
+        ],
+        "wire_str": "[\"p\",3,\"shot\",\"shooter\",1,2,3,4,5,6,0,1.235,0.13,0.9,0.4,1,0.02,0.3,0,0.1,0.8,1.3,0.035,26,0.3,3]"
+      },
+      "proj_blast": {
+        "wire": [
+          "p",
+          0,
+          "blast",
+          "splasher",
+          -2.5,
+          1.5,
+          0,
+          0,
+          7.2,
+          -3,
+          0.25,
+          0.8,
+          0,
+          1.25,
+          0.6,
+          22,
+          0.05,
+          0,
+          1,
+          0.2,
+          1,
+          2,
+          0,
+          12,
+          0.5,
+          0
+        ],
+        "wire_str": "[\"p\",0,\"blast\",\"splasher\",-2.5,1.5,0,0,7.2,-3,0.25,0.8,0,1.25,0.6,22,0.05,0,1,0.2,1,2,0,12,0.5,0]"
+      },
+      "bomb": {
+        "wire": [
+          "b",
+          1,
+          "bomb",
+          0.5,
+          1.5,
+          -2.5,
+          3,
+          4,
+          -1
+        ],
+        "wire_str": "[\"b\",1,\"bomb\",0.5,1.5,-2.5,3,4,-1]"
+      },
+      "kit": {
+        "wire": [
+          "k",
+          2,
+          "mitts",
+          [
+            0.5,
+            1.25,
+            0
+          ]
+        ],
+        "wire_str": "[\"k\",2,\"mitts\",[0.5,1.25,0]]"
+      },
+      "zone": {
+        "wire": [
+          "z",
+          [
+            "zc",
+            1,
+            0
+          ]
+        ],
+        "wire_str": "[\"z\",[\"zc\",1,0]]"
+      }
+    },
+    "trig": {
+      "num": {
+        "input": 0.123456,
+        "wire": 0.123,
+        "wire_str": "0.123",
+        "unpacked": 0.123
+      },
+      "null": {
+        "input": null,
+        "wire": 0,
+        "wire_str": "0"
+      },
+      "obj": {
+        "input": {
+          "amp": 0.123456,
+          "hand": 1
+        },
+        "wire": {
+          "amp": 0.123,
+          "hand": 1
+        },
+        "wire_str": "{\"amp\":0.123,\"hand\":1}",
+        "unpacked": {
+          "amp": 0.123,
+          "hand": 1
+        }
+      },
+      "obj_nofloat": {
+        "input": {
+          "tag": "x",
+          "amp": 0.5
+        },
+        "wire": {
+          "amp": 0.5
+        },
+        "wire_str": "{\"amp\":0.5}",
+        "unpacked": {
+          "amp": 0.5
+        }
+      }
+    },
+    "ev": {
+      "splatted": {
+        "wire": {
+          "victim": {
+            "n": 2
+          },
+          "attacker": {
+            "n": 0
+          },
+          "cause": "shooter",
+          "pos": [
+            1.5,
+            2.5,
+            -3.5
+          ],
+          "amount": 0.123,
+          "swim": true
+        },
+        "wire_str": "{\"victim\":{\"n\":2},\"attacker\":{\"n\":0},\"cause\":\"shooter\",\"pos\":[1.5,2.5,-3.5],\"amount\":0.123,\"swim\":true}",
+        "unpacked_keys": [
+          "victim",
+          "attacker",
+          "cause",
+          "pos",
+          "amount",
+          "swim"
+        ]
+      },
+      "respawn": {
+        "wire": {
+          "actor": {
+            "n": 2
+          }
+        },
+        "wire_str": "{\"actor\":{\"n\":2}}",
+        "unpacked_keys": [
+          "actor"
+        ]
+      },
+      "weapon_fire": {
+        "wire": {
+          "pos": [
+            1,
+            2,
+            3
+          ],
+          "dir": [
+            0,
+            0,
+            -1
+          ],
+          "spread": 0.035,
+          "type": "shot"
+        },
+        "wire_str": "{\"pos\":[1,2,3],\"dir\":[0,0,-1],\"spread\":0.035,\"type\":\"shot\"}"
+      }
+    },
+    "msgs": {
+      "hit": "{\"k\":\"hit\",\"v\":2,\"a\":0,\"d\":12.35,\"w\":\"shooter\"}",
+      "hit_no_w": "{\"k\":\"hit\",\"v\":2,\"a\":0,\"d\":36}",
+      "dh": "{\"k\":\"dh\",\"kind\":\"subs\",\"id\":9,\"d\":4}",
+      "bhit": "{\"k\":\"bhit\",\"a\":1,\"d\":20,\"weak\":1,\"w\":\"crab\",\"c\":3}",
+      "bhit_boss": "{\"k\":\"bhit\",\"a\":1,\"d\":30,\"weak\":0,\"w\":\"shooter\",\"c\":-1}",
+      "st": "{\"k\":\"st\",\"s\":\"playing\",\"t\":90}",
+      "st_finish": "{\"k\":\"st\",\"s\":\"finish\",\"t\":0}",
+      "res": "{\"k\":\"res\",\"cov\":[0.61,0.39],\"win\":0,\"st\":[[0,120,2,1,0,0],[1,80,1,0,0,0]]}",
+      "end": "{\"k\":\"end\"}",
+      "own": "{\"k\":\"own\",\"map\":{\"4\":\"A1B2\",\"5\":\"A1B2\"}}",
+      "me": "{\"k\":\"me\",\"name\":\"ab\",\"weapon\":\"shooter\",\"sub\":null,\"special\":null,\"style\":null,\"ping\":42}",
+      "lobby": "{\"k\":\"lobby\",\"l\":{\"map\":\"tidewater\",\"time\":\"day\",\"duration\":180,\"bots\":true,\"difficulty\":\"normal\",\"palette\":0,\"mode\":\"turf\",\"players\":[{\"id\":\"A1B2\",\"name\":\"ab\",\"team\":0,\"weapon\":\"shooter\",\"sub\":null,\"special\":null,\"style\":null,\"ready\":true,\"ping\":42}]}}",
+      "lobby2": "{\"k\":\"lobby\",\"l\":{\"map\":\"tidewater\",\"time\":\"dusk\",\"duration\":120,\"bots\":false,\"difficulty\":\"hard\",\"palette\":2,\"mode\":\"turf\",\"players\":[{\"id\":\"A1B2\",\"name\":\"ab\",\"team\":0,\"weapon\":\"shooter\",\"sub\":null,\"special\":null,\"style\":null,\"ready\":true,\"ping\":15},{\"id\":\"K3XZ\",\"name\":\"cd\",\"team\":1,\"weapon\":\"spritzer\",\"sub\":null,\"special\":null,\"style\":null,\"ready\":false,\"ping\":88}]}}",
+      "start": "{\"k\":\"start\",\"roster\":[{\"nid\":0,\"owner\":\"A1B2\",\"bot\":false,\"team\":0,\"slot\":0,\"name\":\"ab\",\"weapon\":\"shooter\",\"sub\":null,\"special\":null,\"style\":null},{\"nid\":1,\"owner\":\"A1B2\",\"bot\":true,\"team\":0,\"slot\":1,\"name\":\"Bot\",\"weapon\":\"shooter\",\"sub\":null,\"special\":null,\"style\":null}],\"map\":\"tidewater\",\"time\":\"day\",\"duration\":180,\"difficulty\":\"normal\",\"palette\":0,\"mode\":\"turf\",\"host\":\"A1B2\",\"id\":\"abc123\"}",
+      "start2": "{\"k\":\"start\",\"roster\":[{\"nid\":0,\"owner\":\"A1B2\",\"bot\":false,\"team\":0,\"slot\":0,\"name\":\"ab\",\"weapon\":\"shooter\",\"sub\":null,\"special\":null,\"style\":null},{\"nid\":1,\"owner\":\"K3XZ\",\"bot\":false,\"team\":0,\"slot\":1,\"name\":\"cd\",\"weapon\":\"spritzer\",\"sub\":null,\"special\":null,\"style\":null},{\"nid\":2,\"owner\":\"A1B2\",\"bot\":true,\"team\":0,\"slot\":2,\"name\":\"B0\",\"weapon\":\"shooter\",\"sub\":null,\"special\":null,\"style\":null},{\"nid\":3,\"owner\":\"A1B2\",\"bot\":true,\"team\":0,\"slot\":3,\"name\":\"B1\",\"weapon\":\"shooter\",\"sub\":null,\"special\":null,\"style\":null},{\"nid\":4,\"owner\":\"A1B2\",\"bot\":true,\"team\":1,\"slot\":0,\"name\":\"B2\",\"weapon\":\"shooter\",\"sub\":null,\"special\":null,\"style\":null},{\"nid\":5,\"owner\":\"A1B2\",\"bot\":true,\"team\":1,\"slot\":1,\"name\":\"B3\",\"weapon\":\"shooter\",\"sub\":null,\"special\":null,\"style\":null},{\"nid\":6,\"owner\":\"A1B2\",\"bot\":true,\"team\":1,\"slot\":2,\"name\":\"B4\",\"weapon\":\"shooter\",\"sub\":null,\"special\":null,\"style\":null},{\"nid\":7,\"owner\":\"A1B2\",\"bot\":true,\"team\":1,\"slot\":3,\"name\":\"B5\",\"weapon\":\"shooter\",\"sub\":null,\"special\":null,\"style\":null}],\"map\":\"tidewater\",\"time\":\"day\",\"duration\":180,\"difficulty\":\"normal\",\"palette\":0,\"mode\":\"turf\",\"host\":\"A1B2\",\"id\":\"xyz789\"}",
+      "ready": "{\"k\":\"ready\",\"id\":\"abc123\"}",
+      "go": "{\"k\":\"go\",\"id\":\"abc123\"}",
+      "emote": "{\"k\":\"emote\",\"n\":\"booyah\"}"
+    },
+    "control": {
+      "welcome": "{\"t\":\"welcome\",\"id\":\"K3XZ\",\"host\":\"A1B2\",\"members\":[{\"id\":\"A1B2\",\"name\":\"ab\"},{\"id\":\"K3XZ\",\"name\":\"cd\"}]}",
+      "join": "{\"t\":\"join\",\"m\":{\"id\":\"Q7M1\",\"name\":\"ef\"}}",
+      "leave": "{\"t\":\"leave\",\"id\":\"Q7M1\",\"host\":\"A1B2\"}",
+      "err": "{\"t\":\"err\",\"e\":\"Room is full\"}",
+      "pong": "{\"t\":\"pong\",\"c\":12345.75}",
+      "lock": "{\"t\":\"lock\",\"v\":true}",
+      "lock_off": "{\"t\":\"lock\",\"v\":false}"
+    }
+  }
+}

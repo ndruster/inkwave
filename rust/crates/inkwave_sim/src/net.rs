@@ -60,6 +60,10 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod wire;
+
+use self::wire::JVal;
+
 /// Wire protocol revision — mirrors `PROTO = 1` (transport.js L5). The Rust
 /// port reuses the same relay; the protocol does not change (PORT_MAP L71).
 pub const PROTO: u8 = 1;
@@ -354,19 +358,33 @@ impl SplatRecord {
 
 /// Animation trigger record `['tr', nid, name, data]` (netmatch.js L92,
 /// packTrig L789-794). `name` is the character trigger name (a string; e.g.
-/// `'spawn'`, `'fire'`), `data` a small numeric payload.
+/// `'spawn'`, `'fire'`), `data` a small payload.
 ///
-/// **Deviation:** packTrig has three branches — `null`/non-numeric ⇒ `0`,
-/// `number` ⇒ `r3(d)`, and a *plain object* whose number-valued keys are
-/// individually rounded (L792, used by the dualies hand triggers). The
-/// object branch is not modelled here (`data` covers only the number case);
-/// M2's wire layer adds it if any M1+ weapon needs hand triggers.
+/// The M1 "number-only" Deviation is closed by [`TrigData`], which models all
+/// three `packTrig` branches (null / number / plain object) — see
+/// [`crate::net::wire::pack_trig`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TriggerRecord {
     pub nid: u8,
     pub name: String,
-    /// Numeric payload; `None` ⇒ JS `0` (packTrig default).
-    pub data: Option<f32>,
+    /// The payload before `packTrig` (the raw trigger `data` argument).
+    pub data: TrigData,
+}
+
+/// A `packTrig` payload (netmatch.js L789-794). Three shapes on the wire:
+/// `null`/non-numeric ⇒ the bare token `0`; a number ⇒ `r3(d)`; a plain object
+/// ⇒ a key-ordered map of its **number-valued** keys, each `r3`'d (used by the
+/// dualies hand triggers `{amp}` / `{hand}`). The object variant keeps insertion
+/// order so the wire bytes match JS `JSON.stringify`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum TrigData {
+    /// Serialized as the bare token `0`.
+    Zero,
+    /// A number (`r3` applied on the wire).
+    Num(f32),
+    /// A plain object; `(key, value)` pairs in insertion order (only number
+    /// values survive `packTrig`, so the model holds just those).
+    Obj(Vec<(String, f32)>),
 }
 
 /// Forwarded gameplay event `['ev', name, packed]` (`_onLocalEvent`,
@@ -374,12 +392,9 @@ pub struct TriggerRecord {
 /// actors to `{n: nid}`, vectors to `[x,y,z]`, and passes numbers/strings/
 /// booleans through (packEvent L803-813).
 ///
-/// **Deviation:** only the event *name* is modelled here; the per-event
-/// packed object (e.g. `splatted`'s victim/attacker/cause, `weapon:fire`'s
-/// look data) is a heterogeneous bag the replay side unpacks per name
-/// (`_playEvent` L573-601). M1 forwards none of these events (no superjump/
-/// specials/dodge; `splatted`/`respawn`/`weapon:fire` payloads belong to the
-/// M2 transport layer, which carries the raw packed object verbatim).
+/// The M1 "name-only" Deviation is closed by [`EventRecord`], which pairs the
+/// name with the verbatim packed payload ([`JVal`]) the replay side unpacks
+/// per name (`_playEvent` L573-601).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ForwardEvent {
     /// JS `'actor:jump'`.
@@ -400,6 +415,55 @@ pub enum ForwardEvent {
     Splatted,
     /// JS `'respawn'` (L581).
     Respawn,
+}
+
+impl ForwardEvent {
+    /// The wire name from the `FORWARD` table (netmatch.js L47). This is the
+    /// exact string `['ev', name, …]` carries.
+    #[must_use]
+    pub fn js_wire_name(&self) -> &'static str {
+        match self {
+            ForwardEvent::ActorJump => "actor:jump",
+            ForwardEvent::SuperJump => "superjump",
+            ForwardEvent::SuperJumpLand => "superjump:land",
+            ForwardEvent::SpecialUse => "special:use",
+            ForwardEvent::SpecialSlam => "special:slam",
+            ForwardEvent::WeaponDodge => "weapon:dodge",
+            ForwardEvent::WeaponFire => "weapon:fire",
+            ForwardEvent::Splatted => "splatted",
+            ForwardEvent::Respawn => "respawn",
+        }
+    }
+
+    /// Parse a wire name back to the enum (`None` for names outside `FORWARD`).
+    #[must_use]
+    pub fn from_js_name(s: &str) -> Option<Self> {
+        Some(match s {
+            "actor:jump" => ForwardEvent::ActorJump,
+            "superjump" => ForwardEvent::SuperJump,
+            "superjump:land" => ForwardEvent::SuperJumpLand,
+            "special:use" => ForwardEvent::SpecialUse,
+            "special:slam" => ForwardEvent::SpecialSlam,
+            "weapon:dodge" => ForwardEvent::WeaponDodge,
+            "weapon:fire" => ForwardEvent::WeaponFire,
+            "splatted" => ForwardEvent::Splatted,
+            "respawn" => ForwardEvent::Respawn,
+            _ => return None,
+        })
+    }
+}
+
+/// Forwarded gameplay event `['ev', name, packed]` — the name plus the
+/// `packEvent(e)` object (netmatch.js L803-813) carried **verbatim** as a
+/// [`JVal`]: the replay side (`_playEvent` L573-601) unpacks it per name, so
+/// the transport layer never needs to interpret its heterogeneous contents.
+/// The M1 "name-only" Deviation is closed here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EventRecord {
+    pub name: ForwardEvent,
+    /// The packed payload (`{n: nid}` for actors, `[x,y,z]` for vectors,
+    /// numbers/strings/booleans passed through), order-preserved on the wire.
+    pub payload: JVal,
 }
 
 /// Kit world-object spawn `['k', nid, kind, data]` (recKit, netmatch.js
@@ -426,17 +490,23 @@ pub struct ZoneRecord {
     /// string first, then numbers (`['zz', zoneId, team]`, `['zo', o]`,
     /// `['zp', t, p, start, end]`, `['zs', …counts…]`, `['za', i, final]`,
     /// `['zf']`, `['zt', L]`, `['ze', winner, reason, …]`; zones.js
-    /// L193-L365). Modelled as strings for the M1 placeholder; the M2 wire
-    /// layer carries the raw JS array.
-    pub payload: Vec<String>,
+    /// L193-L365). The wire layer carries the raw JS array verbatim as a
+    /// [`JVal`] (recZone wraps it as `['z', e]`, netmatch.js L148), so the
+    /// M1 "strings-only" placeholder is closed here.
+    pub payload: JVal,
 }
 
-/// Projectile ghost record `['p', nid, type, wid, pos, vel, …]` (recProj,
-/// netmatch.js L116-122): a visual-only copy of someone else's shot — it
-/// never paints or damages (NET.md "Ink and hits"). M1 fires Spritzer rounds
-/// through [`crate::weapon::ProjectileSim`]; the record keeps the fields the
-/// ghost needs (identity + spawn transform). Full 26-field shape deferred to
-/// the M2 transport layer; the subset here is documented per field.
+/// Projectile ghost record `['p', nid, type, wid, pos, vel, delay, life,
+/// straight, radius, size, grav, drag, trailEvery, head, vis, tail0, tailK,
+/// wob, wobF, nose, sats]` (recProj, netmatch.js L116-122): a visual-only copy
+/// of someone else's shot — it never paints or damages (NET.md "Ink and
+/// hits"). M1 fires Spritzer rounds through [`crate::weapon::ProjectileSim`];
+/// the record carries the full 26-slot PROTO v1 shape (the M1 "subset"
+/// Deviation is closed by [`crate::net::wire::encode_record`]). Slots the JS
+/// packer passes through unrounded (`grav`/`drag`/`trailEvery`/`tail0`/
+/// `tailK`/`wob`/`wobF`/`nose`/`sats`) keep the JS defaults resolved by the
+/// caller (`vis ?? 0.1`, `tail0 ?? 0.8`, `tailK ?? 1.3`, `wob ?? 0.035`,
+/// `wobF ?? 26`, `nose ?? 0.3`, `sats ?? 3`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProjectileRecord {
     /// Owner nid (`o.nid`).
@@ -452,12 +522,38 @@ pub struct ProjectileRecord {
     pub pos: [f32; 3],
     /// Spawn velocity `r2(p.vel.*)`.
     pub vel: [f32; 3],
+    /// `r3(p.delay || 0)` — fuse before the shot becomes visible.
+    pub delay: f32,
     /// `r3(p.life)` — ballistic lifetime the ghost integrates.
     pub life: f32,
     /// `r3(p.straight)` — straight-line blend.
     pub straight: f32,
     /// `r2(p.radius)` — paint radius (visual only on ghosts).
     pub radius: f32,
+    /// `r2(p.size)` — ghost mesh scale.
+    pub size: f32,
+    /// `p.grav` — gravity, passed through unrounded.
+    pub grav: f32,
+    /// `p.drag` — air drag, passed through unrounded.
+    pub drag: f32,
+    /// `p.trailEvery || 0` — trail-spawn cadence, passed through.
+    pub trail_every: f32,
+    /// `p.head ? 1 : 0` — the projectile's head sprite on the wire as 1/0.
+    pub head: bool,
+    /// `r3(p.vis ?? 0.1)` — visibility blend.
+    pub vis: f32,
+    /// `p.tail0 ?? 0.8` — trail length start, passed through.
+    pub tail0: f32,
+    /// `p.tailK ?? 1.3` — trail length curve, passed through.
+    pub tail_k: f32,
+    /// `p.wob ?? 0.035` — wobble amplitude, passed through.
+    pub wob: f32,
+    /// `p.wobF ?? 26` — wobble frequency, passed through.
+    pub wob_f: f32,
+    /// `p.nose ?? 0.3` — nose offset, passed through.
+    pub nose: f32,
+    /// `p.sats ?? 3` — satellite count, passed through.
+    pub sats: f32,
 }
 
 /// Bomb record `['b', nid, kind, pos, vel]` (recBomb, netmatch.js L124-128).
@@ -492,8 +588,8 @@ pub enum TickEvent {
     Bomb(BombRecord),
     /// Animation trigger (JS `'tr'`).
     Trigger(TriggerRecord),
-    /// Forwarded gameplay event (JS `'ev'`).
-    Event(ForwardEvent),
+    /// Forwarded gameplay event (JS `'ev'`) — name + verbatim packed payload.
+    Event(EventRecord),
     /// Kit object spawn (JS `'k'`) — M1 placeholder.
     Kit(KitRecord),
     /// Zone Control decision (JS `'z'`) — M1 placeholder (Turf War only).
@@ -827,14 +923,17 @@ mod tests {
                 },
                 TimedEvent {
                     ts: 1.45,
-                    kind: TickEvent::Event(ForwardEvent::Splatted),
+                    kind: TickEvent::Event(EventRecord {
+                        name: ForwardEvent::Splatted,
+                        payload: JVal::Obj(vec![("cause".into(), JVal::Str("splat".into()))]),
+                    }),
                 },
                 TimedEvent {
                     ts: 1.46,
                     kind: TickEvent::Trigger(TriggerRecord {
                         nid: 3,
                         name: "fire".into(),
-                        data: Some(0.5),
+                        data: TrigData::Num(0.5),
                     }),
                 },
             ],
