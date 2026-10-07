@@ -70,7 +70,7 @@ fn report(intervals: &[f64]) {
         eprintln!("[bench] no render frames sampled (window throttled or minimized?)");
         return;
     }
-    let mut s: Vec<f64> = intervals.iter().copied().collect();
+    let mut s: Vec<f64> = intervals.to_vec();
     s.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
     let pct = |q: f64| s[((s.len() - 1) as f64 * q).round() as usize];
     let mean = s.iter().sum::<f64>() / s.len() as f64;
