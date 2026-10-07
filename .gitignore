@@ -6,6 +6,10 @@ node_modules/
 .DS_Store
 # botlab scratch (profiles, locks)
 .botlab/
+# Rust port (rust/ workspace): build output and trunk dist
+rust/target/
+rust/dist/
+__pycache__/
 # your own music: drop files into songs/ (see songs/README.md); they and the generated manifest stay local
 songs/**/*.mp3
 songs/**/*.m4a

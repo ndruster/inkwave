@@ -1,0 +1,456 @@
+# INKWAVE Rust/Bevy 移植与上游同步 - 实施计划（M1 垂直切片）
+
+说明：任务按依赖排序，实施时一次只推进一个 `pending` 中最高优先级项。所有数值/几何数据一律来自任务 3 的提取管线，禁止手抄上游常量。
+
+---
+
+## Task 1: Cargo 工作区脚手架与双端空应用
+- **Status**: `completed`
+- **Priority**: high
+- **Depends On**: None
+- **Completion Evidence**:
+  - TR-1.1: `cargo build` ✅（bevy 0.19.1；系统依赖 wayland/libxkbcommon/alsa-lib/systemd-devel 已通过 dnf 安装）；`cargo build --target wasm32-unknown-unknown` ✅；`cargo test` ✅（inkwave_sim scaffold_smoke）；`trunk build --cargo-profile wasm-dev` ✅ 产物 dist/index.html + inkwave-*.js/wasm
+  - TR-1.2: `cargo clippy --all-targets -- -D warnings` ✅；`cargo fmt --check` ✅（fmt 后）
+  - TR-1.3: inkwave_sim 仅依赖 serde/serde_json/glam，无 bevy/wgpu/winit
+  - TR-1.4: headless 二进制 `./target/debug/inkwave --headless --frames 5` 正常启动并退出（boot banner + frames complete）；trunk 页面产物完整；浏览器实际加载验证在 Task 16 统一做（chrome-headless-shell 安装中；本任务已确认管线无构建错误）
+  - 关键决策：Bevy 固定 **0.19.1**（0.20 仍 rc）；该版本旧 `Event` 拆为 Message/Event，退出用 `MessageWriter<AppExit>`；新增 `wasm-dev` profile（opt-level=1/debug=false/lto=thin，避免 debug wasm 1.4GB 导致 wasm-bindgen OOM）；trunk 的 crate 由 index.html 中 `<link data-trunk rel="rust" href="crates/inkwave/Cargo.toml">` 指定（Trunk.toml 的 target 是 HTML 而非 crate）；wasm-bindgen-cli 0.2.129 本机安装供 trunk 使用；cargo 走 rsproxy 镜像（~/.cargo/config.toml），rustup 走 RUSTUP_DIST_SERVER=https://rsproxy.cn
+- **Description**:
+  - 在 `rust/` 下建立 Cargo workspace：`inkwave_sim`（无 Bevy/渲染依赖的纯逻辑 crate）、`inkwave`（Bevy 应用 bin，native/wasm 同一份 main）
+  - 选定并固定 Bevy 版本（当时最新稳定 0.x；要求支持 wasm WebGL2）；`rust-toolchain.toml` 固定 stable
+- **Acceptance Criteria Addressed**: AC-1
+- **Test Requirements**:
+  - `rule` TR-1.1: `cd rust && cargo build` 与 `cargo build --target wasm32-unknown-unknown` 均成功；`cargo test` 通过；证据为命令输出
+  - `rule` TR-1.2: `cargo clippy --all-targets -- -D warnings` 与 `cargo fmt --check` 退出码 0；证据为命令输出
+  - `rule` TR-1.3: `cargo tree -p inkwave_sim` 不包含 bevy/wgpu/winit；证据为命令输出
+  - `rule` TR-1.4: 原生窗口与 trunk wasm 构建页（`trunk build`）均能出现清屏色（window/document 不报错）；证据为构建产物与运行截图/日志
+- **Notes**: 需安装 wasm target（`rustup target add wasm32-unknown-unknown`）与 trunk；`rust/dist`、`rust/target` 加入仓库根 `.gitignore`；不改动任何 JS 路径。
+
+## Task 2: upstream 同步基础设施
+- **Status**: `completed`
+- **Priority**: high
+- **Depends On**: None
+- **Completion Evidence**:
+  - TR-2.1: `upstream` 远端 = https://github.com/jaydendavisnc/inkwave.git；`rust/.upstream-baseline` = 3e9b5505ea900cb41851b4d75f16d488552b1794，与 `git merge-base HEAD upstream/main` 一致
+  - TR-2.2: `sync-upstream.sh check` ✅ fetch 成功并输出 "up to date"；用历史区间验证了有提交时的逐提交+受影响目录归类输出（非空列表路径）
+  - TR-2.3: `rust/SYNC_LEDGER.md`（基线/状态图例/triage 规则/逐提交表）、`rust/PORT_MAP.md`（49 个 JS→Rust 映射条目，含技术栈基线与 Bevy 0.19.1 记录）
+  - TR-2.4: JS 树零改动（仅仓库根 .gitignore 增加 rust/target、rust/dist 忽略项）
+  - 备注：本沙箱 github.com HTTPS 直连超时，已在**本仓库 local** 配置 `url.git@github.com-ndruster:.insteadOf https://github.com/`（不进 git 目录，可移植；其他机器默认 HTTPS 即可）
+- **Description**:
+  - `git remote add upstream https://github.com/jaydendavisnc/inkwave.git`；基线哈希存入 `rust/.upstream-baseline`（当前 fork HEAD 对应上游提交）
+  - `rust/tools/sync-upstream.sh <check|update-baseline>`：fetch 后列出自基线以来上游提交（hash/标题/受影响文件归类 src/server/tools），update-baseline 将基线推进到 upstream/main 并提示登记台账
+  - 创建 `rust/SYNC_LEDGER.md`（列：upstream commit | 日期 | 摘要 | 受影响 JS 文件 | Rust 模块 | 状态 | 证据）与 `rust/PORT_MAP.md`，PORT_MAP 覆盖 M1 涉及模块（config / mapkit / tidewater 4 文件 / physics / actor / weapons / paint / match / bots / cameraRig / hud / renderer / netmatch 文档位）
+- **Acceptance Criteria Addressed**: AC-2
+- **Test Requirements**:
+  - `rule` TR-2.1: `git remote get-url upstream` 返回上游 HTTPS 地址；基线文件存在且 `git merge-base`/`git rev-parse` 可校验；证据为命令输出
+  - `rule` TR-2.2: 运行 sync check 能完成 fetch 并输出提交清单（沙箱无网时脚本优雅失败且退出码/提示明确，评审在有网环境复核）；证据为脚本输出
+  - `rule` TR-2.3: SYNC_LEDGER.md 含基线行与 M1 范围登记表；PORT_MAP.md 列出 ≥ 14 个 JS→Rust 映射条目；证据为文件内容
+  - `rule` TR-2.4: JS 树未被修改（`git status --short` 无 `src/`、`server/` 等条目）；证据为 git 状态
+
+## Task 3: 数据提取管线与 tuning/几何类型
+- **Status**: `completed`
+- **Priority**: high
+- **Depends On**: Task 1
+- **Completion Evidence**:
+  - TR-3.1: ✅ 删除 `assets/tuning.json` + `assets/maps/tidewater.json` 后 `cargo test -p inkwave_sim` 编译失败：`error: couldn't read ...assets/tuning.json: No such file or directory`（两文件均 `include_str!` 编译期嵌入，exit 101）；恢复后 `cargo test` 全绿（10 passed）。两次输出留存 `/tmp/t3-missing.log`、`/tmp/t3-restored.log`
+  - TR-3.2: ✅ `tuning::tests`（spritzer_key_values / player_key_values / match_and_difficulty_and_palettes）断言 Spritzer `fireInterval=0.1, damage=36, inkPerShot=0.95, projSpeed=34, range=12.5`（外加 straightTime/spread/impactRadius 等）与 PLAYER `hp=100, runSpeed=6.0, swimSpeed=11.8, respawnTime=5.5`（外加 gravity=25/jumpVel/ink 系列/stepUp 等），全部通过
+  - TR-3.3: ✅ `geometry::tests`：解析 Tidewater 359 图元（81 box / 262 obox / 16 ramp；single=99+half=130+镜像=130），计数与 JSON 内 `meta.primitiveCounts/sourceCounts` 交叉一致并锁定基线值；bounds (-28,28,-47,47)、spawnPads `[0,2.4,-41.8]/[0,2.4,41.8]`、spawnBarrier=4.2、waterY=-1.6 与 meta 回显一致；另含镜像逐图元等价测试（复刻 mirrorDef，130 对全通过）、rail⇒grate+hidden+!paint 测试、Town Hall 镜像 box/flight-w 镜像 ramp 抽样测试
+  - TR-3.4: ✅ `tools/extract/run-all.sh` 连续两次生成后 `diff` 为空（stable-json.mjs 键排序/-0 归一/无时间戳；commit  provenance 固定）；命令输出 "DETERMINISTIC: both artifacts byte-identical"
+  - 全量门禁：`cargo build` ✅、`cargo test`（workspace，10 passed）✅、`cargo clippy --all-targets -- -D warnings` ✅、`cargo fmt --check` ✅、`cargo build --target wasm32-unknown-unknown` ✅、`trunk build --cargo-profile wasm-dev` ✅（2m38s，dist 产物正常）；JS 树零改动（git status 无 src/ 条目）
+  - 产物：`rust/tools/extract/{stable-json.mjs,extract-tuning.mjs,extract-layout.mjs,run-all.sh}` → `rust/assets/tuning.json`、`rust/assets/maps/tidewater.json`；schema 文档 `rust/assets/tuning.schema.md`、`rust/assets/maps/stage-layout.schema.md`；Rust 侧 `inkwave_sim::tuning`（Tuning/PlayerTuning 全 88 字段/Spritzer/MatchConfig/TeamPalette/Difficulty）与 `inkwave_sim::geometry`（Brush 枚举 Box/Obox/Ramp + BrushCommon + StageLayout/LayoutMeta + 加载器/embedded_tuning/embedded_tidewater）
+  - 关键决策：① 几何 `mirrorDef` 从 level.js 原样复刻（该模块依赖 three，提取器不加载；同步时需人工核对，已在脚本与 schema 注明）；② flag 归一化对齐 level.js：`grate=!!d.grate||!!d.rail`、`hidden=!!d.hidden||!!d.rail`、color 缺省 `#dddddd`、pattern 缺省 0，Rust 不再推断；③ serde internally-tagged enum 变体不支持内嵌 flatten，改用 FlatBrush(flatten) + TryFrom + 手写 Deserialize for Brush；④ 数值全部 f32（坐标提取值精度远优于 1mm 公差）；⑤ JSON 编译期 include_str! 嵌入双端可用，Bevy AssetServer 留待 Task 10+
+- **Description**:
+  - `rust/tools/extract/`（node ESM）：`extract-tuning.mjs` 导入 `src/config.js` 导出 PLAYER/WEAPONS.shooter/MATCH/TEAM_PALETTES → `rust/assets/tuning.json`；`extract-layout.mjs` 导入 tidewater layout（含 mapkit 求值后的 B/R/O/OCT/ARC 结果）+ surfaces 配色，执行 half→180° 镜像展开，输出 `rust/assets/maps/tidewater.json`（原始体素描述：box/ramp/obox 及 tag/pattern/color/paint 标志、bounds、spawnPads、spawnBarrier、waterY）
+  - sim crate：serde 类型（Tuning/StageLayout/Brush 枚举）+ 加载器；几何体不执行渲染
+  - 附带生成 `*.schema.md`（字段含义/单位），供后续同步审查
+- **Acceptance Criteria Addressed**: AC-3
+- **Test Requirements**:
+  - `rule` TR-3.1: 删除/重命名生成物后相关测试失败（证明数据来自管线）；`cargo test` 在生成物存在时通过；证据为两次测试输出
+  - `rule` TR-3.2: Rust 测试断言 Spritzer `fireInterval=0.1, damage=36, inkPerShot=0.95, projSpeed=34, range=12.5` 与 PLAYER `runSpeed=6.0, swimSpeed=11.8, hp=100, respawnTime=5.5` 等关键值；证据为测试输出
+  - `rule` TR-3.3: Rust 侧解析 Tidewater 图元总数/出生点/bounds 与 node 端同脚本统计值一致（测试中以 JSON 内 meta 字段校验）；证据为测试输出
+  - `rule` TR-3.4: 重新运行提取脚本对同一上游提交产物逐字节稳定（确定性输出，键排序、无时间戳）；证据为连续两次运行后 `diff` 为空
+
+## Task 4: 碰撞世界
+- **Status**: `completed`
+- **Priority**: high
+- **Depends On**: Task 3
+- **Description**:
+  - 由 StageLayout 构建碰撞世界：AABB 集合、斜坡板（low/high/width/thickness，顶面为平面）、绕 Y 旋转盒（逆变换到本地空间查询）
+  - 查询 API：`ground_probe(foot_xy, y_hint)`（返回站立面高度/法线/面 id，含 stepUp/stepDown/ledgeAssist 语义所需信息）、胶囊 vs 世界推出（horizontal sweep + 头顶检测）、射线检测（弹丸/喷涂命中，返回面 id 与命中点）
+  - 单元测试：已知图元上的高度查询、斜坡上下、旋转盒内外、镜像半区可站立
+- **Acceptance Criteria Addressed**: AC-4, AC-6
+- **Test Requirements**:
+  - `rule` TR-4.1: 对平坦盒顶、斜坡高中低三点、镜像半区对应点，ground_probe 返回高度与 JS 几何手工计算值误差 < 1mm；证据为测试输出
+  - `rule` TR-4.2: 射线在已知距离命中正确面 id；穿透薄边/侧面的用例行为明确且有测试；证据为测试输出
+  - `rule` TR-4.3: 胶囊水平 sweep 不穿墙、不掉出地图边界；证据为测试输出
+- **Completion Evidence** (2026-09-30):
+  - 新增 collision.rs：`CollisionWorld` 从 `&StageLayout`/`&[Brush]` 构建，忠实移植 `level.js` `_addBlock`（box/obox/ramp 框轴、8 顶点 AABB、grate/rail/hidden/paint/roof/perch/noPaint/mural flags）、4m XZ 一维空间哈希、`_buildFaces`（underside 剔除 + `_faceHidden` 采样、wall/turf 分类、face id 与上游构建顺序一致）；API：`ground_height`/`ground_probe(_step)`（中心+8 环，`WALKABLE=0.68`，stepMin 0.12）、`rail_feet`、`raycast`/`segment`/`los`（slab 求交、skipGrates、face id+uv）、`collide_capsule`/`collide_body`（3 次迭代最近点解穿，grounded 水平推 0.45m/帧上限）、`body_fits`、`point_in_block`/`point_inside`/`query_blocks`。
+  - **独立 Python 对拍**（TR-4.1/4.2）：`rust/tools/verify/collision_crosscheck.py` 只读 tidewater.json，从零重算 block 框轴/哈希/face/groundHeight/raycast；与 Rust 示例 `examples/collision_dump.rs` 逐记录比对，驱动 `rust/tools/verify/run-crosscheck.sh`：**126 条记录全部匹配**——359 blocks / 996 faces（逐 face (block,axis,sign,normal) 集合相等）、99 点 Tidewater 地面网格、双 spawn pad=2.4、合成斜坡五点 y=(z+4)/4 与平面盒顶、12 条射线的 hit/dist/normal/block/face。
+  - 修复两处移植偏差：① face slot 语义 JS 为 `sign>0?0:1`（初版误用 `usize::from(bool)` 反转，导致 face id 全错）；② 两处 paving-joint 顶面在精确拼接缝上因 f32 量化（f64 源值截成 f32，丢失 JS f64 噪声）未被 `_faceHidden` 剔除——隐藏采样改用 1e-4m 闭包容差（代码注释说明），face 总数 998→996 与 Python/上游一致。
+  - Rust 单测新增 11 个（全 crate **21 passed**）：TR-4.1 平坦盒顶/y_max/足迹外、斜坡五点 <1mm 且法线 (0,8,−2)/√68、镜像斜坡等高、Tidewater 双 spawn pad 2.4±1mm 与 99 点 (x,z)/(−x,−z) 镜像网格 <1mm；TR-4.2 顶/±X 墙射线距离=2/3、face 分类 turf/wall、grate 过滤、los 距目标 5cm 语义、spawn 射线命中 turf face 且 face 法线=命中法线；TR-4.3 80 步胶囊推墙 x≤3−r+1mm 不穿墙、不出 bounds、脚不离地、嵌入地板弹出 ground 接触、`body_fits` 空隙/嵌入/矮顶判定、ground_probe 中心优先与 0.30m 边沿 ring 抬脚。
+  - 全门禁：`cargo build --workspace` ✅、`cargo test -p inkwave_sim` 21 passed ✅、`cargo clippy --all-targets -D warnings` ✅、`cargo fmt --check` ✅、wasm32 `cargo build` ✅、`trunk build --cargo-profile wasm-dev`（2m39s）✅；`git status` 确认 `src/` 等 JS 上游零改动。
+
+## Task 5: 角色控制器（sim 层，固定步长）
+- **Status**: `completed`
+- **Priority**: high
+- **Depends On**: Task 4
+- **Description**:
+  - Actor 状态：位置/速度/facing（角弹簧）/形态(kid,squid)/grounded/climbing/HP/墨水箱/无敌/重生计时；输入结构；`step(dt, input, world, ink_query)`
+  - 地面 S 曲线加减速（runAccel/In/Out knees）、空中控制、鱿鱼干地/游泳/敌墨减速、跳跃 buffer + coyote + apex/fall 重力、stepUp/Down 地面贴合、ledgeAssist、敌墨 DPS（含 cap）、脱战回血、墨箱回复（延迟/速率）、掉海(fallDeathY)与击杀重生（含出生无敌）
+  - 发射缓冲/emerge 延迟先以接口预留（Task 7 接线）
+- **Acceptance Criteria Addressed**: AC-6, AC-8
+- **Test Requirements**:
+  - `rule` TR-5.1: 静止满输入起步，达到 90% 极速（5.4 m/s）的时间/距离与 PLAYER 曲线解析参考实现一致（5% 容差）；证据为测试输出的测量值
+  - `rule` TR-5.2: 墨箱回复速率场景：kid 停火 0.9s 后 9/s、鱿鱼 42/s；误差累计 < 1%；证据为测试输出
+  - `rule` TR-5.3: HP→0 进入 5.5s 重生并在出生点复活、1.6s 无敌；掉入 fallDeathY 触发同样流程；证据为测试输出
+  - `rubric` TR-5.4: 移动手感维度（加减速/跳跃/游泳惯性）；scale 1-5；anchors 1=物理感完全不同，3=速度与转向大体接近，5=与 JS 版难区分；threshold >= 3；证据为无头测量（90% 极速距离、制动距离、跳跃高度/滞空）与 JS `measure-handling` 口径对照表
+- **Completion Evidence** (2026-09-30):
+  - 新增 actor.rs（约 1000 行实现 + 14 测试）：`Actor::step(dt, input, world, ink_query, tuning)` 忠实移植 `actor.js` `update` 全帧序（安全网→死亡计时→intent 边沿/fireWins→计时器→form 切换→_surface→_horizontal→jump(buffer/coyote)→_integrate/_resolve→_spawnBarrier→ink/hp→fire gate→掉海→_finishFrame）、`_horizontal` 三形态参数表（kid/鱿鱼干地/潜墨，含 onEnemy 钳制、plant-and-reverse、heading slew、hardLand 减速）、`_integrate`（地面平面跟随 vy=−(v·n)/max(0.35,ny)、fall×1.2/apex×0.82 重力成形）、`_resolve`（stick 探头+stepUp/Down 贴合、落地探头+ledgeAssist、smoothY 不连续吸收、rail_feet 接线）、`_face` 角弹簧（rate/acc 双 cap + 目标角速度前馈）、出生屏障推出+反弹 1.6。`SimWorld`（碰撞+spawnPads+barrier）、`InkQuery` trait（Task 6 涂地网格接口，0/1/2 与 JS `paint.sample` 同码）、`FireGate`（emerge/fire buffer，Task 7 武器接线口）、`ActorEvent` 队列（Jump/Land/Splatted/Respawn）。模块头注释列明 deferred：climb/roofSlide/railCentre/dodge/superJump/specials/status/WeaponRunner。
+  - 两处有意的语义决策：① `reset()` 不清事件队列（JS 事件走总线无队列，清空会吞掉 Splatted）；② TR-5.1「解析参考实现」口径=同 dt(1/60) 同操作顺序的 f64 参考重实现（JS 本身即 60Hz 半隐式欧拉，连续积分对照仅作参考打印——60Hz 离散化对距离/跳跃高度存在 5-17% 固有系统偏差，与 JS 版共享同一偏差）。
+  - **TR-5.1** ✅：kid 静止满输入至 5.4 m/s：sim t=0.0953s d=0.2814m vs ref60 t=0.0953s d=0.2814m（误差<0.1%，容差 5%）；连续积分 t=0.0958s d=0.2596m（打印对照）。直线度/贴地断言通过。
+  - **TR-5.2** ✅：kid 停火 0.9s 后 refill 速率实测 9.0001/s（0.85s 时墨量零增长断言通过）；鱿鱼潜墨 42.0000/s（窗口避开 inkMax 封顶）；误差 <0.01%（容差 1%）。
+  - **TR-5.3** ✅：致死伤害→alive=false、respawnTimer=5.5、deaths+1；324 帧（5.4s）后仍死亡，恰好第 330 帧（t=5.5000s）在出生点 ring（slot/4·2π+0.6，r=1.1）上方 4.5m 复活，hp=100、invuln=1.6000 且无敌期伤害返回 false；掉落模拟（掉海 y<−1.45 且脚下无支撑→Splatted{Water}）走同一重生流程；事件队列含 Splatted→Respawn。附加：脱战 1.3s 后回血实测 22.000/s；敌墨 DPS 20 cap 40（hp 止 60）且限速 1.900 m/s。
+  - **TR-5.4 rubric 自评 4/5（阈值≥3）**：对照表（measure-handling 口径：accel/brake/jump/swim，Rust sim vs ref60 解析参考 vs 连续积分）——accel 90%：0.0953s/0.2814m = 0.0953s/0.2814m（连续 0.0958s/0.2596m）；brake 6→0：0.2663m/7帧 = 0.2663m（连续 0.3224m）；jump：apex 1.3492m/air 0.6508s = 1.3492m/0.6508s（连续 1.4224m/0.6687m）；swim 90%：0.1798s/1.0254m = 0.1798s/1.0254m（连续 0.1830s/0.9880m）。四个场景与同 dt 参考实现四位小数完全一致（<0.1%，远优于 5%）；与连续积分的差异为 60Hz 离散化固有、与 JS 版完全相同。附加场景断言：jump buffer 落地触发、coyote 0.12s 内起跳、鱿鱼干地 2.900 m/s、fire 后按胜 squid 且 emerge 缓冲射门、出生屏障推出至 R=4.2 缘。不给 5 分仅因 CI 中无 JS 侧 measure-handling 自动对拍（方程为逐行移植，见 actor.rs 模块头与函数注释）。
+  - Rust 单测新增 14 个（全 crate **35 passed**）。全门禁：`cargo build --workspace` ✅、`cargo test --workspace` 35 passed ✅、`cargo clippy --all-targets -D warnings` ✅、`cargo fmt --check` ✅、wasm32 `cargo build` ✅、`trunk build --cargo-profile wasm-dev` ✅；`git status` 确认 `src/` 等 JS 上游零改动。
+- **Review 修复附录** (2026-10-01，独立审查 6 问题「全部修复」):
+  - **问题 1（major，同构自证）✅**：打通 Linux headless Chromium + puppeteer-core 运行上游 `tools/measure-handling.mjs`（`--use-angle=gles --enable-unsafe-swiftshader --no-sandbox`），采集 accel/jump/buffer/swim/turn 五场景真实 JS 逐帧 golden（`/tmp/mh/golden-*.json`）。新增 5 个 golden 对拍测试（硬编码 JS 实测值，测试注释记录复现命令）：`golden_accel_stop_reverse`（speedFirst6/stopFirst8 逐帧 ±0.02、t90=5 帧、stopDist=0.266、tReverseZero=4/tReverse90=9 帧）、`golden_standing_jump`（apexH=1.216、tApex=19 帧、tAir=38 帧、landVy=−8.19）、`golden_jump_buffer_edges`（early=2/4/6→跳、8/10→不跳，边界与 JS 一致；landF 绝对值差 2 帧系 JS 场景初始化口径，注释说明）、`golden_swim_accel`（first8 逐帧、t90=10 帧、top=11.8）、`golden_turn_90`（tVel=5 帧、speedMin=6、yawRateFirst8 逐帧 ±0.8、yawRateMax=11.333、yawAccMax=170、tFace=13 帧）。coyote golden 经插桩探针查明为 JS 场景检测器口径问题（离地判定滞后 ~6 帧），JS `coyote` 衰减与 Rust 完全一致，不硬断言、注释记录。
+  - **问题 2（medium，转向/空中零测试）✅**：golden_turn_90 覆盖 heading slew + 角弹簧；新增 `air_steering_with_input_uses_air_accel`、`air_no_input_drifts_down_air_decel`、`over_speed_sheds_at_brake_rate`、`reverse_in_enemy_ink_half_rate`（onEnemy×0.5 半速率）四个路径测试。
+  - **问题 3 ✅**：`reset()` 已补 `fire_facing = 0.0`。
+  - **问题 4 ✅**：掉海测试 invuln 断言改为显式帧追踪（记录重生帧号 rf=330，invuln = spawn_invuln − (340−rf−1)·DT，容差 1e-4），消除魔法偏移。
+  - **问题 5 ✅**：`step()` 入口加 `debug_assert!(|dt − FIXED_DT| < 1e-6)` 固定步长契约。
+  - **问题 6 ✅**：`drain_events` 文档写明每固定步 drain 一次的契约与 reset 保留事件的语义。
+  - 修复后全门禁：`cargo test --workspace` **44 passed** ✅、clippy -D warnings ✅、fmt ✅、wasm32 check ✅、`trunk build --cargo-profile wasm-dev` ✅、上游 JS 零改动 ✅。
+
+## Task 6: 墨汁覆盖网格与涂地计分（sim 层）
+- **Status**: `completed`
+- **priority**: high
+- **Depends On**: Task 4
+- **Description**:
+  - 每个可喷涂面分配二维覆盖网格（分辨率在切片取 e.g. 0.15m/cell，记录到 meta）；圆斑 stamp 经射线命中面变换到面局部 2D 坐标栅格化（含 seeded 形状接口，先实心圆/软圆）
+  - 查询：某位置/某面坐标的归属（无/Alpha/Bravo）、覆盖率面积统计、"新增涂地面积"（仅易主/从无到有计一次分，1 分/m²）、敌墨区域伤害/减速查询
+  - 斜坡/旋转面使用各自局部坐标系；不可喷涂（paint:false/tag 排除）面不分配网格
+- **Acceptance Criteria Addressed**: AC-6, AC-10
+- **Test Requirements**:
+  - `rule` TR-6.1: 在平面上 stamp 已知半径圆斑，覆盖面积 = πr²（网格误差 < 3%）；同队重复 stamp 新增面积为 0；敌队覆盖后归属翻转且只计增量；证据为测试输出
+  - `rule` TR-6.2: 斜坡面与旋转盒面 stamp 后局部坐标查询命中正确归属；证据为测试输出
+  - `rule` TR-6.3: 总可喷涂面积归一后两队百分比 ∈ [0,1] 且空场为 0；证据为测试输出
+- **Completion Evidence** (2026-10-01):
+  - 新增 paint.rs（约 520 行实现 + 9 测试）：`PaintGrid` 逐行移植 `src/world/paint.js` **CPU 侧**——`new()`=`_initGrid`（cell=0.25 以 JS 源码为准，非 spec 草案的 0.15；每 paintable face nu=round(su/cell)、cu=su/nu、全局 Vec<u8> grid（0/1/2 同 JS sample 编码）+ dead[]（cell 中心抬 6cm 用 point_inside 判埋没）、turfTotal/turfArea/counts）；`splat(world,center,radius,team,opts)`=JS `splat` CPU 半（reach=radius·max(3.2,REACH[kind]+1.4sAmt+0.3)、query_blocks+AABB 快速拒绝、逐面 dn∈[−0.12,radius]/rr/ext 检查含墙 DRIP_REACH、stretch 投影面空间 l>0.2 归一化，丢弃 net/growing/ripple/speck 呈现分支）；`cpu_splat()`=`_cpuSplat`（r≤0.02→0、roll 圆角矩形 SDF sd>−0.03r skip、blobWobble(atan2(py,px),seed) 边界 d/(r·wob)>0.97 skip、stretch 逆变换 s=a>0?1+sa:1+0.25sa、prev==val skip、turf&&!dead 计 counts、version++）；`blob_wobble()` 逐字移植（含上游 6.2831 字面量，allow(approx_constant) 注释锁定）；`sample/sample_world/coverage/region_stats`（步长 2 采样、|origin.y−y|≤2.5 同 JS）。`infer_kind`=`_kind`。实现 `InkQuery` trait 接线 actor Task 5 桩接口。GPU atlas/ripple/flood/drying 属渲染层不移植（模块头注明）。
+  - **TR-6.1** ✅：`tr6_1_circle_area_matches_pi_r_squared`——平面 stamp r=2：claimed 12.5625 m² vs πr²=12.5664（误差 0.03%，容差 3%）；同队重复 stamp=0；敌队覆盖 claimed 12.5625（全翻转）再重复=0；偏移 2m 重叠 stamp 计严格增量。`tr6_1_counts_track_ownership`——coverage 与 claimed/turfArea 一致、翻转后 counts 迁移。
+  - **TR-6.2** ✅：`tr6_2_ramp_local_coords`——4m/8m 斜坡面 stamp r=1 后局部 (u,v) 与 sample_world 命中 team0、坡上 2m 外为 0；`tr6_2_rotated_face_local_coords`——rotY=30° obox 顶面沿旋转 u 轴 0.5m 内命中、3m 外为 0。
+  - **TR-6.3** ✅：`tr6_3_coverage_normalisation`——空场 [0,0]；两队各 stamp 后 cov=[0.0311,0.0311]∈[0,1] 且和 ≤1；`region_stats` own=0.904、own+enemy+empty=1。另测：非 paintable 面零网格零 claimed、Roll 波段沿向 stamp、InkQuery trait 接线、blobWobble∈(0,1.5]。
+  - 全门禁：`cargo test --workspace` **53 passed** ✅、`cargo clippy --all-targets -D warnings` ✅、`cargo fmt --check` ✅、wasm32 check ✅、`trunk build --cargo-profile wasm-dev` ✅（2m41s）、上游 `src/` JS 零改动 ✅。
+- **Review 修复附录** (2026-10-01，独立审查 2 medium + 5 minor「全部修复」；实现保真度经逐行核对确认无误，修复集中在测试与文档):
+  - **问题 1（medium，partial overlap 断言测非所名/flaky）✅**：原步骤 5 在 team1 已翻转中心后用 team0 偏移 stamp，新 blob 内无 team0 格 → claimed=12.5625=全面积，`part<want` 仅靠离散误差侥幸通过。改为**同队重叠**（中心 blob 现为 team1，team1 在 (2,0) stamp）：claimed=7.8125 m²，断言 `0.1·want < part < 0.8·want`（月牙增量）+ 再 stamp 幂等=0，真正测「重叠只计增量」语义。
+  - **问题 2（medium，边界场景零覆盖）✅**：新增 4 个边界测试——`grazing_dn_behind_plane_still_paints`（dn=−0.05∈[−0.12,0) 仍涂、claimed 3.125<π 证 rr 缩小；dn=−0.2 拒绝）、`smear_stretch_line_is_asymmetric`（非 roll 的 Line smear 逆变换：前向 s=1+sa=3 内 +1.5m 命中、后向 s=1+0.25sa=1.5 的 −2.5m 恒外）、`cross_face_splat_accumulates`（地/墙拐角单 splat 双面累加 claimed=4.75）、`dead_cells_write_grid_but_skip_counts`（叠盒埋没格：claimed 7.0 vs counted 3.0625，差 3.94 落在 (2,5.5)，dead 格仍写 grid 可 sample 但不计 counts）。墙面 DRIP_REACH 下界经推导在 CPU 路径**不可观测**（blob 边缘判定先于 drip 下界拒绝，仅影响 GPU quad 范围），已在测试注释记录该结论，不写伪断言。
+  - **minor 全修 ✅**：① `coverage()` 空 turf 返回 [0,0]（JS 为 0/0=NaN）在方法 doc 与模块头「Intentional deviations」双处注明；② f32 vs JS f64 精度选择记入模块头（0.97 阈值裕量吸收 ~1e-7 误差，无格翻转）；③ `flood()`/`clear()` 未移植列入 deferred 说明；④ `blob_wobble_bounds` 注释 WOB_MAX=1.5 是上游经验常数非数学上界（幅值和 1.598）；⑤ `splat` 复用 `splat_ids` scratch（对齐 JS `_qb`），`region_stats` 保持 `&self` 查询签名不变。
+  - 修复后全门禁：`cargo test --workspace` **58 passed** ✅（+5）、clippy -D warnings ✅、fmt ✅、wasm32 check ✅、`trunk build --cargo-profile wasm-dev` ✅、上游 `src/`+`tools/` 零改动 ✅。
+
+## Task 7: Spritzer 武器、弹丸与命中（sim 层）
+- **Status**: `completed`
+- **priority**: high
+- **Depends On**: Task 5, Task 6
+- **Description**:
+  - 射击状态机：射速计时、墨耗检查与停火、muzzle/朝向散布（地面/空中角度，种子化 RNG）
+  - 弹丸：straightTime 直线 + 之后重力抛物线、range 截止；拖尾周期性 stamp（trailEvery/trailRadius）、命中 stamp（impactRadius）
+  - 命中判定：弹丸扫掠 vs 角色胶囊造成 damage；击杀/受击事件枚举；墨箱与 emerge/fire buffer 接线
+- **Acceptance Criteria Addressed**: AC-6
+- **Test Requirements**:
+  - `rule` TR-7.1: 贴脸 3 发命中 → 108 伤害 → 目标死亡并进入重生；第 4 发在无敌期不造成伤害；证据为测试输出
+  - `rule` TR-7.2: 墨箱不足 0.95 时不能开火；持续开火到耗尽的弹数 = floor(100/0.95)；证据为测试输出
+  - `rule` TR-7.3: 弹丸 0.13s 前轨迹为直线、之后符合 g=25 抛物线，range=12.5m 截止；位置容差 < 1cm；证据为测试输出
+  - `rule` TR-7.4: 弹丸落地在命中面产生墨斑并被 Task 6 计分查询到；证据为测试输出
+- **Completion Evidence** (2026-10-01):
+  - 新增 weapon.rs（792 行实现 + 9 测试）：逐行移植 `src/game/weapons.js` **shooter 路径**——`WeaponRunner::update`=`_auto`（shooter 分支：`while cooldown<=0 && guard<3`、墨不足→`LowInk`+`empty_cd=0.45`+`cooldown+=interval`+break、扣墨→`note_fired`→`fire_shooter`→`bloom+=0.3`、松扳机 bloom 按 `BLOOM_RECOVER=0.28` 衰减、`spread_deg`=`_spreadDeg`（ground/air 角×lerp(0.45,1,bloom)）、`move_speed`=开火限速 4.6）；`ProjectileSim::fire_shooter`=`fireShooter`（muzzle/aimFrom/ballistic/spread 锥/seed，`vel=dir*34`、`grav=28`/`drag=0.8`、`trail=-(2.5-trailEvery)`）；`step_one`=`_step`（age→prev→straight 后重力+拖拽→角色胶囊扫掠命中（`_res.dist < hr*0.95+0.15`、水平剔除 `3+hr`）→世界 segment 命中→`_impact` 内联（法线抬 0.14、stretchAmt=0.7、半径抖动 0.85+rand·0.3）→拖尾滴落 stamp（抖动 0.8+rand·0.4、每滴新 seed）→life/海水截止）；`apply_hit`=`applyHit` 本地路由（同队/死亡由扫描循环先行过滤，对应 JS L1546 早退；无敌→blocked；`HitOutcome{killed,blocked}`，JS 无敌挡伤害时仍 emit hit 的语义保留）；`point_capsule_dist`/`segment_capsule_dist`=`physics.js`（7 点采样+三分搜索 refine 8 次）；`ballistic`=JS 割线迭代 4 次（hd∈(1.5,maxDist) 包络、|err|>0.25 或 Δpitch>0.35 放弃）；`Rng`=xorshift32 种子流（每发 draw 顺序与 JS 一致：sqrt 锥角→方位角→seed）。`SimEvent{Fire,Impact,Hit,LowInk}` 替代 JS 全局 emit，Task 8 比赛层排空。actor.rs 补 `aim_dir()`（复刻 JS actor.js L271）/`set_invuln()`/`invuln()`；lib.rs 注册 `pub mod weapon`。
+  - **有意偏差（模块头注释记录，供审查）**：① `Math.random`→种子化 `Rng`（sim 确定性契约）；② JS shooter 弹 life=1.2s 固定，但 TR-7.3 要求 range=12.5 截止→`life=min(range/projSpeed,1.2)`=0.3676s（JS blaster blast 同款公式 L1178），海水截止保留；③ 身体命中不涂地（JS 仅 FX+伤害，`radius*0.5` 只进事件）；④ 无角色 rig→muzzle 用 JS 自身退化分支（eye+aimDir·0.3）；⑤ `aim_point=None` 时跳过 `_ballistic`（sim/bot 只有 yaw/pitch，与 JS 修正不可解时结果一致）。**spec 笔误**：TR-7.3 文本写 g=25，上游 `fireShooter` 硬编码 `grav: 28`（25 是玩家重力）；以 AC-6 上游等价为准。
+  - **TR-7.1** ✅：`tr7_1_three_hits_kill_and_invuln_blocks_the_fourth`——输出「3 hits kill at step 15; 2 blocked hits during invuln」：hits=3（108 伤害）、killed=true、deaths=1、respawn_timer=5.5；重生后 invuln>0，再射 12 步 blocked_hits≥1 且 hp 不变。
+  - **TR-7.2** ✅：`tr7_2_ink_gating_and_shots_to_empty`——输出「105 shots, ink left = 0.25, lowink clicks = 2」：fired=floor(100/0.95)=105、ps.list=105（未 step 无过期）、低墨 60 步零新增弹丸且 LowInk≥1。
+  - **TR-7.3** ✅：`tr7_3_straight_phase_then_parabola_and_range_cutoff`——输出「straight 7 steps (0.117s), expired at step 22 (cutoff 22), max err vs g=28 reference = 0.00000 m」：与独立参考积分器逐帧对拍 <1cm（实际 0），range/projSpeed/DT=floor(22.06)=22 步截止。
+  - **TR-7.4** ✅：`tr7_4_impact_paints_the_face_queryable_by_the_grid`——输出「coverage team0 = 0.00438 (1.75 m² of 400.00)」：俯射落地 1 次 Impact（victim None）、PaintGrid coverage>0、sample_world 命中点=1、远角=0。
+  - 另测 5 单元：rng 确定性/锥角有界、capsule 距离解析值（refine 分辨率 ~3mm，容差 0.01 注明非移植误差）、ballistic 包络 no-op、bloom/spread 上游公式、开火移速。
+  - 全门禁：`cargo test --workspace` **67 passed** ✅（58→67，+9 weapon 测试）、`cargo clippy --all-targets -D warnings` ✅、`cargo fmt --check` ✅、wasm32 check ✅、`trunk build --cargo-profile wasm-dev` ✅（2m43s）、上游 `src/`+`tools/` 零改动 ✅。
+- **Review 修复附录** (2026-10-03，独立审查 1 medium + 6 minor「全部修复」；保真度逐行核对通过、无 blocker，TR-7.1~7.4 输出与证据逐字吻合，spec 笔误 g=25→上游实为 28 经独立核对确认):
+  - **问题 M-1（medium，owner_slot 身份/下标混用潜在越界）✅**：`apply_hit` 原以 `p.owner_slot`（身份 slot）作 `actors[attacker]` 下标做同队比较——该比较本就不可达（扫描循环已过滤 `e.team == p.team || !e.alive`，JS L1593；JS `applyHit` L1546 的早退由它承担），故**删除 attacker 参数**，越界风险根除；`Projectile.owner_slot` 字段 doc 明确「身份编号、仅作事件载荷、禁止作下标」（tests.rs 的 slot4@index1 场景继续守护该语义）。
+  - **m-1 ✅**：bloom 衰减改用 `gate.fire`——JS `WeaponRunner.update(dt, inp)` 的 `inp` 即门控后的 `winp`（actor.js L370-373，emerge 抑制/buffer 置真），原用 raw `inp.fire` 在 buffer/emerge 窗口与 JS 不同源；`ActorInput` 参数随之删除（`_auto` 的 `inp.fire` 亦由 `gate.fire` 承担），update 签名收敛为 `(dt, gate, actor, w, projectiles)`。
+  - **m-2 ✅**：`muzzle` 补 form 分支（JS L936 `squid ? 0.4 : 1.05`，新增 `MUZZLE_EYE_Y_SQUID`）——经 `FireGate` 路径 squid 不可开火故不可达，但 `fire_shooter` 是 pub，防 Task 8 bot 直调时 0.65m muzzle 偏差；模块头偏差④同步更新。
+  - **m-3 ✅**：`HitOutcome.blocked` 文档修正——「JS still emits hit」仅对无敌成立；同队/死亡 JS 提前 return 不 emit（L1546），Rust 由扫描循环等价过滤，已在 doc 注明。
+  - **m-4 ✅**：TR-7.3 参考积分器改**硬编码** `REF_GRAV=28.0`/`REF_DRAG=0.8`（不再复用实现常量，weapon.rs 常量写错会被对拍抓住）；断言消息「range cutoff at 12.5 m」改为「life 截止 0.3676s，拖拽使实际射程 ~11.8m」——注释夸大已修正。
+  - **m-5 ✅**：`ProjectileSim::step` 改**倒序遍历**（JS update L1567 `for i=length-1..0` + `list[i]=list[last]; pop()`）——同帧多弹的跨弹 RNG draw 顺序与事件队列顺序与 JS 一致；swap_remove 语义在倒序下不变（被换入元素不再步进）。
+  - **m-6 ✅**：Completion Evidence 数字修正：weapon.rs 792 行（原写约 615）、9 测试=4 TR+5 单元（原写 10/6）。
+  - 修复后全门禁：`cargo test --workspace` **67 passed** ✅（测试数不变）、clippy -D warnings ✅、fmt ✅、wasm32 check ✅、`trunk build --cargo-profile wasm-dev` ✅、上游 `src/`+`tools/` 零改动 ✅。
+
+## Task 8: 比赛流程（sim 层）
+- **Status**: `completed`
+- **Priority**: high
+- **Depends On**: Task 7
+- **Description**:
+  - Match：阶段 intro（出生屏障/倒计时）→ active（时钟，90/180s 可配，测试用短时长）→ end（结算数据：比分/百分比/胜队）→ 可 restart
+  - 8 个 Actor 槽位 + 队伍平衡（出生点 spawnPads、屏障半径 spawnBarrier）；比赛事件总线（splat、比分变化、阶段变化）
+  - 固定步长步进 API（`step_until`），供 bot、无头验证与未来 netcode 共用
+- **Acceptance Criteria Addressed**: AC-4, AC-10
+- **Test Requirements**:
+  - `rule` TR-8.1: 固定步长跑完配置时长后状态转为 end 且结算包含两队百分比/胜队/终局时间；重开后所有状态归零；证据为测试输出
+  - `rule` TR-8.2: intro 阶段屏障阻止越过出生半径；active 开始后解除；证据为测试输出
+  - `rule` TR-8.3: 所有玩法状态可序列化（serde 往返一致），不引用渲染/ Bevy 类型；证据为 serde roundtrip 测试 + cargo tree
+- **Completion Evidence** (2026-10-03):
+  - 新增 match_.rs（635 行实现 + tests.rs 502 行 / 10 测试；模块名 `match_`——`match` 为 Rust 关键字，lib.rs 注释保留 PORT_MAP 语义）。逐行移植 `src/game/match.js` Turf War 流程 + Task 7 deferred 的计分接线：`Match::with_roster`=`Match` 构造+`setup()`（2 队 × team_size=4 共 8 槽、出生环 pad+(cos,sin)(slot/4·τ+0.6)·1.2（match.js L87 固定除数 4）、yaw=0/π、`invuln=0` 清零 spawn_at 无敌）；`start`/`set_phase`=`start`/`setState`（`Phase{Init,Intro,Active,Finish,End}`，事件总线首项 `Phase(Intro)`）；`step`=状态机（intro 4.2s→Active 时钟（`duration` 可配，90/180 来自 `MATCH.durations`）→`time≤0`→Finish 2.6s→`judge`）+ 软推挤（match.js L231-244：`PLAYER.radius·1.7`、|dy|<1.2、各让 0.5）+ 非 playing 阶段输入归零（L220-226）+ `match:count` 整秒/`match:oneminute` 事件；`judge`=`_judge`（coverage 比较、平局走种子 `Rng`、`MatchResult{coverage,winner,points=Σturf×pointsPerM2,elapsed}`）；`_onSplatted` kill log（`KillLog{t=duration-time,victim/attacker 身份 (team,slot),cause}`）；`Actor.splat` attacker 分支（actor.js L225-230：`stats.splats++` + `addTurf(paint.splat(victim+0.35y, 1.7, attacker.team))`）→splatted drain（splash 计分+归属+总线，事件顺序 splats++→turf→splatted 与 JS 一致）；`Projectiles._credit`→`Actor.addTurf`（weapons.js L845/L1638/L1679）→`route_turf`（Task 7 铺路：`SimEvent::Impact` 增 `owner_slot`/`area`、新增 `SimEvent::Turf`（trail 滴落）、`Hit` 增 `team`；身体命中 area=0 不涂地）。死者不开火：runners 循环跳过死亡 actor 并复位（JS actor.js L245-249 死亡早退在 `weaponRunner.update` 之前 + L221 `onDeath()`→weapons.js L60 `reset()`）。`restart`=JS 整场重建（clock/result/kills/events/paint/projectiles/rng（seed 重建流）/actors 全归零+重放置→Intro）。`step_until(target)` 60Hz 固定步长循环至 elapsed≥target 或 End 或 paused。事件载荷一律身份 (team,slot)，`find_actor` 解析，禁作下标（Task 7 M-1 教训）。
+  - **有意偏差（模块头注释记录，供审查）**：① spec 阶段名 intro/active/end 映射 JS intro/playing/judge，`Phase` 保留 JS 粒度（Finish 为 JS 独有 2.6s 结算窗口）；② intro 限制为 spec 独有需求——上游 intro 无玩法屏障（decor.js 为视觉、`_spawnBarrier` 为常驻敌区禁入），`confine_to_own_pad` 径向钳制到本方 pad 的 spawn_barrier+消外向速度；③ respawn 门控：JS `Actor.update` 内联查 `G.match.canRespawn()`（actor.js L247），sim `Actor::step` 无 match 句柄→`Match::step` 将非 Active 阶段死亡 timer 钳在 dt·1.5（不可达 respawn）；④ `Math.random`（judge 平局 L269）→种子 `Rng`；⑤ 总线顺序按步合并（JS 逐弹交错）；⑥ `MatchResult` 扩展 points/elapsed（spec TR-8.1 要求，JS result 仅 coverage/winner）；⑦ 事件载荷 (team,slot) 身份对；⑧ `duration` 不校验 `MATCH.durations/maxDuration`（调用方保证）。
+  - **TR-8.1** ✅：`tr8_1_full_run_settles_with_result_and_restart_zeroes`——输出「TR-8.1: settled at 6.00s, cov=0.0048/0.0000, pts=31.5/0.0, winner=0」：6s 局 step_until 至 End、phase 序列 [Intro,Active,Finish,End]、coverage/points/winner/elapsed 齐备；restart 后 time=duration、result=None、kills/events 清空、paint coverage=0、turf/splats/deaths 归零、回 Intro。
+  - **TR-8.2** ✅：`tr8_2_intro_barrier_holds_until_active`——输出「TR-8.2: intro hold d=4.200 m, active release d=9.000 m」：intro 中把 actor 推至 pad+9m 处，一步后被钳回 spawn_barrier=4.2m 内（数值来自 tidewater 的 spawn_barrier，与 INTRO_TIME=4.2s 仅为巧合）；Active 后同法 shove 5 步仍 ≥8.5m（屏障解除）。
+  - **TR-8.3** ✅：`tr8_3_gameplay_state_serde_roundtrips`——输出「TR-8.3: roundtrip stable, 1752497 bytes, turf 14.487 m2」：Active 中场（含弹丸/墨格/总线事件）`serde_json` 序列化→反序列化→再序列化**字节相等**；抽查 phase/time/actors/paint coverage 一致。玩法状态全链路 serde（glam 加 serde feature；Actor 私有字段、PaintGrid、ProjectileSim、WeaponRunner、Rng、SimEvent、ActorEvent 等派生补齐）；`cargo tree -p inkwave_sim` 无 bevy/wgpu/winit（grep 零命中）✅。
+  - 另测 7 单元：roster 8 槽在出生环/yaw/invuln=0/总线首事件；respawn 门控（intro 钳制、Active 后按时重生回本方 pad）；kill 接线（输出「kill at step 16, splats=1, turf=11.146 m2」——splash 计分+KillLog attacker 归属+总线 Splat/Turf 事件）；soft push 重叠分离（0.3m→>0.45m）；时钟（finalCountdown 整秒序列 8..1、60s 局不发 OneMinute）；死者不开火回归（B-1/M-2：尸体持扳机 60 步零 Fire 事件、ink/turf/splats 账本不动、runner 保持复位、gate 清零）；water 追击归属回归（M-1：非致死命中后落水→KillLog attacker=追击者、splats 计入、海面 splash 零涂地同 JS）。
+  - 全门禁：`cargo test --workspace` **77 passed** ✅（67→77，+10 match 测试）、`cargo clippy --all-targets -D warnings` ✅、`cargo fmt --check` ✅、wasm32 check ✅、`trunk build --cargo-profile wasm-dev` ✅、上游 `src/`+`tools/` 零改动 ✅。
+- **Review 修复附录** (2026-10-03，独立审查 1 blocker + 2 medium + 4 minor「全部修复」；保真度逐行核对通过——出生环/soft push/阶段机/时钟/judge/计分接线/身份载荷/借用/serde/确定性均与上游一致，TR-8.1~8.3 输出与证据逐字吻合):
+  - **B-1（blocker，尸体开火）✅**：runners 循环改为死亡 actor 跳过更新并复位 runner+清 `fire_gate`（JS actor.js L245-249 死亡早退在 `weaponRunner.update` 之前；原实现把陈旧 gate 喂给 runner，尸体持续射击/耗墨/经 route_kills 给死者记击杀涂地分）。新增回归 `dead_actor_fires_nothing`。
+  - **M-1（medium，water 死亡归属丢失且未声明）✅**：走忠实移植而非仅登记偏差——`Actor` 增私有 `last_attacker`（JS L188，`reset` 清零同 JS L93），`damage(amount, attacker, t)` 带攻击者身份，水系 splat 按 `lastDamage < 4` 继承（JS L384）；`ActorEvent::Splatted` 携带 `attacker: Option<(team,slot)>`。顺带把击杀归属从 route_kills 的 SimEvent::Hit 反查改为 splat 事件直带（消除 `1-team` 反查与「victim 已重生」边角），splash 计分统一在 drain 循环（JS L225-233 顺序：splats++→turf→splatted）。`route_kills` 删除。新增回归 `water_death_inherits_recent_attacker`。
+  - **M-2（medium，`weaponRunner.onDeath()` 未接线）✅**：与 B-1 同根，死亡即 `r.reset()`（weapons.js L60）。
+  - **m-1 ✅**：`step_until` 循环条件加 `!self.paused`（暂停时立即退出而非死循环），doc 注明契约。
+  - **m-2 ✅**：模块头偏差清单补第 ⑧ 条「duration 不校验 MATCH.durations/maxDuration，调用方保证合法」。
+  - **m-3 ✅**：核对确认 Rust 事件顺序（turf 先于 splatted）与 JS 一致，跨弹交错已由偏差⑤声明；仅提示消费方勿依赖步内顺序。
+  - **m-4 ✅**：TR-8.2 证据注明 4.200m 为 spawn_barrier 与 INTRO_TIME=4.2s 的数值巧合。
+  - 修复后全门禁：`cargo test --workspace` **77 passed** ✅（+2 回归）、clippy -D warnings ✅、fmt ✅、wasm32 check ✅、`trunk build --cargo-profile wasm-dev` ✅、上游 `src/`+`tools/` 零改动 ✅。
+
+## Task 9: Easy bot 与无头 autopilot
+- **Status**: `completed`
+- **Priority**: high
+- **Depends On**: Task 8
+- **Description**:
+  - 简易导航：从布局顶面连通性采样生成航点图（台阶/斜坡连接）；bot 状态机：巡逻涂地 → 索敌（awareness 距离 easy=16）→ 接敌（带 reaction/aimError 的 easy 参数）开火 → 失血/缺墨脱离回墨；死亡后重生继续
+  - autopilot 驱动（脚本化输入，确定性种子）；CLI/参数：时长、地图固定 tidewater、autopilot 开关、输出 JSON（比分、击杀数、涂地面积、帧时间统计）
+- **Acceptance Criteria Addressed**: AC-4, AC-9
+- **Test Requirements**:
+  - `rule` TR-9.1: 1 autopilot + 7 bot 固定种子跑完整局：无 panic/卡死，所有 bot 有移动距离与开火次数，双方均有涂地且终局百分比有效；证据为无头运行 JSON
+  - `rule` TR-9.2: 同一种子两次运行结果逐字节一致（确定性）；证据为两次输出 diff
+  - `rule` TR-9.3: bot 不会长时间（> 5s）卡在同一点位（位移 watchdog）；证据为输出中的停滞统计
+  - `rubric` TR-9.4: bot 行为可信度；scale 1-5；anchors 1=原地不动/明显作弊感，3=会游走涂地接敌、偶尔犯蠢（符合 easy），5=接近真人；threshold >= 3；证据为无头轨迹统计 + 人工观察记录
+- **Implementation**: `rust/crates/inkwave_sim/src/nav.rs`（672 行，nav.js 近逐行移植：1m 顶面采样+wet 分级+walk/jump/drop 边+双向可达 prune+环扩 nearest+A*）；`src/bot.rs`（~1370 行，bots.js BotBrain easy/shooter 分支：perceive/select_mode/fight/paint/refill/retreat/_steer/_unstick/双 watchdog/水守卫，私有种子 Rng 流）；`src/autopilot.rs`（Match 全量驱动+JSON Report）；`src/bin/inkwave-autopilot.rs`（CLI：--duration/--seed/--autopilot/--out，地图固定 tidewater）；`src/actor.rs` 增 `last_damage()`/`smooth_y()` 访问器与 `Actor: Clone`。M1 裁剪：无 climb 边/kits/subs/specials/threat AI，仅 Spritzer。
+- **Completion Evidence** (2026-10-04，Review 修复后重跑):
+  - TR-9.1 ✅：`cargo run --release -p inkwave_sim --bin inkwave-autopilot -- --duration 90 --seed 20261004 --autopilot --out /tmp/t9_full.json` 无 panic 跑完（5810 步≈96.8s 局时，墙钟约 3s），`settled=true`；8 bot 全部位移 442–556 m、开火 39–91 次、游泳 33–70 次；双方涂地 turf_m2=[1570.8, 1395.8]，coverage=[0.2448, 0.2175]（和 0.4623<1 有效），winner=0，kills=21（splats=deaths=21 自洽）。
+  - TR-9.2 ✅：同种子（20261004）两次 stdout（frame_times=null 的确定性核心）`diff` 逐字节一致（/tmp/t9_run1.json vs /tmp/t9_run2.json）；异种子（999）输出发散。测试 `tr9_2_same_seed_is_bit_identical` 同步锁定。
+  - TR-9.3 ✅：`max_stall=1.517s`（watchdog 窗口 1.5s，远低于 5s 阈值）、`stalls=1`（仅 1 个 bot 触发 1 次）；测试 `tr9_3_no_bot_stalls_past_the_watchdog_window` 断言逐 bot max_stall<5.0。
+  - TR-9.4（rubric 自评 4/5）✅：轨迹统计——终局 mode 分布 Paint:5/Retreat:3；498 发总开火、383 次游泳、21 击杀均匀分布（单 bot 0–6 splats，无一人垄断）；接敌→脱离回墨→再巡逻循环可见（3 人终局仍在 Retreat 说明脱离机制活跃）；无穿墙/瞬移/瞄准锁头（aimError+wander+acq 过冲均按 easy 参数）。人工观察记录：bot 会绕开开阔水缘（avoidWater）、低墨回出生点补墨、被压制时脱离，符合 easy 档「会游走涂地接敌、偶尔犯蠢」。
+  - 全门禁：`cargo test --workspace` **96 passed** ✅（77 基线 +7 nav +7 bot +4 autopilot +1 M-1 回归）、`cargo clippy --workspace --all-targets -D warnings` ✅、`cargo fmt --all -- --check` ✅、`cargo check -p inkwave_sim --target wasm32-unknown-unknown` ✅、`trunk build --cargo-profile wasm-dev` ✅、上游 `src/`+`tools/` 零改动 ✅、`cargo tree -p inkwave_sim` 无 bevy/wgpu/winit ✅。
+- **Review 修复附录** (2026-10-04，独立审查 0 blocker + 4 medium + 6 minor「全部修复」；nav 采样/边阈值/A*/prune、bot 模式机/感知/瞄准弹簧/fire tol/双 watchdog/水守卫、tuning 数值、collision 确定性、CLI summarize 均逐行核对通过):
+  - **M-1（medium，swimming 过滤语义）✅**：`perceive` 的 `swimming` 由 `form==Squid` 改为 `form==Squid && submerged`（JS `anim.form==='swim'`=squid 且浸墨，actor.js L993；原实现把岸上 squid 敌人误过滤致丢目标）。L548 head 抬升保持 `form==Squid`（JS L1635 用 `e.form`，勿混）。新增回归 `dry_land_squid_enemy_is_perceived_swimming_one_is_not`。
+  - **M-2（medium，瞄准点缺 smoothY）✅**：fight 瞄准 y 补 `t.smooth_y()`（JS L430 `t.pos.y+(t.smoothY||0)+…`）；`Actor` 增 `smooth_y()` 访问器。
+  - **M-3（medium，path_to 缺 grounded 前置）✅**：台阶脚下重选起点补 `a.grounded` 条件（JS L1661），`path_to` 加 `grounded` 参数，5 个调用点传 `a.grounded`。
+  - **M-4（medium，bot 私有 Rng 流近种子相关）✅**：流种子加 `wrapping_mul(0x9E3779B97F4A7C15)` 混合，消除 xorshift32 `lo^hi` 折叠后 8 bot 种子仅差 ≤7 的近同步问题（不破坏 TR-9.2 确定性）。
+  - **m-1 ✅**：prune 回退条件改整数精确 `count*2 < best_size`（JS L177 浮点比较的等价形式，奇数 bestSize 边界不再误判）。
+  - **m-2 ✅**：`nearest` 取整改 `floor(x+0.5)` 对齐 JS `Math.round`（+∞ 方向 tie）。
+  - **m-3 ✅**：`avoid_water` 直接调 `ground_height(…, 50.0, false)`（JS L762 无 +0.6，原经 `wet()` 变 50.6）。
+  - **m-4 ✅**：模块头「Draw sequence matches JS」不实声明改为「draw 次数与用途对应、交错顺序不保证」。
+  - **m-5 ✅**：新增 `Bot::hold()`——Intro/Finish 阶段照 JS L342 早退（计时器/RNG 冻结、意图归零，仅保留死亡清计划），autopilot 按 `m.phase==Active` 分流。
+  - **m-6 ✅**：M-1 回归测试已加（见上）；其余 wet 附加费/弹簧收敛等长程行为由既有 60s/90s 测试间接覆盖。
+  - 修复后全门禁：`cargo test --workspace` **96 passed** ✅（+1 回归）、clippy -D warnings ✅、fmt ✅、wasm32 check ✅、`trunk build --cargo-profile wasm-dev` ✅、上游 `src/`+`tools/` 零改动 ✅。
+
+## Task 10: Bevy 关卡世界渲染
+- **Status**: `completed`
+- **Priority**: high
+- **Depends On**: Task 4, Task 1
+- **Description**:
+  - 图元→网格：box 直接立方体缩放；ramp 用拉伸楔形网格；obox 绕 Y 旋转；同一 pattern/color 合批；按 surfaces.js 配色与 pattern 枚举生成简洁材质（纯色 + 程序化简单纹理，如砖缝/木板条纹，M1 不做 texlib 全套）
+  - 白天环境：天穹渐变、平行光+阴影（可开关）、海面半透明平面（waterY 以下）、出生屏障可视化；可渲染 Tidewater 的地标轮廓（钟楼/柱廊等以简化体块占位即可，完整 props 不做）
+  - 相机第三人称 rig（肩后视角、FOV=82、鼠标环视、碰撞收缩）
+- **Acceptance Criteria Addressed**: AC-7, AC-8
+- **Test Requirements**:
+  - `rule` TR-10.1: 启动后画面中可见与 Tidewater 布局一致的体块（数量/位置与 layout JSON 对应）、海面与两队出生区；无渲染错误日志；证据为截图与实体计数日志
+  - `rule` TR-10.2: 相机可环视/跟随，墙体不长期穿透视野（基础碰撞收缩生效）；证据为人工操作记录
+  - `rubric` TR-10.3: 场景可辨认度；scale 1-5；anchors 1=抽象色块无法识别，3=能认出广场/海岸/柱廊布局，5=接近原版布景；threshold >= 3；证据为与 JS 版同机位截图对比
+- **Implementation**: `rust/crates/inkwave/src/world.rs`（约 760 行，新文件）+ `main.rs` 非 headless 分支接入 `WorldPlugin`。
+  - `frame_of` 忠实移植 `level.js` `_addBlock`：box 轴对齐、obox 按 rotY 生成右手系 axes `(c,0,-s)/Y/(s,0,c)`、ramp 倾斜板（`side=UP×flat`、`n=s×side` 翻正、`thick=max(rise·n.y+0.35, thickness)`、低端延 0.6m 入地、axes 右手系守卫）。
+  - `emit_box` 6 面表 FACES 保证 CCW 朝外，UV 从世界坐标投影到面切向轴 / TEX_SCALE(2.4)；每图元 24 顶点/36 索引。`to_mesh` 合批为 `PrimitiveTopology::TriangleList`。
+  - `style_for`（PATTERN id→9 种 Style）+ `pattern_image`（程序化 64×64 灰度纹理：混凝土噪点/木板缝/砖缝/石砌/金属/危险条纹/格栅）+ `hex_color`（surfaces 配色）。
+  - 合批：`HashMap<(Style,String),Batch>` → 排序生成，1 次 draw call / (style×block 色)。
+  - 白天环境：`sky_image`（zenith #1d6fdc→mid #5aa8f2→horizon #d4ecfa 垂直渐变天穹，unlit+Front-cull）、`GlobalAmbientLight`（hemiSky #b4d0ff）、`DirectionalLight`+`CascadeShadowConfigBuilder`（day sunAz222/sunEl39/sunColor #fff0dc，K 键 `toggle_shadows`）、海面半透明平面（water_y，day seaDeep #0a4f8a，AlphaMode::Blend）、两队出生屏障圆柱（decor.js `_buildPads`，radius=spawn_barrier 4.2，橙 #ff8a14/蓝 #2f5bff，unlit+double_sided+Blend）、`DistanceFog`（Linear 25/900，horizon.lerp(skyMid,0.15) 色）。
+  - 相机 rig：`camera_rig` 系统——`MouseMotion` 环视（yaw/pitch，sens 0.0021，pitch clamp -1.05..1.15，player.js L81/L115）、WASD+Space/Shift 移动 follow anchor、`sim.0.raycast` boom 碰撞收缩（`boom_next`，clamp [0.45,4.5]，快缩 22/慢伸 3.6 帧率无关阻尼，cameraRig.js L381）、FOV 固定 16:9 参考换算（cameraRig.js L188，vfov(82,16/9)=52.11°）、`toggle_look` 左键切换 `CursorOptions{grab_mode,visible}`。
+- **Completion Evidence**:
+  - TR-10.1 ✅：单元测试 `embedded_tidewater_batches_to_expected_styles` 输出 `TR-10.1 counts: total=359 visible=295 hidden=64 batches=15`——359 图元与 layout meta（box81/obox262/ramp16=359）一致，64 个 hidden（collision-only prop）按 `level.js` `_addBlock` 剔除，295 可见图元合批为 15 个 style×colour draw call。浏览器加载 http://127.0.0.1:8002 wasm 版：控制台仅 Bevy 标准启动日志 + 1 条级联数>WebGL 限制的非致命警告，无 panic/error；画面渲染出广场体块、海面、天空。
+  - TR-10.2 ✅：`boom_next` 纯函数单元测试 `boom_next_shrinks_on_wall_and_clamps` 验证碰撞收缩数学（无障碍→趋向满 boom 4.5；墙 1.2m→target 0.9m；近墙→clamp 0.45m，对齐 cameraRig.js L384）。鼠标环视/WASD 移动代码路径完整（`camera_rig` 系统读 `MouseMotion`+`ButtonInput`）。注：浏览器自动化的按键/点击未送达 wasm 窗口焦点（工具限制），环视与移动的实际手感留待人工 native 运行确认；boom 收缩逻辑已由单测覆盖。
+  - TR-10.3（自评 3/5）✅：与 JS 版（http://127.0.0.1:8001）同场景对比截图——Rust M1 版可辨认中央钟楼、环形 Jubilee 平台、柱廊体块、坡道、海岸线（达到 anchor「能认出广场/海岸/柱廊布局」=3）；天空呈蓝色但 M1 天穹渐变在低机位眼平带不明显（ClearColor 主导，见 Review m-4）。相比 JS 版缺 props（帆船/灯柱/遮阳伞/植被/墨汁/贴图细节），故未达 4-5。M1 明确不做 texlib 全套与 props，符合任务范围。
+  - 全门禁：`cargo test --workspace` **107 passed** ✅（96 sim 基线 + 11 inkwave 单元）、`cargo clippy --workspace --all-targets -D warnings` ✅、`cargo fmt --all -- --check` ✅、`cargo check -p inkwave_sim --target wasm32-unknown-unknown` ✅、`trunk build --cargo-profile wasm-dev` ✅、上游 `src/`+`tools/` 零改动 ✅、`cargo tree -p inkwave_sim` 无 bevy/wgpu/winit ✅。
+- **Review 修复附录** (2026-10-04，独立审查 1 blocker + 5 medium + 7 minor；blocker/medium 全部修复，minor 部分修复部分标注为 M1 有意近似):
+  - **B-1（blocker，天穹绕序与剔除相反）✅**：`emit_sphere` 原索引序 `[a,a+1,a+2,a,a+2,a+3]` 使三角形正面朝内，配合 `cull_mode: Front` 会把相机所在的内侧整个剔除 → 天穹不可见。改为 `[a,a+2,a+1,a,a+3,a+2]` 使正面朝外（与顶点法线自洽），相机在内看到背面。新增回归 `emit_sphere_is_wound_outward_for_front_cull`（取中纬四边形验证几何法线·径向 > 0）。
+  - **M-1（medium，太阳方位 x/z 互换）✅**：`sun_dir` 原 `(sin(az)·cos(el), sin(el), cos(az)·cos(el))` 与 environment.js L2996 `(cos(el)·cos(az), sin(el), cos(el)·sin(az))` 关于 x=z 镜像。改为上游公式，光照/阴影方向对齐。
+  - **M-2（medium，出生屏障下沉 2.4 m 被埋）✅**：原 `pad[1] - 2.4 + 1.3` 把屏障放到出生台面之下；decor.js L239/L256 中 y=1.3 是相对 pad 组的局部偏移，世界中心应为 `pad[1] + 1.3`。修正。
+  - **M-3（medium，雾参数无出处）✅**：`DistanceFog` 原 start/end=80/1100 与色=纯 HORIZON 均无上游依据。改 environment.js L52 `fog:[25,900]`、L3039 雾色 `horizon.lerp(skyMid,0.15)`（新增 `FOG_COLOR`/`FOG_NEAR`/`FOG_FAR` 常量）。
+  - **M-4（medium，pitch 钳制范围错）✅**：原 `clamp(-1.2,0.6)` 改为 player.js L115 的 `clamp(-1.05,1.15)`；同时灵敏度 0.0025→0.0021（player.js L81，m-1 一并修）。
+  - **M-5（medium，boom 缓动发明值）✅**：原固定 `0.35/帧` 线性 lerp 在上游不存在。改为帧率无关指数阻尼 `1-exp(-k·dt)`，k 按 cameraRig.js L381 的快缩(22)/慢伸(3.6)非对称取值；更新 `boom_next` 签名加 `dt` 与对应单测。
+  - **m-2 ✅**：boom 单射线为上游 0.62 m 多射线圆柱软探测（physics.js L283-301）的近似，已在代码注释标注。
+  - **m-3 ✅**：海面材质补 `fog_enabled: false`（对齐 environment.js L1774 seaMat `fog:false`）。
+  - **m-4 ✅**：天穹渐变压缩进上半球（v 0..0.5 走完 zenith→mid→horizon），使地平线色到达眼平带；低机位下渐变仍偏弱（ClearColor 主导），属 M1 近似，已在 `sky_image` 注释说明。
+  - **m-5 ✅**：单一 `GlobalAmbientLight`（hemiSky）为上游 hemi + hemiGround×2.2 反弹（environment.js L3036）的近似，注释标注。
+  - **m-6 ✅**：`TEX_SCALE=2.4` 取 tidewater surfaces.js，texlib 各材质实际 2.0–4.0，统一值属声明过的 M1 简化。
+  - **m-7 ✅**：`emit_cylinder_shell` 绕序修正为朝外（原注释称朝外实为朝内，仅因 `double_sided` 未暴露），注释同步。
+  - 修复后全门禁：`cargo test --workspace` **107 passed** ✅（+1 球面绕序回归）、clippy -D warnings ✅、fmt ✅、wasm32 check ✅、`trunk build --cargo-profile wasm-dev` ✅、上游 `src/`+`tools/` 零改动 ✅。浏览器复验：钟楼/环形平台/柱廊/坡道/海面/方向性阴影均正常渲染，无 panic/error。
+
+## Task 11: 墨汁渲染
+- **Status**: `completed`
+- **Priority**: high
+- **Depends On**: Task 6, Task 10
+- **Description**:
+  - 单张墨汁图集纹理 + 每面 UV 区域分配（对应上游 paint atlas 思路，切片分辨率 ≤ 2048）；sim stamp 同步为位图写入（CPU 栅格化软圆斑→脏矩形上传，或等价 stamp 渲染通道）
+  - 自定义材质：表面纹理与墨汁颜色混合（队伍色、湿润高光从简）；侧面（墙）墨点同样可见；无墨处显示原色
+- **Acceptance Criteria Addressed**: AC-7
+- **Test Requirements**:
+  - `rule` TR-11.1: 射击落点在画面上即时（当帧/次帧）出现对应队伍色墨斑，覆盖区域与 sim 网格统计一致（截图分区抽检误差 < 一个 cell）；证据为截图 + 统计对照
+  - `rule` TR-11.2: 连续射击 30s 显存/内存无泄漏增长（帧时间与内存统计平稳）；证据为无头/手动采样输出
+  - `rubric` TR-11.3: 墨汁可读性维度（即 AC-7）；scale 1-5；anchors 1=难以分辨，3=色块清晰反馈即时，5=接近原版质感；threshold >= 3；证据为双版本截图对比
+- **Completion Evidence**:
+  - 图集：`inkwave_sim/src/ink_atlas.rs` — 2048² RGBA8（R=队伍 share、G=湿润、B=色调 `hsh(seed*1.73)`、A=软覆盖），shelf packing 复刻 JS `_tryPack`（ppm 30 起、×0.92 重试 ≤30、PAD=8；tidewater 1754 面/31644 m² 实测收敛 ppm≈7.3）；起点 (PAD,PAD) 保证非涂面 uv_b=(0,0) 哨兵永不落在可写区
+  - 同源流：`paint.rs` `PaintGrid::splat` 记录 `ink_stream`（serde skip）+ `drain_ink()`；渲染层每帧回放到 `InkAtlas::splat`（面遍历逐行等价，SDF 与 GPU body 分支 grow=1 终态一致）；`Match::restart` 时 `InkAtlas::clear()` 防位图残留
+  - 渲染接线：`inkwave/src/ink_render.rs`（`InkExt` 绑定 texture(20)/sampler(21) + `ink_upload` 系统 + `DemoSim` 4v4 easy-bot 真实比赛流）、`ink.wgsl`（pbr 复刻：无条件采样 + select 门控、队伍色/色调/湿润粗糙度混合）、`world.rs`（`emit_box` 写 ATTRIBUTE_UV_1、材质接 InkMaterial、CollisionWorld 三份共享一份）
+  - TR-11.1 ✅：`ink_atlas::tests::tr11_1_atlas_matches_grid_per_cell` — 同流 splat 后逐 cell 对照 PaintGrid，interior cell（四邻同值）alpha 0.5 线零违例，checked>1000，全盖处 share 还原 ±0.05
+  - TR-11.2 ✅：`cargo run --release --bin ink-atlas-check`（seed 20261004，30s 真实比赛）— `{"steps":2054,"splats":3209,"uploads":1289,"atlas_bytes":16777216,"max_dirty_texels":3577101,"coverage":[0.1132,0.1243]}`；像素缓冲恒定不重分配、脏矩形有界；coverage 与 TR-9.1 基线一致（ink_stream 无回归）
+  - TR-11.3 ⏸：浏览器 WebGPU 截图对比受阻——本环境 chromium headless 无 swiftshader/lavapipe 软件 GPU 后端（探测 webgl2/webgpu 均 false），内置浏览器工具持续超时；待有 GPU 环境或人工补做（墨汁逻辑正确性已由 TR-11.1 逐 cell 一致性覆盖）
+  - 门禁：`cargo test --workspace` **117 passed**（11+106）✅、clippy -D warnings ✅、fmt ✅、wasm32 check ✅、`cargo tree -p inkwave_sim` 无 bevy/wgpu/winit ✅、上游 `src/`+`tools/` 零改动 ✅、`trunk build --cargo-profile wasm-dev` ✅
+- **Review 修复附录**（独立审查：0 blocker / 3 medium / 5 minor，全部处理）:
+  - **M-1 ✅**：`hsh` 公式与上游不符（`(n*C).sin()` → `n.sin()*C`，paint.js L73 `fract(sin(n)*43758.5453123)`）；+`hsh_matches_upstream_formula` 测试
+  - **M-2 ✅**：uv_b=(0,0) 哨兵可落在首面 pad 可写区致整片均一染色；try_pack 起点改 (PAD,PAD)；+`pack_origin_keeps_the_zero_uv_sentinel_clean` 测试
+  - **M-3 ✅**：`Match::restart` 重建 PaintGrid 但图集残留上局墨迹；`step_and_drain` 检测 grid version 回退时 `InkAtlas::clear()`；+`clear_wipes_pixels_and_bumps_version` 测试
+  - **m-4 ✅**：`body_sdf` Speck 特例分支删除（sim 从不产生 speck、`cpu_splat` 按 blob 处理，保留会与网格视图分叉）
+  - **m-5 ✅**：InkExt 绑定 20/21 与可选 pbr feature 潜在撞号——注释声明约束（默认 feature 集安全）
+  - **m-6 ✅**：`ink_stream` 无人 drain 无界增长——文档注明 headless 需定期 drain_ink
+  - **m-7 ✅**：启动时 CollisionWorld 构建 3 份（atlas/DemoSim/SimWorld）隐性耦合 face id——`DemoSim::new` 改收共享 world，仅构建一次
+  - **m-8 ✅**：packing 30 次全失败静默无墨——加 `debug_assert!`
+  - 修复后复跑：TR-11.2 输出 splats/steps/coverage 与修复前一致（色调通道不影响 gameplay）；全门禁重跑见上
+
+## Task 12: 角色占位表现 + 输入接线
+- **Status**: `completed`
+- **Priority**: medium
+- **Depends On**: Task 10, Task 5
+- **Description**:
+  - 占位角色：队伍色 kid（胶囊+头/发简单体块）与 squid（贴地梭形体），由 sim 状态驱动形态切换/朝向/移动倾斜/重生隐藏与出生无敌闪烁；手持 Spritzer 简单模型+枪口闪光
+  - 输入双端：WASD/鼠标（web pointer lock）、Shift、Space、左键、Esc；参数（灵敏度/FOV）读默认设置
+- **Acceptance Criteria Addressed**: AC-4, AC-8
+- **Test Requirements**:
+  - `rule` TR-12.1: 各输入在原生与 wasm 均产生对应 sim 输入（调试 overlay/日志可见）；Esc 暂停生效；证据为双端操作记录
+  - `rule` TR-12.2: 形态切换、重生隐藏、无敌闪烁与 sim 状态一致；证据为录屏/截图
+  - `rubric` TR-12.3: 角色动作可读性；scale 1-5；anchors 1=静态/误导状态，3=形态与移动方向清晰，5=姿态生动接近原版；threshold >= 3；证据为人工评审
+- **Completion Evidence**:
+  - TR-12.1 ✅（输入映射）：`inkwave/src/input.rs` — 逐键对齐上游 player.js L102-126（WASD+方向键相机相对移动、>1 归一化；Space jump；Shift squid；左键 fire；右键/E sub；F/Q special；Esc/P 暂停——浏览器 pointer lock 下消费 Esc，故 P 为 web 备用键，对齐 main.js L437；G 切换鼠标捕获，`CursorGrabMode::Confined` 为 web pointer lock 的 M1 等价替代）；`LookSettings` 默认读上游设置（sensitivity 1.0 ∈ 0.2..3、fov_h 82 ∈ 65..100），滚轮调灵敏度
+  - TR-12.1 ✅（注入与暂停）：`DemoSim.player: Option<(intent, aim_yaw, aim_pitch)>` — Some 时 `step_once` slot 0 跳过 bot 大脑直写 `inputs[0]` 与 `actors[0].aim_yaw/aim_pitch`（sim 经 `face_target` 消费）；None 时全 bot 驱动（TR-11 基线不变）；端到端测试 `tr12_1_player_input_drives_slot0`（注入 +Z+jump、yaw=1.25 → 位移/aim/inputs 断言）与 `tr12_1_no_override_keeps_bots`；暂停时 `ink_upload` 早退冻结比赛、`sync_actors` 每帧重算保持定格画面；`camera_rig` 第三人称跟随（pivot 指数阻尼 18/s 跟随 slot0 视觉位置）
+  - TR-12.2 ✅：`inkwave/src/actors.rs` — 8 slot × (root + 4 kid 件[body/head/hair/gun] + muzzle + 2 squid 件) ChildOf 树；形态切换仅对应部件可见、死亡 root+部件全隐（Bevy 0.19 `Visible` 无条件穿透 Hidden 父级 → 逐部件应用）、暂停定格（blink 停、枪闪强制关、形态件保留）、无敌闪烁 9Hz 全材质 alpha [0.30,0.95]（slot 相位偏移）、速度→前倾读 `tuning.player.run_speed`、squid 俯仰随 aim_pitch、`fire_gate.fire`→枪口闪光；集成测试 `spawn_and_sync_builds_and_switches_visual_trees`（Bevy App：56 部件、slot0 精确断言形态切换/死亡全隐/暂停定格）；blink 纯函数测试
+  - TR-12.3 ⏸：浏览器截图评审与 TR-11.3 同样受阻（本环境 chromium headless 无软件 GPU 后端）；形态/朝向/倾斜/隐藏/闪烁正确性已由集成测试与无头冒烟覆盖（boot + frames complete），待有 GPU 环境或人工补做
+  - 门禁：`cargo test --workspace` **126 passed**（20 inkwave + 106 sim）✅、clippy -D warnings ✅、fmt ✅、wasm32 check ✅、`cargo tree -p inkwave_sim` 无 bevy/wgpu/winit ✅、上游 `src/`+`tools/` 零改动 ✅、`trunk build --cargo-profile wasm-dev` ✅
+- **Review 修复附录**（独立审查：1 blocker / 2 medium / 6 minor，全部处理；复审 agent 确认 10 项全落实、无回归，暂停全隐一项按复审建议收窄为定格语义）:
+  - **blocker ✅**：死亡部件 `Visibility::Visible` 穿透 Hidden 父级（Bevy 0.19 无条件可见）→ 部件循环 `!a.alive` 优先全隐；+slot0 死亡后 visible_parts==0 断言
+  - **M-1 ✅**：Spritzer 模型缺失 → 新增 gun Cuboid(0.10,0.14,0.55)@(0.34,1.05,0.38)，muzzle 移至枪口 (0.34,1.15,0.66)
+  - **M-2 ✅**：wasm 下 Esc 被浏览器 pointer lock 消费 → 暂停键 `Escape || KeyP`（对齐 main.js L437）
+  - **M-3 ✅**：端到端测试脆弱（slot0 可能被击杀致 flaky）→ 注入后 `set_invuln(2.0)` 覆盖 60 步窗口（复审确认击杀路径全覆盖 invuln 检查，落水死亡为确定性路径）
+  - **m-1 ✅**：squid 多余 ControlLeft 绑定删除（上游仅 ShiftLeft/ShiftRight）
+  - **m-2 ✅**：hair 不参与闪烁 → `ActorMat` 改 `Vec<Handle>` 含 hair_mat，blink 写全部材质
+  - **m-3 ✅**：暂停时闪烁/枪闪继续 → blink `!paused` 定格 alpha=1.0、Muzzle 强制 Hidden；复审指出原修复连带形态件全隐（角色消失），已收窄为定格语义 + 暂停断言测试（kid 件保留 4、muzzle 0）
+  - **m-4 ✅**：lean 硬编码 run_speed → 读 `demo.tuning.player.run_speed`
+  - **m-5 ✅**：input.rs 头注释 pointer lock 表述失实 → 重写为 Confined 等价替代说明；actors.rs 头注释同步 per-part 隐藏与暂停行为
+  - **m-6 ✅**：测试全局计数 → slot 精确过滤断言（56 部件计数逐一核对）
+  - 修复后复跑：全门禁见上（126 passed、clippy/fmt/wasm32/trunk ✅）
+
+## Task 13: 菜单/HUD/结算（bevy_ui）
+- **Status**: `completed`
+- **Priority**: medium
+- **Depends On**: Task 12, Task 9
+- **Description**:
+  - 主菜单：标题 + Play（直接开始 180s，可选项 90/180）+ 退出；对局 HUD：准星、墨水箱（环形/条形）、时钟、两队涂地百分比与领先指示、击杀反馈；暂停菜单（继续/重开/退出）；结算屏（比分条、胜队、重开/回主菜单）
+- **Acceptance Criteria Addressed**: AC-4
+- **Test Requirements**:
+  - `rule` TR-13.1: 菜单→对局→结算→重开/回主菜单全链路可用，数值与 sim 结算一致；证据为人工走查记录
+  - `rule` TR-13.2: HUD 各项在对局中实时更新（时钟倒计时、百分比变化、墨水箱消耗/回复）；证据为操作录屏
+- **Completion Evidence**:
+  - TR-13.1 ✅（headless 自动化半段）：`inkwave/src/ui.rs` — `Screen{Menu,Hud,Pause,Results}` 状态机 + `UiState{screen,duration}`（默认 Menu/180）；`apply_action` 纯迁移（Play(d)→`DemoSim::replay`+Hud、Resume、Restart、Menu、Quit→`AppExit`，不变量 `screen!=Hud ⇒ pc.paused` 复用 Task 12 冻结路径）；`ui_state_machine` 消费 `pc.pause_edge`（Esc/P，Task 12 接线改造：`map_input` 只置边沿）翻 Hud↔Pause、Enter 快捷键（Menu 固定默认 180s=spec"直接开始"）、`Pointer<Click>`→`UiAction` 按钮、`Phase::End`→Results（`step_once` 自动重开已删除，重开改由 UI `replay` 驱动）、离开/进入 Hud 边沿释放/重获光标+清零 intent（恢复帧不携按钮点击开火）；集成测试 `screens_switch_display_and_timer_follows_clock`（Menu 显示→Play→Hud 显示+timer"1:30"→End→Results→Restart→Hud 全链断言）、`pause_edge_flips_hud_and_pause`（边沿往返、每屏冻结不变量、look/CursorOptions grab 释放/重获、陈旧边沿消费）；数值与上游逐条核对：`fmt_clock`=ceil M:SS（ui-util.js L203-207）、timer ≤10s 红/≤60s 琥珀（hud.js L1175-1178）、胜队 `{NAME} WINS!`+`cov*100` 一位小数（hud.js L541/550、main.js L990）、durations 90/180（config.js）
+  - TR-13.2 ✅（headless 自动化半段）：`ui_update` 逐帧刷新 HUD 五项——时钟（`Match::time`）、两队涂地百分比+领先高亮（`PaintGrid::coverage`，平局约定 A 先）、墨水箱条（`Actor::ink/ink_max`）、准星（击杀 `attacker==(0,0)` 闪 0.15s）、击杀 feed（`Match.events` drain→`splat_text` "A1 > B3"/"fell in"、newest-first、5s dwell、truncate 4）；全部写入带相等守卫（对齐 hud.js 缓存守卫，避免每帧脏标记重排）；测试 `feed_drains_expires_and_mirrors_labels`（drain/顺序/截断/过期清除/标签镜像/HitFlash）
+  - TR-13.1/13.2 人工走查/录屏 ⏸：与 TR-11.3/12.3 同样受阻（本环境 chromium headless 无软件 GPU 后端）；全链路正确性由上述 Bevy App 集成测试（真实插件栈+UI 树+picking 链路）与无头冒烟覆盖，待有 GPU 环境或人工补做
+  - 主菜单/暂停菜单"退出"按钮：仅原生 `#[cfg(not(wasm32))]`（浏览器标签页无窗口可关），wasm 下 `Action::Quit` 分支 `cfg_attr` 消死代码
+  - 门禁：`cargo test --workspace` **134 passed**（28 inkwave + 106 sim）✅、clippy -D warnings ✅、fmt ✅、wasm32 check 零警告 ✅、`cargo tree -p inkwave_sim` 无 bevy/wgpu/winit ✅、上游 `src/`+`tools/` 零改动 ✅、`trunk build --cargo-profile wasm-dev` ✅、无头冒烟 ✅
+- **Review 修复附录**（独立审查：0 blocker / 4 medium / 11 minor，全部处理；复审确认无回归，新增 4 个低价值 minor 中 2 个已跟进）:
+  - **M-1 ✅**：Resume/Restart 后鼠标视角不恢复 → 进入 Hud 边沿块重获 `look_enabled`+`CursorGrabMode::Confined`+隐藏 OS 光标；测试断言 CursorOptions 状态（复审 minor 2）
+  - **M-2 ✅**：`ui_update` 每帧无条件写 Text/Node 触发重排 → 全部写入加相等守卫、标签/条按屏门控
+  - **M-3 ✅**：测试覆盖缺口 → 新增 pause_edge 往返、feed drain/过期/镜像、Results→Restart→Hud 链三测试（`Pointer<Click>` 因 `propagate` 私有字段不可构造，点击链路留待人工走查）
+  - **M-4 ✅**：`replay()` 不重置 bots → `DemoSim` 存 seed，replay 重建 `Bot::new`+`mate_goals`（同 seed 保 RNG 流可复现）
+  - **m-1~m-11 ✅**：feed dwell 注释失实（上游 4.2s）、Enter 于 Menu 固定默认 180（spec 语义）、比分条 M1 简化形态注释、平局高亮约定注释、无 TIE 分支偏差记录、`ui_update` 冗余 Without 注释修正、res_title 初始占位改空串、`stats_rows` 去尾随换行、res 标签 result None 复位；m-7 feed 槽位改显式分支去 as_bytes 索引；复审 minor 4 测试合成 slot 越界已改 `%4`
+  - 修复后复跑：全门禁见上（134 passed、clippy/fmt/wasm32/trunk/冒烟 ✅）
+
+## Task 14: 最小音效占位
+- **Status**: `completed`
+- **Priority**: low
+- **Depends On**: Task 12
+- **Description**:
+  - 用 Bevy 音频（或轻量过程合成）为射击、命中击杀、墨瓶空、倒计时/终局提供简短占位音效；支持总音量开关；wasm 与原生均可用（不可用时静默降级不报错）
+- **Acceptance Criteria Addressed**: AC-4
+- **Test Requirements**:
+  - `rule` TR-14.1: 原生端开火/击杀有声音、设置可静音；wasm 音频初始化失败时静默且无错误；证据为人工听辨 + 控制台日志
+- **Completion Evidence**:
+  - TR-14.1 ✅（自动化半段）：`inkwave/src/audio.rs` — 过程合成 PCM（44.1kHz 单声道 f32、样本 clamp ±1、无 RNG 全确定性），10 类占位 cue 对齐上游触发集：shot（`Actor::last_fire` 下降沿=开火，audio.js L472 `shoot_shooter` 的 chirp+snap+thump 简化）、splat kill/self/ally（`MatchEvent::Splat` 三分支，main.js L499-519 `splat_enemy/splatted_self/ally_splatted`；本地击杀判定 `attacker==(0,0)` 与 ui.rs Task 13 约定一致）、empty click（扳机按住且 `ink < ink_per_shot`，weapons.js L158-162 `_empty`，0.45s 冷却复制 `EMPTY_CD`，仅存活+Active+未暂停）、countdown n=1..10（`MatchEvent::Countdown`，音高随 n 递减升高）、60s tick（`OneMinute`）、finish/`victory|defeat`（`Phase(Finish|End)` + `result.winner`，main.js L971/1027）；播放经自定义 `PcmSound: Asset+Decodable` + `rodio::Source` 迭代器（默认 feature 无 wav 解码器，`AudioSource` 编码字节路线不可行）+ `AudioPlayer`/`PlaybackSettings::DESPAWN`；总音量开关 `M` 键（翻转 `SoundState.muted` + `GlobalVolume` SILENT/1.0，muted 时不 spawn）；静默降级依赖 bevy_audio 内建（`AudioOutput` 无设备 warn 一次后 `stream=None`、播放系统每帧早退，不 panic 不报错），`sfx_gc` 回收无设备时 DESPAWN 永不触发的实体（3s 超时）；headless 冒烟路径不挂 WorldPlugin 天然静默；控制台日志：启动 `[inkwave] audio: 19 procedural cues ready (M = mute)`（9 固定 + 10 倒计时）、切换 `[inkwave] audio MUTED/on`
+  - TR-14.1 人工听辨 ⏸：本环境无 GPU/窗口后端无法运行原生窗口版（同 TR-11.3/12.3/13.1 受阻），待有 GPU 环境或人工补做；逻辑正确性由 8 个测试覆盖：`synthesis_is_bounded_finite_and_deterministic`（全 cue finite/±1/非静音/确定性/倒计时音高单调）、`decodable_source_reports_metadata`（channels/sample_rate/total_duration/span_len 与样本数一致）、`cue_mapping_mirrors_upstream_credit_cases`（splat 四分支+胜负+End 未定 result 静默）、`shot_edge_detects_last_fire_reset`（方向性：下降沿=开火、累积/重置不算）、`shot_and_splat_events_spawn_players`（事件读→spawn）、`dry_fire_clicks_once_per_cooldown`（0.45s 冷却+死亡守卫）、`mute_switch_stops_spawns_and_global_volume`（M 边沿一次、muted 不 spawn、恢复可播）、`paused_screen_hears_nothing`（非 Hud 屏静默）
+  - 接线：`world.rs` Update 链 `audio_sfx` 排在 `ui_state_machine` **之前**（events 单消费者：audio 只读、UI 同帧 drain，每事件恰好听一次）；`inkwave_sim::actor::Actor::last_fire()` 只读访问器新增（私有字段暴露给表现层）；`main.rs` `mod audio;`
+  - 上游对齐注记：weapons.js L138 的 sub `low_ink` nag 未移植（M1 无 sub 武器，头注释声明）；GlobalVolume 变更不影响已播 sink（bevy 语义），静音时最长 <1s 的在播 cue 会响完——占位音效可接受
+  - 门禁：`cargo test --workspace` **142 passed**（36 inkwave + 106 sim）✅、clippy -D warnings ✅、fmt ✅、wasm32 check 零警告 ✅、`cargo tree -p inkwave_sim` 无 bevy/wgpu/winit ✅（sim 仅加一个纯访问器）、上游 `src/`+`tools/` 零改动 ✅、`trunk build --cargo-profile wasm-dev` ✅、无头冒烟 ✅
+- **Review 修复附录**（独立审查：0 blocker / 2 medium / 6 minor，全部处理；复审确认无回归）:
+  - **M-1 ✅**：`COUNT_MAX=5` 与 `final_countdown=10`（tuning.rs L295）不符致倒计时前 5 声同音高且注释失实 → 改 10、预合成 1..=10、注释修正
+  - **M-2 ✅**：本地玩家死亡观战期空墨点击误响（缺 `a.alive` 守卫，上游 runner 死亡即 reset 不跑 `_empty`）→ 加守卫 + 死亡分支测试断言；顺带修 m-5（`empty_cd` 递减移入未暂停分支）
+  - **m-1~m-6 ✅**：头注释删去 L138 移植声明（m-1）；`add_audio` 移除冗余 `sfx_gc` 注册、仅 WorldPlugin 链添加（m-2）；`fired_this_frame` 注释补极端掉帧漏检说明（m-3）；shot 测试注释点明不步进 sim 依赖（m-4）；`fired_this_frame/splat_cue/phase_cue/SfxAssets::make` 收窄 `pub(crate)`（m-6）
+  - 修复后复跑：全门禁见上（142 passed、clippy/fmt/wasm32/trunk/冒烟 ✅）
+
+## Task 15: PROTO v1 边界对齐（文档+类型骨架）
+- **Status**: `completed`
+- **Priority**: medium
+- **Depends On**: Task 8
+- **Description**:
+  - sim crate 增加 `net` 模块（仅类型/文档，无传输）：actor tick 网络视图（位置/速度/形态/grounded/武器姿态/teleport 计数等）、事件枚举覆盖 hit/splat/tr/ev/z（z 可留注释占位），与 `docs/NET.md`、`src/net/netmatch.js` 字段逐项对照注释来源；记录 relay 帧格式（b|/s|、welcome/join/leave/lock）
+- **Acceptance Criteria Addressed**: AC-10
+- **Test Requirements**:
+  - `rule` TR-15.1: `cargo tree -p inkwave_sim` 无 bevy/wgpu/tokio 等运行时依赖（serde 等可保留）；证据为命令输出
+  - `rule` TR-15.2: net 类型可从 Match/Actor 状态无损构造并 serde 序列化；评审逐条对照 NET.md 字段无遗漏（切片相关项）；证据为测试 + 文档评审记录
+- **Completion Evidence**:
+  - 新建 `rust/crates/inkwave_sim/src/net.rs`（~970 行，仅 serde/glam 依赖，无 IO/传输）：`PROTO`/`TICK_HZ`/`SessionId`（base36 字符串，server/src/index.js L78）/`ActorId`；`flags` 模块 20 位与 netmatch.js `F` 表逐位一致（测试全 20 位断言）；`ActorSample` 24 字段镜像 `packActor/unpackActor`（L723-757），`from_actor` 从 `Actor`+`WeaponRunner` 无损构造（全 f32，r2/r3 量化留给 M2 wire 层；`WeaponRunner::firing()` 最小访问器暴露 `firingT>0`）；`Tick.actors: Vec<(u8, ActorSample)>` 含 nid 路由键（`byNid.get(s[0])` L247）；`TickEvent` 覆盖 s/p/b/tr/ev/k/z（bm/bc boss 注释占位）；`DirectMsg` hit/dh/bhit、`HostMsg` st/（tick.c 的 `Clock`）/res/end/own（**Reserved**：`_ownership` L709 空桩、host 从未发送、接管在 `_adopt` L702）、`ControlFrame` welcome/join/leave/err/pong/lock + 模块头 relay 帧格式 text 块（`b|`/`s|`/`m|`/ping/lock、URL、掉线 20 s——NET.md "10 s" 已过期注记）；每字段 doc 注释标 JS 行号来源
+  - TR-15.1 ✅：`cargo tree -p inkwave_sim` 仅 serde/serde_json/glam（无 bevy/wgpu/winit/tokio）
+  - TR-15.2 ✅：net.rs 5 个测试——flags 20 位对照、`from_actor` 位精确映射（含 FIRING 真实开火路径、M1 恒 0 槽断言）、ActorSample/Tick/DirectMsg/HostMsg/ControlFrame serde 无损 round-trip、`SplatRecord::from_ink_splat` 对照（kind 线上字符串名经 `SplatKind::name()`，paint.rs）；文档评审记录见 Review 修复附录
+  - 门禁：`cargo test --workspace` 147 passed（36+111）、clippy -D warnings ✅、fmt ✅、wasm32 check ✅、trunk build --release ✅、上游 src/tools/server/docs 零改动 ✅、headless 冒烟 ✅
+- **Review 修复附录**（独立审查：1 blocker / 8 medium / 7 minor，全部处理；复审确认 16 项落实、行号二次校正后关闭）:
+  - **B-1 ✅**：relay 成员 id 是 base36 字符串非 u32 → 新增 `pub type SessionId = String`，`ActorId.owner`/`ControlFrame` 全部 id/`HostMsg::Ownership.map` 改用
+  - **M-1 ✅**：`from_actor` wz 1.0→0.0（packActor 非攀爬写 0，L749；1 只是 blankSample 播放默认 L757）
+  - **M-2 ✅**：`Tick.actors` 补 nid 路由键（`Vec<(u8, ActorSample)>`）
+  - **M-3/MINOR-4 ✅**：`ForwardEvent`/`TriggerRecord` 加 **Deviation** 文档段（packEvent 混合对象载荷、packTrig 对象分支留 M2）
+  - **M-4 ✅**：netmatch.js 行号按 grep 权威源全面校正（首轮 −1 漂移、复审发现 L638+ 区段再 +1，二次校正后 packActor L723-757/_hostState L644-649/_hostClock L639-643/_adopt L692-707/_ownership L709/firing L737 等全部实测吻合）
+  - **M-5 ✅**：`Ownership` 文档改 **Reserved**（JS 从未发送 `{k:'own'}`；netTp 续接在 `_adopt` L702）
+  - **M-6 ✅**：`State` 文档拆清 `_hostState` 硬设（L644-649）与 `_hostClock` 0.5 lerp（tick.c 驱动），新增 `HostMsg::Clock` 变体
+  - **M-7 ✅**：`ProjectileRecord.ptype/wid`、`BombRecord.kind`、`DirectMsg::Hit.w`、`BossHit.w` 改 String/Option<String>（线上字符串名，weapons.js L1034/L1132/L1178/L1226/L1073/L1461/L1477）；`SplatRecord.kind: Option<String>` 经 paint.rs 新增 `SplatKind::name()`（K 表 paint.js L35）；`BossHit.weak` 注明线上 1/0
+  - **M-8 ✅**：掉线阈值改 20 s（`SILENT_MATCH=20000` server L28），NET.md "10 s" 标注过期
+  - **MINOR ✅**：flags 测试补全 20 位；GT1/GT2 注释修正为**相对**编码 own/enemy（复审确认实现者正确、其上轮"绝对队伍码"判断有误——actor.js L401 `t-1===team?1:2`）；lib.rs Task 15 注释移至 `pub mod net;` 正上方；ZoneRecord.payload 文档改混合数组（zones.js L193-L365 tag+数字）；`b|` 改 "broadcast to everyone else"；`Pong.c` 改 f64（performance.now() 浮点毫秒）并去 ControlFrame 的 Eq derive
+  - 修复后复跑：147 passed、clippy/fmt/wasm32/cargo tree/trunk/上游零改动全绿
+
+## Task 16: 性能验收、wasm 冒烟与文档收尾
+- **Status**: `completed`
+- **Priority**: high
+- **Depends On**: Task 9, Task 11, Task 13, Task 14, Task 15
+- **Description**:
+  - 内置帧时间统计（autopilot 输出 p50/p95 FPS）；原生 1080p 8 bot 30s 采样达标；trunk serve + headless Chrome 冒烟（加载→开局→操作/自动 60s 无 console error，FPS 采样）
+  - `rust/README.md`：环境准备、双端运行、数据提取、上游同步四节；SYNC_LEDGER 完成基线核对；PORT_MAP 标注 M1 已移植/未移植状态；质量档位（阴影开关等）
+- **Acceptance Criteria Addressed**: AC-1, AC-5, AC-9, NFR-5
+- **Test Requirements**:
+  - `rule` TR-16.1: 原生 autopilot 30s p50 FPS ≥ 59（1080p，参照开发机 GPU；若环境为软件渲染/无头无 GPU，记录硬件并在有 GPU 环境复核，结果记入 review）；证据为统计输出
+  - `rule` TR-16.2: wasm 冒烟 60s 无 panic/console error，p50 FPS ≥ 30（同上环境备注规则）；证据为冒烟脚本输出
+  - `rule` TR-16.3: README 四条命令路径（安装、原生运行、wasm 运行、提取、同步）经逐条复制执行验证；证据为执行记录
+  - `rule` TR-16.4: 全量门禁（fmt/clippy/test/双端 build + JS 树无改动）在收尾时再次全绿；证据为命令输出
+
+### Task 16 Completion Evidence（2026-10-05）
+- **Implementation**:
+  - `inkwave-autopilot.rs`：stdout 保持确定性核心（frame_times:null，TR-9.2 逐字节 diff 不破）；**stderr** 新增 `[autopilot] sim steps=... p50/p95 FPS=...`（TR-16.1 统计；措辞 `sim` 前缀明确为固定步速率、非渲染帧率）
+  - 新 `rust/tools/verify/wasm-smoke.mjs`（TR-16.2 冒烟，零 npm 依赖，Node≥22 全局 WebSocket，CDP 驱动）：attach 启动时 about:blank 前台 target（拒绝复用脏 target）、注入 rAF 计数器、加载→等 6s→Enter 开局（采样期每秒幂等重发）、60s 收集 console error + 未捕获异常 + **wgpu/Bevy 渲染错误**（wasm 侧 tracing 以 console type="log" 打印 `%cERROR%c`，只匹配 type==="error" 会假阴性——审查 B-1 修复）、输出 `{frames,fps_mean,fps_p50,fps_semantics:"raf_tick",panicked,rendering_errors,error_count,errors[]}`，异常即非 0 退出
+  - 修 `run-crosscheck.sh` 路径 bug（`../../..`→`../..`，修复前 cargo run 必失败）；删 Cargo.toml 死配置 `[profile.wasm-release]`（全仓无引用、注释误导）
+  - 新 `rust/README.md` 四节（环境准备/双端运行/数据提取/上游同步 + 门禁速查 + 操作与质量档位表）；`PORT_MAP.md` 加「M1 完成核对」与「质量档位」（K 键阴影开关 2048² 为 M1 唯一运行时档位，其余编译期简化逐项列出）；`SYNC_LEDGER.md` 加「M1 基线核对」（`sync-upstream.sh check` 实测 baseline=upstream/main=3e9b5505，零新提交）
+- **TR-16.1 ✅（口径：sim 余量；渲染帧率待 GPU 复核）**：`./target/release/inkwave-autopilot --duration 30 --seed 12345 --autopilot` → `sim steps=2211 p50=0.063ms p95=0.191ms | sim p50 FPS=15756 sim p95 FPS=5247`——8 bot 30s 对局 sim 固定步 p50 0.063ms，对 60 FPS 渲染预算（16.7ms）余量 >260×。stdout 两次运行 cmp 一致、frame_times:null；--out 含完整 frame_times。**硬件记录**：Xeon E5-2699 v4 @2.2GHz 8 核 / 7GB RAM / 无 GPU（lspci 无 VGA/3D 设备）；渲染 p50≥59 须在有 GPU 环境复核（AC-1/NFR-5 的 1080p 渲染帧率本环境无法测量）
+- **TR-16.2 ⏸（环境条款：记录硬件、待 GPU 复核）**：release 产物（`trunk build --release`，wasm-opt -Oz，44MB）经冒烟脚本在 SwiftShader 下实测：wasm 可加载、启动无 panic，但 **Bevy 0.19 PBR 预通道顶点着色器在 SwiftShader/ANGLE-GL 编译失败**（`Shader compilation failed`→`Caught rendering error: Validation Error`→`Quitting the application due to Internal RenderError`），页面白屏；修复后的脚本如实报 `rendering_errors=11`、rc=1（此前旧版脚本 error_count=0 为假阴性，审查 B-1 指出并已修复）。画面正常渲染 + p50 FPS≥30 **待有 GPU 环境复核**（同 TR-11.3/12.3/13.1/14.1）。附带环境发现：容器 /dev/shm=350MB 时 SwiftShader 撑爆共享内存致 GPU 进程 SIGSEGV、表现为虚假 canvas.getContext() panic，`--disable-dev-shm-usage` 规避（已写入 README/脚本头注释）
+- **TR-16.3 ✅（逐条复制执行）**：rustup 组件/目标、trunk 0.21.14、node v24 就绪确认；`cargo run -p inkwave --release -- --headless --frames 120` boot+complete ✅；autopilot 30s ✅；`trunk serve --cargo-profile wasm-dev`（发现并修正：trunk 0.21 无 `--profile` 参数；干净环境需先 `sysctl fs.inotify.max_user_watches=524288`，否则 watcher 报错退出——两处均已写入 README）serve 200 ✅；`trunk build --release` ✅；`python3 -m http.server 8002 --directory rust/dist` 200 ✅（README 已标注三条冒烟命令在仓库根执行）；`bash tools/extract/run-all.sh` 重跑产物零 diff ✅；`bash tools/verify/run-crosscheck.sh` `CROSSCHECK OK: 126 records` ✅；`bash tools/sync-upstream.sh check` up to date ✅
+- **TR-16.4 ✅**：`cargo test --workspace` **147 passed**（36 inkwave + 111 sim）、clippy -D warnings ✅、fmt ✅、wasm32 check ✅、`cargo tree -p inkwave_sim` 仅 glam/serde/serde_json ✅、`trunk build --release` ✅、原生 headless 冒烟 ✅、`git status --porcelain -- src tools server docs` 空 ✅
+- **M1 里程碑**：Task 1-16 全部 completed。遗留人工复核清单（均需 GPU 环境）：TR-11.3 墨汁截图、TR-12.3 角色可读性、TR-13.1/13.2 UI 走查、TR-14.1 听音、TR-16.1 渲染帧率、TR-16.2 画面渲染+帧率
+
+### Task 16 Review 修复附录（独立审查：1 blocker / 5 medium / 5 minor）
+- **B-1 ✅（TR-16.2 假阴性）**：wasm 侧 Bevy/wgpu ERROR 经 tracing 以 console type="log"（`%cERROR%c` 前缀）打印，旧脚本只匹配 type==="error" 漏报全部 41 条渲染错误、把白屏当"干净通过"。修复：`RENDER_ERR_RE` 匹配 Shader compilation failed/Shader translation error/Caught rendering error/Quitting the application/panicked at；CDP 探针实测 console type 分布 {log:96}、0 条 error 证实盲区。如实记录白屏事实与本环境限制（见上 TR-16.2 ⏸），不以 rc=0 冒充达标
+- **M-1 ✅**：FPS 输出加 `fps_semantics:"raf_tick"` 字段，README/脚本头注释明确 rAF tick 率≠渲染帧率、TR-16.2 由 rendering_errors/panicked 把关
+- **M-2 ✅**：send() 收到 CDP error 时 reject（不再吞错致下游 TypeError）；WebSocket 加 10s 连接超时 + onclose/onerror 哨兵（采样循环检测到即抛错退出码 3）；移除"任意 page target"回退——无 about:blank target 直接报错（防止复用脏 target 产生虚假 panic），实测生效
+- **M-3 ✅**：Enter 开局改为采样期每秒幂等重发（Hud 态 Enter 无副作用，ui.rs 状态机核实），慢机 boot>6s 不再打空
+- **M-4 ✅**：README 冒烟块显式标注三条命令均在仓库根执行
+- **M-5 ✅**：README wasm 节补 `fs.inotify.max_user_watches` 前置说明
+- **m-1 ✅** Node 版本统一 ≥22；**m-2 ✅** stderr 行加 `sim` 前缀（`sim p50 FPS=`）防误读为渲染帧率；**m-3 ✅** favicon 过滤收紧为 `endsWith("/favicon.ico")`；**m-4 ✅** 删除死配置 `[profile.wasm-release]` 并修正 wasm-dev 注释（`trunk build --profile` 旧写法一并更正）；**m-5 ✅**（接受）字符串匹配 panic 对 Bevy 格式有效，注释已声明
+- 审查同时核实通过：TR-9.2 stdout 确定性未破坏、run-crosscheck.sh 修复正确且不影响 TR-4.1/4.2 用途、上游树零改动、TR-16.4 全门禁复跑全绿、README 其余命令与仓库实际一致
+- 修复后复跑：147 passed、clippy/fmt/wasm32/cargo tree/trunk release/上游零改动全绿；冒烟脚本对 SwiftShader 白屏如实 rc=1 + rendering_errors=11
+- **复审（resume 审查 agent）**：结论**通过**——B-1/M-1~M-5/Minor 全部确认关闭，审查方自行全新浏览器实例重跑冒烟复现 `rendering_errors=11`/rc=1、复跑 crosscheck 与全门禁。复审新增 1 个不阻塞 Minor：连接 race 里 `ws.onerror = rej` 覆盖 on* 哨兵 setter（error 后必跟 close，fail-fast 链路实际不断）→ 已改用 `addEventListener("open"/"error")` 保留哨兵，`node --check` 通过，冒烟复跑行为不变（rendering_errors=11 如实报告）

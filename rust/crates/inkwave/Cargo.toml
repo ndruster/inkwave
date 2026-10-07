@@ -1,0 +1,16 @@
+[package]
+name = "inkwave"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Bevy application for the INKWAVE Rust port (native desktop + WASM)"
+
+[dependencies]
+inkwave_sim = { path = "../inkwave_sim" }
+bevy = "0.19.1"
+# sim crate uses glam 0.30 (Bevy 0.19 bundles 0.32); bridge at the call site.
+glam = "0.30"
+
+[[bin]]
+name = "inkwave"
+path = "src/main.rs"

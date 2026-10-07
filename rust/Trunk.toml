@@ -1,0 +1,5 @@
+# Trunk (WASM) configuration.
+# [build].target is the HTML file (default ./index.html); the Rust crate to
+# build is pointed to by <link data-trunk rel="rust" href="..."> in index.html.
+[build]
+dist = "dist"

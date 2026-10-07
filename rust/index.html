@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>INKWAVE — Rust port (M1)</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #9fd8f0; }
+      canvas { display: block; }
+    </style>
+  </head>
+  <body>
+    <!-- Build the Bevy app crate and inject the WASM loader here. -->
+    <link data-trunk rel="rust" href="crates/inkwave/Cargo.toml" data-wasm-opt="0" />
+  </body>
+</html>

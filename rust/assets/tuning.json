@@ -1,0 +1,200 @@
+{
+  "difficulty": {
+    "easy": {
+      "aimError": 0.11,
+      "aimOmega": 9,
+      "aimTurn": 7,
+      "awareness": 16,
+      "fireDiscipline": 0.55,
+      "id": "easy",
+      "name": "Chill",
+      "reaction": 0.55
+    }
+  },
+  "match": {
+    "deathMarkFade": 1.3,
+    "deathMarkLife": 5,
+    "defaultDuration": 180,
+    "durations": [
+      90,
+      180
+    ],
+    "finalCountdown": 10,
+    "maxDuration": 180,
+    "pointsPerM2": 1,
+    "teamSize": 4
+  },
+  "player": {
+    "accelAir": 14,
+    "accelGround": 42,
+    "accelSwim": 60,
+    "aimFaceMaxAcc": 380,
+    "aimFaceMaxRate": 24,
+    "aimFaceOmega": 36,
+    "airAccel": 20,
+    "airDecel": 4,
+    "airMinSpeed": 4.6,
+    "apexBand": 1.6,
+    "apexGravityMul": 0.82,
+    "climbAccel": 46,
+    "climbAttachDot": 0.5,
+    "climbDetachDot": -0.45,
+    "climbSideSpeed": 5.2,
+    "climbSpeed": 7.5,
+    "coyoteTime": 0.12,
+    "emergeDelay": 0.07,
+    "enemyInkAccel": 30,
+    "enemyInkDamageCap": 40,
+    "enemyInkDecel": 30,
+    "enemyInkDps": 20,
+    "enemyInkSpeed": 1.9,
+    "faceMaxAcc": 170,
+    "faceMaxRate": 12.5,
+    "faceOmega": 20,
+    "fallDeathY": -1.45,
+    "fallGravityMul": 1.2,
+    "fireBuffer": 0.16,
+    "footRadius": 0.24,
+    "gravity": 25,
+    "hardLandSlow": 0.72,
+    "hardLandSpeed": 11.5,
+    "hardLandTime": 0.16,
+    "height": 1.45,
+    "hp": 100,
+    "inkMax": 100,
+    "inkRefillDelay": 0.9,
+    "inkRefillKid": 9,
+    "inkRefillSwim": 42,
+    "jumpBuffer": 0.13,
+    "jumpVel": 8.4,
+    "ledgeAssist": 0.35,
+    "ledgePopCarry": 2.5,
+    "ledgePopClear": 0.42,
+    "maxFall": 40,
+    "radius": 0.38,
+    "regenDelay": 1.3,
+    "regenRate": 22,
+    "regenRateSwim": 60,
+    "respawnTime": 5.5,
+    "reverseAngle": 2.2,
+    "reverseDecel": 78,
+    "runAccel": 70,
+    "runAccelIn": 0.5,
+    "runDecel": 58,
+    "runDecelKnee": 2.2,
+    "runDecelMin": 0.4,
+    "runInKnee": 1.6,
+    "runOutKnee": 0.28,
+    "runOutMin": 0.22,
+    "runSpeed": 6,
+    "spawnInvuln": 1.6,
+    "specialChargeRate": 0.8,
+    "specialKeepOnSplat": 0.5,
+    "squidAccel": 34,
+    "squidAirAccel": 14,
+    "squidAirDecel": 3,
+    "squidBodyLift": 0.16,
+    "squidDecel": 26,
+    "squidDrySpeed": 2.9,
+    "squidFaceMaxAcc": 260,
+    "squidFaceMaxRate": 17,
+    "squidFaceOmega": 26,
+    "squidHeight": 0.55,
+    "squidStepUp": 0.24,
+    "squidTurn": 13,
+    "stepDown": 0.45,
+    "stepUp": 0.35,
+    "swimAccel": 64,
+    "swimAccelIn": 0.75,
+    "swimDecel": 42,
+    "swimFaceMaxRate": 14,
+    "swimJumpVel": 9.4,
+    "swimOutKnee": 0.22,
+    "swimSpeed": 11.8,
+    "swimTurn": 11,
+    "turnRate": 15,
+    "turnRateSlow": 1.5,
+    "waterY": -1.6
+  },
+  "schema": "inkwave.tuning.v1",
+  "source": {
+    "commit": "3e9b5505ea900cb41851b4d75f16d488552b1794",
+    "path": "src/config.js"
+  },
+  "spritzer": {
+    "blurb": "Rapid-fire all-rounder. Sprays a steady stream of ink blobs.",
+    "class": "Shooter",
+    "damage": 36,
+    "fireInterval": 0.1,
+    "id": "shooter",
+    "impactRadius": 0.85,
+    "inkPerShot": 0.95,
+    "kind": "shooter",
+    "moveSpeedFiring": 4.6,
+    "name": "Spritzer",
+    "projSpeed": 34,
+    "range": 12.5,
+    "special": "zooka",
+    "specialCost": 190,
+    "spreadAir": 11,
+    "spreadGround": 5.5,
+    "stats": {
+      "damage": 0.45,
+      "mobility": 0.7,
+      "paint": 0.6,
+      "range": 0.5,
+      "rate": 0.85
+    },
+    "straightTime": 0.13,
+    "sub": "bomb",
+    "trailEvery": 1.05,
+    "trailRadius": 0.44
+  },
+  "teamPalettes": [
+    {
+      "a": "#ff8a14",
+      "b": "#2f5bff",
+      "id": "tangerine-cobalt",
+      "names": [
+        "Tangerine",
+        "Cobalt"
+      ]
+    },
+    {
+      "a": "#ff3f9e",
+      "b": "#18d48c",
+      "id": "bubblegum-mint",
+      "names": [
+        "Bubblegum",
+        "Mint"
+      ]
+    },
+    {
+      "a": "#f2e312",
+      "b": "#8a3cff",
+      "id": "lemon-grape",
+      "names": [
+        "Lemon",
+        "Grape"
+      ]
+    },
+    {
+      "a": "#10d2e6",
+      "b": "#ff4150",
+      "id": "aqua-cherry",
+      "names": [
+        "Aqua",
+        "Cherry"
+      ]
+    },
+    {
+      "a": "#a6f01a",
+      "b": "#e02cd8",
+      "id": "lime-magenta",
+      "names": [
+        "Lime",
+        "Magenta"
+      ]
+    }
+  ]
+}

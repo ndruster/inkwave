@@ -1,0 +1,25 @@
+# INKWAVE Rust port — Cargo workspace.
+# Lives alongside the upstream JavaScript tree (which stays untouched so the
+# fork can keep merging https://github.com/jaydendavisnc/inkwave).
+[workspace]
+resolver = "2"
+members = ["crates/inkwave_sim", "crates/inkwave"]
+
+[workspace.package]
+version = "0.1.0-m1"
+edition = "2024"
+license = "MIT"
+authors = ["INKWAVE Rust port contributors"]
+repository = "https://github.com/jaydendavisnc/inkwave"
+description = "Rust/Bevy port of INKWAVE — Splatoon-style 4v4 turf-war shooter"
+
+[profile.wasm-dev]
+# Lighter than `dev` for browser iteration: a fully-unoptimised Bevy WASM is
+# ~1.4 GB and wasm-bindgen cannot process it.
+# Use: `trunk serve --cargo-profile wasm-dev` (see README). Release wasm goes
+# through `trunk build --release` (built-in `release` profile + wasm-opt -Oz
+# from index.html's data-wasm-opt).
+inherits = "dev"
+opt-level = 1
+debug = false
+lto = "thin"

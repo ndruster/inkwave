@@ -1,0 +1,13 @@
+[package]
+name = "inkwave_sim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Headless simulation core for the INKWAVE Rust port (gameplay only, no renderer)"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+glam = { version = "0.30", default-features = false, features = ["std", "serde"] }
+
+[dev-dependencies]
