@@ -1,0 +1,17 @@
+[package]
+name = "relay-shim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "TEST-ONLY native relay shim — a faithful re-implementation of server/src/index.js room semantics for integration tests. NOT a deployment target."
+
+# Test infrastructure only. This binary is NEVER a replacement for the real
+# Cloudflare Worker relay (`server/`); it exists so the Rust client stack can be
+# exercised end-to-end against PROTO v1 room semantics inside the sandbox,
+# where `wrangler dev` / the deployed relay may be unreachable. See README.md.
+
+[dependencies]
+inkwave_sim = { path = "../../crates/inkwave_sim" }
+# Plain `ws://` server for local tests — the tungstenite `handshake` feature
+# (default) gives us `accept_hdr`; no TLS backend is compiled in.
+tungstenite = "0.26"

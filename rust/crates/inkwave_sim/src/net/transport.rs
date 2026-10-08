@@ -599,6 +599,13 @@ impl NetState {
         };
         let id = ep.borrow().id.clone();
         self.members.remove(pos);
+        // Task 18 review minor ①: the Worker clears `lock` when the room
+        // empties (`_gone`, server/src/index.js L142). Mirror it so the
+        // relay's own `locked` view stays truthful for introspection —
+        // previously only the join-time `open == 0` clear (L554) hid it.
+        if self.members.iter().all(|m| !m.borrow().open) {
+            self.locked = false;
+        }
         let Some((host, _, _)) = self.host() else {
             return;
         };
@@ -1247,5 +1254,72 @@ mod tests {
         // Every frame pays ≥ 250 ms and the queue stays monotone.
         assert!(got[0].0 - t0 >= 250.0, "spike floor: {got:?}");
         assert!(got[1].0 >= got[0].0 && got[2].0 >= got[1].0);
+    }
+
+    #[test]
+    fn sim_draws_jitter_then_spike_in_that_order() {
+        // Task 18 review minor ⑥: transport.js L69 evaluates
+        // `rand()*jitter + (rand() < spike_p ? 250 : 0)` left-to-right, so
+        // the FIRST xorshift draw is the jitter multiplier and the SECOND is
+        // the spike coin-flip. Pin the exact per-frame delivery times against
+        // a replayed RNG — a swapped draw order would change every value.
+        let seed = 0x1234_5678;
+        let relay = FakeRelay::new();
+        let link = LinkSim {
+            lag_ms: 10.0,
+            jitter_ms: 40.0,
+            spike_p: 0.5,
+        };
+        let sim = Some(link);
+        let mut a = relay.transport(sim, seed);
+        let mut b = relay.transport(sim, seed ^ 0xfeed);
+        a.connect("ABC23", "a", true);
+        a.advance(1000.0);
+        b.connect("ABC23", "b", false);
+        b.advance(1000.0); // net now = 2000; welcome lands, first ping fires
+
+        // Replay b's receive-side RNG (state = `seed ^ 0xfeed | 1`, the same
+        // normalisation `FakeRelay::transport` applies). b draws on: the
+        // welcome frame (scheduled at join, arr 1000), the heartbeat pong
+        // (the pump at net 2000 delivers the welcome and fires the first
+        // ping in the same tick, arr 2000), then each broadcast (sent at
+        // 2010, 2020, 2030, 2040).
+        let mut st = (seed ^ 0xfeed) | 1;
+        let mut last = 0.0f64;
+        let mut hold = |arr: f64| -> f64 {
+            let r1 = rand01(&mut st); // jitter draw first
+            let r2 = rand01(&mut st); // spike draw second
+            let spike = if r2 < link.spike_p { SPIKE_MS } else { 0.0 };
+            let t = (arr + link.lag_ms + r1 * link.jitter_ms + spike).max(last);
+            last = t;
+            t
+        };
+        hold(1000.0); // welcome
+        hold(2000.0); // heartbeat pong (first ping fires in the welcome's pump)
+        let expect: Vec<f64> = (0..4)
+            .map(|k| hold(2010.0 + 10.0 * k as f64) - 2000.0)
+            .collect();
+
+        let mut got: Vec<f64> = Vec::new();
+        for i in 0..4u32 {
+            a.advance(10.0);
+            a.broadcast(&format!("{{\"i\":{i}}}"));
+        }
+        for _ in 0..1000 {
+            b.advance(1.0);
+            for e in b.poll_events() {
+                if let TransportEvent::Message { .. } = e {
+                    got.push(b.now() - 2000.0);
+                }
+            }
+        }
+        assert_eq!(got.len(), 4, "all frames delivered: {got:?}");
+        // `advance(1.0)` floors each delivery up to the next ms boundary.
+        for (g, e) in got.iter().zip(&expect) {
+            assert!(
+                *g >= *e - 1e-9 && *g <= e + 1.0 + 1e-9,
+                "delivery {g} vs pinned {e}: {got:?} vs {expect:?}"
+            );
+        }
     }
 }

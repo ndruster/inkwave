@@ -1,0 +1,17 @@
+[package]
+name = "net-harness"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "TEST-ONLY multi-client net driver: shim/fake modes, lag scenarios, consistency report"
+
+# Task 19 integration harness. This is a *test tool* — it is never part of
+# the game binary, the wasm build, or `inkwave_sim`'s dependency surface.
+# It drives two link stacks side by side:
+#   - fake mode: `FakeRelay`/`FakeTransport` (virtual clock, seeded SIM);
+#   - shim mode: real `NativeTransport` sockets against the test-only
+#     `relay-shim` (the `server/src/index.js` re-implementation).
+[dependencies]
+inkwave_sim = { path = "../../crates/inkwave_sim" }
+relay-shim = { path = "../relay-shim" }
+tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }

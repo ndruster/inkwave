@@ -169,9 +169,9 @@ fn io_loop(
             if closing {
                 return;
             }
-            if cmd_rx.try_recv().is_err() {
-                std::thread::sleep(Duration::from_millis(10));
-            }
+            // No probing `try_recv` here — it would consume a `Cmd::Connect`
+            // and drop it (the command is drained at the loop top instead).
+            std::thread::sleep(Duration::from_millis(10));
             continue;
         };
         match w.read() {
@@ -847,5 +847,117 @@ mod tests {
         })
         .expect("closed after err");
         assert!(!t.is_open());
+    }
+
+    // -- TR-19.2: the real NativeTransport driven end-to-end against the
+    //    test-only relay shim (`rust/tools/relay-shim`). The shim is a
+    //    separate thread server speaking full PROTO v1 room semantics, so
+    //    this exercises the whole client stack (Origin hygiene, welcome
+    //    handshake, `b|`/`s|` relay, join/leave, lock, close) against a relay
+    //    that is NOT the in-process mini-`Relay` above.
+
+    #[test]
+    fn native_transport_end_to_end_against_relay_shim() {
+        use relay_shim::{Shim, ShimConfig};
+
+        let shim = Shim::spawn(ShimConfig::relaxed()).expect("shim spawn");
+        let base = shim.url.clone();
+
+        // A creates the room.
+        let mut a = NativeTransport::new(base.clone());
+        let (mut sa, mut sb) = (Vec::new(), Vec::new());
+        a.connect("SHIM01", "Alice", true);
+        let aw = wait_for(&mut a, &mut sa, |e| {
+            matches!(e, TransportEvent::Welcome { .. })
+        })
+        .expect("a welcome from shim");
+        let (aid, ahost) = match aw {
+            TransportEvent::Welcome { id, host, members } => {
+                assert_eq!(id, host, "solo creator is host");
+                assert_eq!(members.len(), 1);
+                (id, host)
+            }
+            _ => unreachable!(),
+        };
+
+        // B joins through a second transport; both share the one shim room.
+        let mut b = NativeTransport::new(base.clone());
+        b.connect("SHIM01", "Bob", false);
+        let bw = wait_for(&mut b, &mut sb, |e| {
+            matches!(e, TransportEvent::Welcome { .. })
+        })
+        .expect("b welcome from shim");
+        let bid = match bw {
+            TransportEvent::Welcome { id, host, members } => {
+                assert_eq!(host, ahost, "host stays A");
+                assert_eq!(members.len(), 2);
+                id
+            }
+            _ => unreachable!(),
+        };
+
+        // A observes B's join (the shim's `join` fan-out).
+        wait_for(
+            &mut a,
+            &mut sa,
+            |e| matches!(e, TransportEvent::Join { id, .. } if *id == bid),
+        )
+        .expect("a sees b join");
+
+        // `b|` broadcast A to B; A must not loop back.
+        assert!(a.broadcast(r#"{"k":"t","ts":1.5,"a":[]}"#));
+        let m = wait_for(&mut b, &mut sb, |e| {
+            matches!(e, TransportEvent::Message { .. })
+        })
+        .expect("b sees a broadcast");
+        match m {
+            TransportEvent::Message { from, payload } => {
+                assert_eq!(from, aid);
+                assert_eq!(payload, r#"{"k":"t","ts":1.5,"a":[]}"#);
+            }
+            _ => unreachable!(),
+        }
+
+        // `s|to|` targeted B to A.
+        assert!(b.send_to(&aid, r#"{"k":"hit"}"#));
+        let m2 = wait_for(&mut a, &mut sa, |e| {
+            matches!(e, TransportEvent::Message { .. })
+        })
+        .expect("a sees b send_to");
+        match m2 {
+            TransportEvent::Message { from, payload } => {
+                assert_eq!(from, bid);
+                assert_eq!(payload, r#"{"k":"hit"}"#);
+            }
+            _ => unreachable!(),
+        }
+
+        // Host lock (A) -> a third join is refused with the exact ladder text,
+        // surfacing as Error (transport.js reject).
+        assert!(a.lock(true));
+        std::thread::sleep(Duration::from_millis(80));
+        let mut c = NativeTransport::new(base.clone());
+        c.connect("SHIM01", "Eve", false);
+        let err = wait_for(&mut c, &mut Vec::new(), |e| {
+            matches!(e, TransportEvent::Error { .. })
+        })
+        .expect("locked join errors");
+        match err {
+            TransportEvent::Error { e } => assert_eq!(e, "Match in progress"),
+            _ => unreachable!(),
+        }
+
+        // B leaves (explicit close) -> A sees `leave` with host still A.
+        b.close();
+        wait_for(
+            &mut a,
+            &mut sa,
+            |e| matches!(e, TransportEvent::Leave { id, host } if *id == bid && *host == aid),
+        )
+        .expect("a sees b leave");
+
+        // A closes cleanly; the shim's Drop tears the room down.
+        a.close();
+        assert!(!a.is_open());
     }
 }

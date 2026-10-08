@@ -3,7 +3,7 @@
 # fork can keep merging https://github.com/jaydendavisnc/inkwave).
 [workspace]
 resolver = "2"
-members = ["crates/inkwave_sim", "crates/inkwave"]
+members = ["crates/inkwave_sim", "crates/inkwave", "tools/relay-shim", "tools/net-harness"]
 
 [workspace.package]
 version = "0.1.0-m1"

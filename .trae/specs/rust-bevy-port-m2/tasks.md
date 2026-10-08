@@ -68,7 +68,7 @@
   - **Minor 备案（不阻塞，后续任务处理）**：① fake `part()` 不清 `locked`（join 时 open==0 清除掩盖，仅测试旋钮可观测）；② FakeRelay 未实现 `{"t":"ping","c"}`→pong（trait 路径不可观测，Task 19 shim 覆盖）；③ fake 显式 close 后在途帧仍 deliver（JS `this.ws===ws` 守卫）；④ `bytes_in` 按字节 vs JS UTF-16 码元（非 ASCII 载荷有差）；⑤ `is_local_host` 接受残缺 "172.16"（JS 正则要求尾点）；⑥ 2s 心跳节奏/多次 RTT EMA 端到端断言、SIM 双 rand 顺序钉死测试留 Task 19+ harness。
 
 ## Task 19: relay shim 与集成测试 harness（仅测试用）
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 17
 - **Description**:
@@ -80,6 +80,24 @@
   - `rule` TR-19.2: shim 与 native transport 互通（Task 18 的 connect 全流程走 shim）；证据为测试输出
   - `rule` TR-19.3: 全门禁 + JS 树与 `server/` 零改动；证据为命令输出
 - **Notes**: 若沙箱可跑 `npx wrangler dev`，追加用真实 server/ 复跑 TR-19.1 场景作为交叉验证（可达性未验证，列入实施时探测；不可达则记入用户机器复核清单）。
+- **Completion Evidence**:
+  - `rust/tools/relay-shim/`（lib+bin，TEST-ONLY 声明置顶）：`Shim::spawn(ShimConfig)` 起 accept+sweep 双线程，per-connection 线程持 tungstenite blocking socket + mpsc 出站队列。fail 阶梯按 server L70-74 逐行（v≠PROTO→refresh 文案 / create&&有人→"Room code taken" / !create&&无人→"Room not found" / ≥room_max→"Room is full" / locked&&有人→"Match in progress"），welcome roster 含己 + host=all[0]（L81-82），`b|`→`m|` 排他 fan-out（L113）、`s|to|` 含发送者（L120），`{"t":"ping","c":n}`→pong（L125，缺 c 输出 `{t:'pong'}` 对齐 JS 字符串化），lock 仅 host（match guard），裸 `"ping"`→`"pong"` 不触房间态（L52），`_gone` leave 广播 + 重选举 + 空房解锁（L133-142），ORIGIN_OK 手编译双正则（L22-23），CODE 正则（L28），MSG_MAX 丢弃（L105）、RATE/BURST_STRIKES→close(4008)（L106-109）、静默 sweep→close(4001,'Connection timed out')（L94）——阈值全部 `ShimConfig` 参数化，`relaxed()` 供快测试。已知偏差文档化：session id 确定性计数器（同 4 位 base36 形态）、name 清洗按 Unicode 标量（JS 为 UTF-16 码元）、liveness 单时间戳（JS 三路 max）。
+  - `rust/tools/net-harness/`（lib+bin+tests，TEST-ONLY）：双模式多客户端驱动器。**fake 模式**=FakeRelay/FakeTransport 虚拟时钟 + seeded LinkSim（`?netlag/&netjitter/&netspike` 语义），4 端 join→broadcast→send_to→lock→stranger 拒→离房重选举，6 项一致性 checks（roster/host 全一致、payload 到达顺序、stranger 拒且无载荷、host 保最老成员、locked 拒 join 可观测、RTT 与 sim 匹配）。**shim 模式**=真实 tungstenite socket 打 relay-shim：4 个 RawClient 直接说 PROTO v1 wire + 1 个 ProdClient 走生产 `RxState::handle` 帧语义路径（含 2s 心跳 + RTT EMA），7 项 checks（RxState client 与 raw 一致、广播顺序 pin、host 迁移、ping→pong、RTT 区间）。`cargo run -p net-harness [fake|shim|all]` 打印一致性报告，不一致 exit 1。
+  - TR-19.1 ✅：`cargo test -p relay-shim` **8 passed**——3 socket welcome 成员表/host 选举、`b|` 排他回环、`s|` 定向含己、leave 后 host 迁移、lock 后 join 拒 "Match in progress"、fail 阶梯（taken/not found/full）、ping/pong、MSG_MAX 丢弃、RATE 4008 切断、静默 sweep 4001。
+  - TR-19.2 ✅：`native_transport_end_to_end_against_relay_shim`（inkwave dev-test，relay-shim 经 `[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]` 门控，不入 app/wasm 构建）——真实 NativeTransport 走 shim：A create welcome（solo host）→B join 双端 welcome/join 互见→`b|` 排他→`s|` 定向→lock→leave 迁移→close，全流程 Origin 合规 + 帧语义正确。
+  - TR-19.3 ✅（审查修复后重跑）：fmt `--check` ✅、`clippy --workspace --all-targets -- -D warnings` 0 错 ✅、`cargo test --workspace` **194 passed**（42 inkwave + 140 sim + 8 shim + 4 harness acceptance）✅、wasm32 check（`-p inkwave -p inkwave_sim`，shim/harness 为 native-only 测试 crate 不参与 wasm 门禁）✅、`trunk build --release` exit 0 ✅、headless 冒烟（`--headless` boot+complete）✅、`cargo tree -p inkwave_sim --depth 1` 仅 glam/serde/serde_json（sim 依赖面不变）✅、JS 树（src/server/tools/docs）`git status` 零改动 ✅。
+  - harness acceptance（`tests/acceptance.rs` 4 passed）：fake 无 lag 全端一致 + RTT 全 0；fake lag/jitter/spike 全端一致 + 同种子确定性回放（clients/rtts 逐值相等）+ RTT≥lag；shim 模式全端一致；心跳端到端（`heartbeat_samples`：None 300 tick RTT 全 0 且 bytes≥8 证明心跳 pong 路径活；lag50 前 5 tick 0、[10..] 全 50±1e-9，pong 经 SIM 单向延迟）。
+  - **Notes 交叉验证 ✅**：沙箱 `npx wrangler dev`（4.145.0，本地 DO）可达——对**真实 server/**复跑 TR-19.1 场景 8/8 全绿（welcome 成员表/选举/`b|` 排他/`s|` 含己/lock 拒 join/leave 迁移 host 保最老/A 走后迁 C），shim 语义与 Worker 行为交叉核对通过。
+  - **Task 18 备案 Minor 落地**：① fake `part()` 空房清 `locked`（对齐 server L141，经 harness fake 模式 "locked refuses join" probe-join 检查可观测）；② FakeRelay 实现 `{"t":"ping","c"}`→pong（经 RxState 路径端到端断言 `heartbeat_samples`）；⑥ SIM 双 rand 顺序（jitter 先、spike 后）钉死单测 `sim_draws_jitter_then_spike_in_that_order`（replay xorshift 逐值对照）。
+  - **⚠ N-1 回归记录（诚实备案）**：Task 18 审查轮声称修复的 io_loop `try_recv` 探测（消费后丢弃 `Cmd::Connect` 的 flaky 源）**未进入 ddbe7e2 提交**——`git show ddbe7e2` 复核 L172 仍为 `if cmd_rx.try_recv().is_err() { sleep }`。本窗口随 Task 19 工作树真正落盘修复（改为无条件 sleep，注释点明命令由循环顶部统一 drain），目标测试连跑 10 次 0 失败，随本提交入仓。教训：审查修复必须 `git show HEAD` 复核落盘，不能只看工作树。
+- **Review 修复附录**（独立审查：1 BLOCKER + 1 MAJOR + 5 MINOR，结论"有条件可合入"；修复后 resume 复审逐项核对磁盘代码，结论"可合入"）:
+  - **B-1 ✅**（BLOCKER）：relay-shim `qs_decode` 合并链式 if 后未重跑 fmt（`lib.rs:543` 一处 diff）→ `cargo fmt --all`，`--check` 通过。
+  - **M-1 ✅**（MAJOR）：`RateWindow::tick` 硬编码 `strikes >= 4`、`new` 未接收 `cfg.burst_strikes`——BURST_STRIKES 配置静默失效 → 增 `burst: u32` 字段，调用点传 `cfg.burst_strikes`，判定改 `self.strikes >= self.burst`（relaxed 测试走 3×RATE 路径不受影响，8 个 shim 测试仍全绿）。
+  - **N-1' ✅**：`rand01` 的 `pub` 注释理由（"harness 用"）虚假——harness 实际未引用，钉序测试在 transport.rs 自身 cfg(test) 经同文件访问 → 改回私有 `fn rand01`，删虚假注释。
+  - **N-2 ✅（备案）**：`origin_ok` 用 `parse::<u8>()` 接受前导零（`http://172.016.0.1` 放行、JS 正则拒绝）——仅 dev origin 形态、shim 不门控生产流量 → 文档注释记录偏差，不修。
+  - **N-3 ✅（备案）**：并发 join 的 fail 阶梯检查与成员插入非原子（现不可观测，单 accept 线程串行 join 路径无竞态）→ 不阻塞，若后续多进程 harness 暴露再修。
+  - **N-4 ✅**：net-harness `prod.pump(120)` 轻微 flaky 风险与 `let _ = i;` 噪音行 → 删噪音行；pump 窗口经 194 全绿 + 连跑验证。
+  - **N-5 ✅（备案）**：sweep 线程 `sweep_ms.min(1_000)` 钳制未注明 → `ShimConfig.sweep_ms` 字段文档补记。
 
 ## Task 20: 会话状态机（NetSession）
 - **Status**: `pending`
