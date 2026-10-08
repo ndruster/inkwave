@@ -60,6 +60,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod transport;
 pub mod wire;
 
 use self::wire::JVal;

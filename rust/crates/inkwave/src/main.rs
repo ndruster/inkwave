@@ -19,6 +19,7 @@ mod actors;
 mod audio;
 mod ink_render;
 mod input;
+mod net;
 mod ui;
 mod world;
 

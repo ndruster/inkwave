@@ -36,7 +36,7 @@
   - **范围外改动归属（复审确认）**：`bench.rs` clippy 1.98 新 lint 修复（`to_vec()`）拆独立 chore 提交；M1 spec.md 开放问题勾选随 M2 spec 提交；Task 17 提交面 = net.rs、net/wire.rs、gen.mjs、net-fixtures.json。
 
 ## Task 18: 双端 Transport（WebSocket I/O）
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 17
 - **Description**:
@@ -50,6 +50,22 @@
   - `rule` TR-18.3: wasm 目标编译通过（`cargo build --target wasm32-unknown-unknown`）；浏览器实连验证并入 Task 26；证据为构建输出
   - `rule` TR-18.4: 全门禁 + sim 依赖面不变（trait 无 I/O）+ JS 树零改动；证据为命令输出
 - **Notes**: 选型记录进 PORT_MAP（spec Open Question 2 落定处）。消息大小/限速是 relay 侧行为，客户端只需不超（tick 50ms 一帧远低于 RATE=90/s）。
+- **Completion Evidence**:
+  - **Open Question 2 落定**：native = `tungstenite` 0.26 同步 API + 独立 I/O 线程 + `std::mpsc`（无 async runtime、Bevy 主线程零阻塞）；弃 `fastwebsockets`（需 tokio 栈）；TLS = `rustls-tls-webpki-roots`（离线可解析，`MaybeTlsStream::{Plain,Rustls}` 均设 50ms read timeout 保线程可唤醒）；wasm = `web-sys` WebSocket（浏览器事件回调驱动）。Cargo.toml 把 tungstenite 门进 `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`——wasm 构建不拉 rustls/getrandom（wasm32 不支持）。全文记 PORT_MAP。
+  - `inkwave_sim::net::transport`（~1240 行，纯 trait 无 I/O）：`relay_url`/`room_url`/`js_encode`（encodeURIComponent 免转义集含 `!'()*` 五 mark）/`is_local_host`/`rtt_ema` 对齐 transport.js L9-16/L44/L53；`TransportEvent`（Welcome/Join/Leave/Message/Error/Closed）+ `Transport` trait（connect/poll_events/send_raw/is_open/rtt/close + broadcast/send_to/lock 默认方法走 wire 信封）；**`RxState::handle` 为 fake/native/wasm 三实现共用的唯一帧语义路径**（pong RTT、`m|` 信封、err→reject、welcome、join/leave、`{"t":"pong","c"}` 旧式回显）；`FakeRelay`+`FakeTransport`：共享虚拟时钟 + 确定性 xorshift64* RNG，SIM 公式 `max(arrival+lag+rand*jitter+(rand<spike?250:0), last)` 每帧两次 rand 先 jitter 后 spike（L68-72 逐行），单调 last 地板复现 TCP 聚束；relay 语义对齐 server/src/index.js（welcome roster 含己、host=seq 最小、`b|` 排他、`s|` 含己、lock 仅 host、fail 阶梯四文案 L70-74、ping→pong、err 后 Error+Closed 成对、8s 握手超时）。
+  - `inkwave::net::native_transport`（tungstenite）：io_loop 线程拥有 socket+RxState+计时器（2s 心跳首拍即时/`ping_sent` 计最旧未答、8s 握手计时、epoch 用 `Instant`）；`build_and_connect` 经 `IntoClientRequest` 生成 5 必备头后**追加合规 Origin**（`origin_for`：ws→http、wss→https，过 ORIGIN_OK localhost/LAN/`:port` 形态）；`resolve_relay_base`：CLI `--relay=` > `INKWAVE_RELAY` > `INKWAVE_HOST` 探测 > PROD_RELAY；`close()`→`Cmd::Close`→`close(1000,"bye")` 不发 Closed；黑洞网络防御：closing 后连续 10×50ms read 超时即退出（Drop::join 有界）。
+  - `inkwave::net::wasm_transport`（web-sys）：`relay_url_from_location`（?relay= > hostname 探测 > PROD，对齐 L10-16）；`Closure` 挂 onmessage/onclose，`setInterval(2000)` 心跳、`setTimeout(8000)` 握手超时；`reject(e, closed_reason)` 双参——err 拒绝 (e,e)（server `close(4000,e)`），超时 ("Could not connect","Disconnected")；显式 close 先 `set_onclose(None)`。
+  - TR-18.1 ✅：`cargo test -p inkwave_sim net::transport` **11 passed**——URL 解析×2、rtt_ema、RxState 帧语义、fake 握手/路由/lock 全流程、join 阶梯四文案、8s 超时、未开放发送丢弃、lag 保序、jitter 聚束+种子确定性、spike 250ms 阻塞。
+  - TR-18.2 ✅：`cargo test -p inkwave net::` **5 passed**——`origin_for_maps_ws_scheme`、`resolve_relay_base_prefers_cli_override`、`native_connect_welcome_ping_close`（测试内起忠实模拟 server 语义的本地 ws relay：welcome 断言 + **Origin 头实捕断言 `http://127.0.0.1:<port>`** + 显式 close 无 Closed）、`native_broadcast_and_send_to_between_two_clients`（双客户端 join 可见、`b|` 排他回环、`s|` 定向含己路由）、`native_join_ladder_rejects_unknown_room`（"Room not found"+Closed 成对）。
+  - TR-18.3 ✅：`cargo check --workspace --target wasm32-unknown-unknown` 通过 + `trunk build --release` ✅（exit 0，审查修复后重跑）。浏览器实连留 Task 26。
+  - TR-18.4 ✅（审查修复后重跑）：fmt ✅、`clippy --workspace --all-targets -D warnings` 0 错 ✅、`cargo test --workspace` **180 passed**（41 inkwave + 139 sim）✅、wasm32 check ✅、trunk release ✅、headless 冒烟（`--headless --frames 120` boot+complete）✅、`cargo tree -p inkwave_sim` 仅 glam/serde/serde_json（trait 无 I/O 依赖面不变）✅、JS 树 `git status` 零改动 ✅。
+- **Review 修复附录**（独立审查：3 blocker + 若干 minor，全部处理；resume 复审确认修复正确并新报 1 项，再修后二复审"可合入"）:
+  - **B-1 ✅**：native `Message::Close` 分支 unsettled 时静默挂起到 8s 超时——拆为两条路径对齐浏览器事件序：Close 帧 unsettled 仅发 Error（reason 回退，JS `done` 吞 onClose）；socket 错误 unsettled 发 Error+Closed 成对（onerror+onclose 双触发）。
+  - **B-2 ✅**：黑洞网络下 `close()` 后对端永不回 Close，`Drop::join` 永久阻塞——closing 后累计 10 次 50ms read 超时即 return（join 有界 ~0.5s）。
+  - **B-3 ✅**：wasm 8s 超时 `Closed.reason` 误为 "Could not connect"（JS 超时 close 无 reason→'Disconnected'）——`reject` 增 closed_reason 参数，三端（fake/native/wasm）超时路径统一 Closed("Disconnected")。
+  - **N-1 ✅（resume 复审新报）**：io_loop 空闲分支 `cmd_rx.try_recv()` 探测会消费后丢弃 `Cmd::Connect`（实测 ~10-20% flaky）——删除探测，命令一律由循环顶部统一 drain；修复后目标测试连跑 10 次 0 失败。
+  - **Minor 修复**：测试 relay 畸形 `s|x`（无第二竖线）panic → `let Some(k) … else { continue }`。
+  - **Minor 备案（不阻塞，后续任务处理）**：① fake `part()` 不清 `locked`（join 时 open==0 清除掩盖，仅测试旋钮可观测）；② FakeRelay 未实现 `{"t":"ping","c"}`→pong（trait 路径不可观测，Task 19 shim 覆盖）；③ fake 显式 close 后在途帧仍 deliver（JS `this.ws===ws` 守卫）；④ `bytes_in` 按字节 vs JS UTF-16 码元（非 ASCII 载荷有差）；⑤ `is_local_host` 接受残缺 "172.16"（JS 正则要求尾点）；⑥ 2s 心跳节奏/多次 RTT EMA 端到端断言、SIM 双 rand 顺序钉死测试留 Task 19+ harness。
 
 ## Task 19: relay shim 与集成测试 harness（仅测试用）
 - **Status**: `pending`

@@ -82,7 +82,8 @@ M1 渲染为**固定简化档**，唯一运行时可调项：
 | `src/audio/music.js` / `bossAudio.js` | `inkwave::audio::music` | M2+ | |
 | `src/boss/*` | `inkwave_sim::boss` + 渲染 | M2+ | Boss 战 |
 | `src/net/netmatch.js`（825 行） | `inkwave_sim::net`（M1 类型/文档骨架） | M1（骨架） | PROTO v1 字段逐项注释；实现在 M2 |
-| `src/net/session.js` / `transport.js` / `mock.js` | `inkwave::net` | M2+ | relay 复用，协议不改 |
+| `src/net/transport.js` | `inkwave_sim::net::transport`（trait + FakeTransport）/ `inkwave::net::transport`（native + wasm） | M2 Task 18 | **选型（spec OQ-2）**：native = `tungstenite` 0.26 同步 API + 独立线程 + `std::mpsc`（Bevy 主线程零阻塞），TLS 走 `rustls-tls-webpki-roots`（纯 Rust、离线可解析）；弃 `fastwebsockets`（tokio 异步栈，违反 sim/最小依赖纪律）。wasm = `web-sys` WebSocket。必须发合规 `Origin` 头过 relay ORIGIN_OK |
+| `src/net/session.js` / `mock.js` | `inkwave::net` | M2+ | relay 复用，协议不改 |
 
 ## 仓库其他部分
 
