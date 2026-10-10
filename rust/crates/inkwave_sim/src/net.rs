@@ -60,6 +60,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod replication;
 pub mod session;
 pub mod transport;
 pub mod wire;
@@ -656,7 +657,10 @@ pub enum HostMsg {
     State {
         /// JS `match.state` string (`'playing'` etc.); Rust [`crate::match_::Phase`].
         phase: String,
-        t: f32,
+        /// `d.t` — `None` when the frame carries no `t` key; JS guards the
+        /// clock write with `typeof d.t === 'number'` (L647), so a missing
+        /// `t` must leave the guest clock untouched.
+        t: Option<f32>,
     },
     /// The host clock snapshot riding the owner tick (`msg.c = [state,
     /// r2(time)]`, `_sendTick` L197-200, every 0.5 s), consumed by
@@ -972,7 +976,7 @@ mod tests {
         let host = vec![
             HostMsg::State {
                 phase: "playing".into(),
-                t: 90.0,
+                t: Some(90.0),
             },
             HostMsg::Clock {
                 phase: "playing".into(),

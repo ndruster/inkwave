@@ -201,6 +201,13 @@ pub struct Actor {
     pub turf: f32,
     /// JS `stats.splats`: enemies this actor splatted.
     pub splats: u32,
+    /// JS `netTp` (actor.js L169): teleport counter bumped by every
+    /// `respawn()` — proxies *cut* instead of gliding across the map when it
+    /// changes (NET.md "Path", netmatch.js `_pathAt` L292). Offline it is
+    /// simply carried and never read; the replication layer ships it in the
+    /// tick's `tp` slot (netmatch.js L748 `a.netTp || 0`).
+    #[serde(default)]
+    pub net_tp: u32,
     events: Vec<ActorEvent>,
 }
 
@@ -250,6 +257,7 @@ impl Actor {
             deaths: 0,
             turf: 0.0,
             splats: 0,
+            net_tp: 0,
             events: Vec::new(),
         };
         a.reset(t);
@@ -324,6 +332,8 @@ impl Actor {
             std::f32::consts::PI
         };
         self.spawn_at(p, yaw, world, t);
+        // JS L169: a genuine teleport — bump the counter proxies snap on.
+        self.net_tp += 1;
         self.grounded = false;
         self.vel = vec3(0.0, -4.0, 0.0);
         self.events.push(ActorEvent::Respawn);
@@ -435,6 +445,16 @@ impl Actor {
     #[must_use]
     pub fn visual_y(&self) -> f32 {
         self.pos.y + self.smooth_y
+    }
+
+    /// Write the visual feet height directly (the replication proxy write,
+    /// Task 21): the wire carries `pos.y + smoothY` (netmatch.js L745), so a
+    /// proxy landing a sample sets `pos.y` to it and zeroes the smoothing —
+    /// `visual_y()` then reports exactly the sampled height.
+    pub fn set_visual_y(&mut self, y: f32) {
+        self.pos.y = y;
+        self.smooth_y = 0.0;
+        self.smooth_yv = 0.0;
     }
 
     /// JS `update(dt)`: one fixed simulation step.

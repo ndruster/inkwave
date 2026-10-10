@@ -794,12 +794,16 @@ pub fn decode_direct(v: &JVal) -> Option<DirectMsg> {
 #[must_use]
 pub fn encode_host(m: &HostMsg) -> String {
     match m {
-        // {k:'st', s, t} (L80)
-        HostMsg::State { phase, t } => obj(&[
-            ("k", js_str("st")),
-            ("s", js_str(phase)),
-            ("t", num(r2(dec(*t)))),
-        ]),
+        // {k:'st', s, t} (L80). A `None` t is dropped from the object — JS
+        // `JSON.stringify` omits `undefined` values, and `_hostState` (L647)
+        // guards the clock write with `typeof d.t === 'number'`.
+        HostMsg::State { phase, t } => {
+            let mut pairs = vec![("k", js_str("st")), ("s", js_str(phase))];
+            if let Some(t) = t {
+                pairs.push(("t", num(r2(dec(*t)))));
+            }
+            obj(&pairs)
+        }
         // The clock rides the tick as `c`, not a standalone message — encode it
         // as the `[state, r2(time)]` array for completeness.
         HostMsg::Clock { phase, t } => encode_clock(phase, *t),
@@ -849,7 +853,7 @@ pub fn decode_host(v: &JVal) -> Option<HostMsg> {
     match k {
         "st" => Some(HostMsg::State {
             phase: v.field("s").and_then(JVal::as_str)?.to_string(),
-            t: v.field("t").and_then(JVal::as_f64).unwrap_or(0.0) as f32,
+            t: v.field("t").and_then(JVal::as_f64).map(|x| x as f32),
         }),
         "res" => {
             let cov = v.field("cov").and_then(JVal::as_array)?;

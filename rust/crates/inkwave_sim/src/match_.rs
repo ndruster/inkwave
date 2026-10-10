@@ -7,7 +7,7 @@
 //!   - `Match.start` / `setState`                               -> [`Match::start`] / [`Match::set_phase`]
 //!   - `Match.update` state machine (intro 4.2 s → playing clock → finish
 //!     2.6 s → judge) and the bot-intent zeroing (L220-226)      -> [`Match::step`]
-//!   - `Match.update` soft push between actors (L231-244)        -> [`soft_push`]
+//!   - `Match.update` soft push between actors (L231-244)        -> [`soft_push_masked`]
 //!   - `Match._judge` (coverage, winner, tie-break)              -> [`Match::judge`]
 //!   - `Match._onSplatted` kill log                              -> [`Match::step`] actor drain
 //!   - `Actor.splat` attacker `stats.splats++` + splash splat     -> [`Match::step`] splat drain
@@ -17,7 +17,9 @@
 //! Out of scope (M1, per PORT_MAP): `zones` / `boss` / `practice` / `attract`
 //! modes, online roster (`_setupRoster`), `PlayerController` / `BotBrain`
 //! wiring (step inputs come from the caller — Task 9 autopilot), `teamSummary`
-//! HUD glue, `removeActor` (netcode).
+//! HUD glue. `removeActor` (netcode) lands as [`Match::remove_actor`] with
+//! the Task 21 replication layer; the host/guest gating (`follower`,
+//! match.js L106/L211/L216) is a [`Match`] field the replication layer sets.
 //!
 //! Intentional deviations from JS (recorded for review):
 //!   - **Spec phase names**: the spec compresses the lifecycle to intro →
@@ -151,8 +153,24 @@ pub enum MatchEvent {
     },
     /// Whole-second tick while `time <= finalCountdown` (JS `match:count`).
     Countdown { n: i32 },
+    /// An actor respawned (JS `on('respawn')` → netmatch `_onLocalEvent`,
+    /// L77/L139-143). The replication layer forwards it to proxies as the
+    /// `['ev','respawn']` timeline record (Task 23); the actor layer already
+    /// emits `ActorEvent::Respawn` — this only surfaces it on the match bus.
+    Respawn { team: usize, slot: usize },
     /// Clock crossed 60 s in a match longer than 60 s (JS `match:oneminute`).
     OneMinute,
+    /// A round hit a proxy actor — JS `applyHit` route `'send'` (weapons.js
+    /// L1551, netmatch.js `shouldApplyHit` L711-717): the shooter decided the
+    /// hit, the victim's *owner* must apply it. The replication layer (Task
+    /// 21) forwards `{k:'hit'}` to the owner and drops the local damage.
+    HitSend {
+        /// Attacker identity `(team, slot)`.
+        attacker: (usize, usize),
+        /// Victim identity `(team, slot)`.
+        victim: (usize, usize),
+        damage: f32,
+    },
 }
 
 /// A Turf War match: the roster (spec: 8 slots, 4v4), the paint grid, the
@@ -184,6 +202,12 @@ pub struct Match {
     pub result: Option<MatchResult>,
     pub events: Vec<MatchEvent>,
     pub kills: Vec<KillLog>,
+    /// JS `this.follower = !o.host` (match.js L106): online, a guest match
+    /// never calls time (`playing → finish`, L211) and never judges
+    /// (`finish → judge`, L216) — the host's `{k:'st'}` / `{k:'res'}` drives
+    /// those transitions through the replication layer. Offline it stays
+    /// `false` and the match runs its own state machine.
+    pub follower: bool,
     last_minute_fired: bool,
     last_count: i32,
 }
@@ -240,6 +264,7 @@ impl Match {
             result: None,
             events: Vec::new(),
             kills: Vec::new(),
+            follower: false,
             last_minute_fired: false,
             last_count: 99,
         };
@@ -273,7 +298,9 @@ impl Match {
     }
 
     /// JS `setState(s)`: phase + timer reset + `match:state` emit.
-    fn set_phase(&mut self, p: Phase) {
+    /// Public for the replication layer (Task 21): guests re-enter the
+    /// phase on the host's `{k:'st'}` (`_hostState`, netmatch.js L648).
+    pub fn set_phase(&mut self, p: Phase) {
         self.phase = p;
         self.state_t = 0.0;
         self.events.push(MatchEvent::Phase(p));
@@ -339,6 +366,24 @@ impl Match {
         t: &PlayerTuning,
         w: &Spritzer,
     ) {
+        self.step_masked(dt, inputs, None, world, t, w);
+    }
+
+    /// [`Self::step`] with the online ownership mask (Task 21 replication,
+    /// JS `Match.update` L221-244): `remote[i]` marks actor `i` a proxy —
+    /// JS `if (a.remote && nm) nm.applyRemote(a, dt); else a.update(dt)`
+    /// (L228). Proxies run no physics, no weapon runner and no input; their
+    /// state is written by the playback layer (Task 22) through
+    /// [`crate::net::replication`]. `None` = offline (every actor local).
+    pub fn step_masked(
+        &mut self,
+        dt: f32,
+        inputs: &[ActorInput],
+        remote: Option<&[bool]>,
+        world: &SimWorld,
+        t: &PlayerTuning,
+        w: &Spritzer,
+    ) {
         // JS runs the whole match once per 60 Hz frame; variable dt would
         // desync the clock, timers and the fixed-step contract.
         debug_assert!(
@@ -369,11 +414,18 @@ impl Match {
                 }
                 if self.time <= 0.0 {
                     self.time = 0.0;
-                    self.set_phase(Phase::Finish);
+                    // JS L211: online, only the host calls time — a guest
+                    // clock hitting zero waits for the host's
+                    // `{k:'st', s:'finish'}` (netmatch `_hostState` L648).
+                    if !self.follower {
+                        self.set_phase(Phase::Finish);
+                    }
                 }
             }
             Phase::Finish => {
-                if self.state_t > FINISH_TIME {
+                // JS L216: `stateT > 2.6 && !follower && !result` — the
+                // judge runs once, on the host only.
+                if self.state_t > FINISH_TIME && !self.follower && self.result.is_none() {
                     self.judge();
                 }
             }
@@ -383,10 +435,16 @@ impl Match {
         // ---- actors. JS steps bots with zeroed intents outside `playing`
         // (L220-226) and the local controller is disabled the same way; the
         // sim has no controller, so non-live steps get idle input.
+        // Online (L228): remote actors skip `Actor.update` entirely — the
+        // playback layer writes their state (Task 22), so here they are held
+        // frozen (no physics, no timers, no input).
         let live = self.phase == Phase::Active;
         let intro = self.phase == Phase::Intro;
         let can_respawn = self.can_respawn();
         for (i, a) in self.actors.iter_mut().enumerate() {
+            if remote.is_some_and(|m| m.get(i).copied().unwrap_or(false)) {
+                continue;
+            }
             let inp = if live {
                 inputs.get(i).copied().unwrap_or_default()
             } else {
@@ -412,7 +470,17 @@ impl Match {
         // call (actor.js L245-249) and `splat` fires `weaponRunner.onDeath()`
         // → `reset()` (weapons.js L60), so the runner is held reset and the
         // stale trigger gate is cleared until the respawn resets both.
-        for (a, r) in self.actors.iter_mut().zip(self.runners.iter_mut()) {
+        // Remote actors have no runner pass at all (JS L228 — `applyRemote`
+        // only poses the character).
+        for ((i, a), r) in self
+            .actors
+            .iter_mut()
+            .enumerate()
+            .zip(self.runners.iter_mut())
+        {
+            if remote.is_some_and(|m| m.get(i).copied().unwrap_or(false)) {
+                continue;
+            }
             if !a.alive {
                 r.reset();
                 a.fire_gate = FireGate::default();
@@ -423,16 +491,48 @@ impl Match {
         }
 
         // ---- soft push between actors (JS match.js L231-244; offline every
-        // actor is local, so both sides give way with weight 0.5).
-        soft_push(&mut self.actors, t);
+        // actor is local, so both sides give way with weight 0.5; online a
+        // remote squidkid is where its owner says — only the local side
+        // gives way, L239).
+        soft_push_masked(&mut self.actors, remote, t);
 
         // ---- projectiles (JS main.js L1119: after `match.update`).
-        self.projectiles
-            .step(dt, world.collision, &mut self.actors, &mut self.paint, t);
+        self.projectiles.step_masked(
+            dt,
+            world.collision,
+            &mut self.actors,
+            &mut self.paint,
+            t,
+            remote,
+        );
 
         // ---- scoring drains (JS `on('hit'/'weapon:impact')` + `_credit`).
         let pev = self.projectiles.drain_events();
         self.route_turf(&pev);
+
+        // ---- proxy hits: JS `applyHit` route `'send'` (weapons.js L1551,
+        // netmatch.js `shouldApplyHit` L711-717). The shooter decided the hit;
+        // the replication layer turns these into `{k:'hit'}` frames aimed at
+        // the victim's owner. Identities resolve as `(team, slot)` pairs —
+        // the attacker's team rides the payload's `team`, the victim's is
+        // `victim_team` (the two differ by construction: JS `applyHit` only
+        // routes enemy victims, weapons.js L1543).
+        for e in &pev {
+            if let SimEvent::HitSend {
+                attacker_slot,
+                victim_slot,
+                victim_team,
+                team,
+                damage,
+            } = e
+            {
+                self.events.push(MatchEvent::HitSend {
+                    attacker: (*team, *attacker_slot),
+                    victim: (*victim_team, *victim_slot),
+                    damage: *damage,
+                });
+            }
+        }
 
         // ---- actor events → kill log + splat bus (JS `_onSplatted`).
         // Drain into a local list first: the bus push must not overlap the
@@ -440,12 +540,20 @@ impl Match {
         // (weapon kill → the shooter; water → `lastAttacker` while
         // `lastDamage < 4`, JS actor.js L384).
         let mut splatted: Vec<SplatRecord> = Vec::new();
+        let mut respawns: Vec<(usize, usize)> = Vec::new();
         for a in self.actors.iter_mut() {
             for e in a.drain_events() {
-                if let ActorEvent::Splatted { cause, attacker } = e {
-                    splatted.push((a.team, a.slot, cause, attacker));
+                match e {
+                    ActorEvent::Splatted { cause, attacker } => {
+                        splatted.push((a.team, a.slot, cause, attacker));
+                    }
+                    ActorEvent::Respawn => respawns.push((a.team, a.slot)),
+                    _ => {}
                 }
             }
+        }
+        for (team, slot) in respawns {
+            self.events.push(MatchEvent::Respawn { team, slot });
         }
         for (vt, vs, cause, attacker) in splatted {
             // JS `splat(attacker)` attacker branch (actor.js L225-230):
@@ -494,6 +602,21 @@ impl Match {
                 cause,
             });
         }
+    }
+
+    /// JS `removeActor(a)` (match.js L169-182, the humans-only `noBots`
+    /// leave path): drop the actor and its runner from the roster. The FX /
+    /// audio / `actor:removed` bus lines are presentation-only and stay in
+    /// JS; the sim just splices both parallel arrays and resets the runner
+    /// (`a.weaponRunner.reset()`, L180).
+    pub fn remove_actor(&mut self, idx: usize) {
+        if idx >= self.actors.len() {
+            return;
+        }
+        self.actors.remove(idx);
+        // The runner is dropped with the actor — JS `a.weaponRunner.reset()`
+        // (L180) only releases JS-side references; the Rust runner owns none.
+        self.runners.remove(idx);
     }
 
     /// JS `_judge`: coverage → winner (seeded tie-break) → `judge` phase.
@@ -581,7 +704,12 @@ pub fn find_actor(actors: &[Actor], team: usize, slot: usize) -> Option<usize> {
 
 /// JS `Match.update` L231-244: pairwise horizontal separation push (both
 /// sides give way equally — offline, every actor is local).
-fn soft_push(actors: &mut [Actor], t: &PlayerTuning) {
+///
+/// Soft push with the online mask (JS L239): `ka = a.remote ? 0 :
+/// b.remote ? 1 : 0.5` — a proxy never gives way (its owner's word is the
+/// position), the local side absorbs the whole push. `None` = offline.
+fn soft_push_masked(actors: &mut [Actor], remote: Option<&[bool]>, t: &PlayerTuning) {
+    let is_remote = |i: usize| remote.is_some_and(|m| m.get(i).copied().unwrap_or(false));
     let r = t.radius * SOFT_PUSH_R;
     for i in 0..actors.len() {
         for j in i + 1..actors.len() {
@@ -596,12 +724,30 @@ fn soft_push(actors: &mut [Actor], t: &PlayerTuning) {
             if d2 < r * r && dy.abs() < SOFT_PUSH_DY && d2 > 1e-5 {
                 let d = d2.sqrt();
                 let push = r - d;
+                // JS L239: `ka = a.remote ? 0 : b.remote ? 1 : 0.5` (and the
+                // mirror for kb) — both proxies push nobody (the owner's next
+                // sample redraws them anyway).
+                let (ri, rj) = (is_remote(i), is_remote(j));
+                let ka = if ri {
+                    0.0
+                } else if rj {
+                    1.0
+                } else {
+                    SOFT_PUSH_K
+                };
+                let kb = if rj {
+                    0.0
+                } else if ri {
+                    1.0
+                } else {
+                    SOFT_PUSH_K
+                };
                 let (ax, az) = (actors[i].pos.x, actors[i].pos.z);
                 let (bx, bz) = (actors[j].pos.x, actors[j].pos.z);
-                actors[i].pos.x = ax - (dx / d) * push * SOFT_PUSH_K;
-                actors[i].pos.z = az - (dz / d) * push * SOFT_PUSH_K;
-                actors[j].pos.x = bx + (dx / d) * push * SOFT_PUSH_K;
-                actors[j].pos.z = bz + (dz / d) * push * SOFT_PUSH_K;
+                actors[i].pos.x = ax - (dx / d) * push * ka;
+                actors[i].pos.z = az - (dz / d) * push * ka;
+                actors[j].pos.x = bx + (dx / d) * push * kb;
+                actors[j].pos.z = bz + (dz / d) * push * kb;
             }
         }
     }

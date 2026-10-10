@@ -137,7 +137,7 @@
   - **N-10 ✅**：`decode_lobby` 的 `palette: 0` 死值易误读 → 注释点明占位、调用方另行按整数校验覆盖。
 
 ## Task 21: 权威切分与 host 职责（replication）
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 20
 - **Description**:
@@ -149,6 +149,20 @@
   - `rule` TR-21.2: 单测：hit 通道端到端（fake transport 双端）：A 射中 B→B owner 应用伤害→B 死亡→tp++→重生样本广播；死亡瞬间各端状态一致；证据为测试输出
   - `rule` TR-21.3: 单测：host 掉线迁移（leave 帧）→新 host 接管 bot+时钟+判定，对局可打完出结算；非 host 掉线→其 actor 转 bot；证据为测试输出
   - `rule` TR-21.4: 全门禁 + JS 树零改动；证据为命令输出
+- **Completion Evidence**:
+  - 交付：`inkwave_sim::net::replication`（新文件 ~1500 行，实现+11 测试）；接缝最小改动：`match_.rs` `follower` 门控（Active→Finish/Finish→judge 仅 `!follower`，JS L216）+ `HitSend` 事件转发 + `remove_actor`（JS `_remove` L686-690）+ `step_masked(remote: Option<&[bool]>)`（proxy 跳 `Actor::step`/`WeaponRunner::update`，JS `a.remote` L110）；`actor.rs` `set_visual_y`（proxy 落样本写 pos.y+smoothY 合成值）+ `net_tp` 重生自增；`weapon.rs` `SimEvent::HitSend`（victim remote→发帧不扣血，JS sendHit L163-167）；`net.rs`/`wire.rs` `HostMsg::State.t: Option<f32>`（JS `_hostState` L647 typeof 守卫）。
+  - TR-21.1 ✅：`cargo test -p inkwave_sim net::replication` **11 passed**——owner/proxy 划分：proxy 不受本地输入影响（drive_bots 只喂 owned）、owner actor 进 tick `a` 且 nid 路由（`tr21_1` 取 `find("t")` 帧断言 actors 集/`c` 快照 0.5s 周期/`ts` 单调）、soft push 掩码权重（`soft_push_mask_weights_follow_js_ternary`，JS match.js L239 嵌套三元逐字：双 remote ka=kb=0、local-vs-proxy 全量吸收）。
+  - TR-21.2 ✅：`tr21_2` hit 通道端到端（FakeRelay 双端真实 id）：host 射中 guest actor→`{k:'hit'}`（`hit_wire_shape_matches_js` 断言 v/a/d(r2)/w:'shot' 形状）→victim owner 即时扣血→死亡→tp++→重生样本广播对端可见；`st_frame_without_t_leaves_the_clock_alone`（缺 t 帧不清 guest 时钟）。
+  - TR-21.3 ✅：`tr21_3_host_migration`（host leave→最老 guest 接任：`follower=false`、clock_t 归零重发 `c`、bot/判定接管、nid 所有权映射不变、对局打完出结算）；`tr21_3_no_bots_stage_removes_leavers`（非 host 掉线：普通图 actor 原地转 bot 继续跑；noBots 图 `_remove` 剪除+平行数组移位）；`no_bots_bind_prunes_leavers`（JS bind L79 加载期掉线者 bind 时剪除，bot 图不动）；`apply_sample_writes_invuln_window_and_turf_ratchet`（JS applyRemote L377-378：invuln 位→0.1s 窗口、turf 只增）。
+  - TR-21.4 ✅（审查修复后重跑）：`cargo fmt --all --check` ✅、`clippy --workspace --all-targets -- -D warnings` 0 错 ✅、`cargo test --workspace` **229 passed**（42 inkwave + 175 sim（replication 11）+ 8 shim + 4 harness）✅、wasm32 check（`-p inkwave -p inkwave_sim` 口径）✅、`trunk build --release` exit 0 ✅、headless 冒烟（`--headless --frames 120` boot+complete）✅、`cargo tree -p inkwave_sim --depth 1` 仅 glam/serde/serde_json ✅、JS 树（src/server/tools/docs）`git status` 零改动 ✅。
+- **Review 修复附录**（独立审查：0 blocker / 2 major / 3 minor / 2 nit，结论"有条件可合入"；修复后 resume 复审逐条读盘核对，结论 **6/6 PASS、无新问题、可合入**）:
+  - **M-1 ✅**（MAJOR）：`soft_push_masked` 双 remote 权重误用 0.5/0.5（JS match.js L239 嵌套三元 `ka = a.remote ? 0 : b.remote ? 1 : 0.5`）→ 逐字对齐，双 proxy 谁也不动；补回归测试。
+  - **M-2 ✅**（MAJOR）：JS `bind` L79 的 noBots 加载期掉线清理缺失 → 新增 `prune_loading_leavers(m, members)`（app 传 session 成员表；no_bots 门控、own 永不剪、高→低移位），`on_leave` 删除路径重构共用 `remove_at`；补测试。
+  - **M-3 ✅（驳回，复审确认）**：审查称 `_hit` 缺 attacker.remote→'drop' 守卫——核对 JS：`_hit` L633 置 `_applyingHit=true` 后调 applyHit，`shouldApplyHit` L713 `if (this._applyingHit) return 'local'` 在 L714 attacker.remote 检查**之前**短路，JS 接收侧对 remote attacker 同样扣血——Rust 不查 attacker.remote 与 JS 一致，不改。
+  - **M-4 ✅**：`_hostState` 的 `t` 缺 typeof 守卫（JS L647）会致缺字段 st 帧清零 guest 时钟 → `HostMsg::State.t` 改 `Option<f32>`（encode Some 才写 "t" 键、decode 缺键 None、host_state `if let Some` 守卫）；golden fixture st/st_finish 均带 t，`host_messages_round_trip_to_golden_wire` 字节往返不变；补测试。
+  - **M-5 ✅**：`applyRemote` L377-378 的 invuln 0.1s 窗口与 turf `Math.max` 棘轮未落地（原拟挂 Task 22）→ `apply_sample` 直接实现（proxy 不跑 `Actor::step`，无其他递减方）；补测试。
+  - **N-6 ✅（偏差声明）**：JS `net.tp` 初值 -1（L85）/`netTp = net.tp || 0`（L702）vs Rust `net_tp` 初值 0——计数仅 Task 22 路径切断消费，Rust↔Rust 两端一致；记入模块文档。
+  - **N-7 ✅（偏差声明）**：JS 弹道命中帧内联 sendHit，Rust HitSend 经事件总线排到下一次 `update()`，最多晚一帧（1/60s）；记入模块文档。
 
 ## Task 22: 播放层（时钟 + Hermite + correction）
 - **Status**: `pending`

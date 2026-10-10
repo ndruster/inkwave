@@ -458,6 +458,50 @@ fn soft_push_separates_overlapping_bodies() {
     assert!(d > 0.45, "pair pushed apart: {d}");
 }
 
+#[test]
+fn soft_push_mask_weights_follow_js_ternary() {
+    // Review M-1: JS L239 `ka = a.remote ? 0 : b.remote ? 1 : 0.5` (kb
+    // mirrored) — two proxies push *nobody*; a local against a proxy takes
+    // the full push itself.
+    let f = fix();
+    let sim = f.sim();
+    let t = &f.tuning.player;
+    let w = &f.tuning.spritzer;
+    let mut m = Match::new(6.0, 13, &sim, t, &f.tuning.match_config);
+    for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
+        m.step(DT, &[], &sim, t, w);
+        if m.phase == Phase::Active {
+            break;
+        }
+    }
+    let overlap = |m: &mut Match| {
+        let a0 = m.actors[0].pos;
+        m.actors[1].pos = vec3(a0.x + 0.3, a0.y, a0.z);
+        m.actors[1].vel = Vec3::ZERO;
+        (a0, m.actors[1].pos)
+    };
+
+    // Both proxies: neither moves (mask skips Actor::step, so any drift
+    // could only come from the push).
+    let (p0, p1) = overlap(&mut m);
+    let both_remote = [true, true];
+    m.step_masked(DT, &[], Some(&both_remote), &sim, t, w);
+    assert_eq!(m.actors[0].pos, p0, "proxy A is not pushed");
+    assert_eq!(m.actors[1].pos, p1, "proxy B is not pushed");
+
+    // Local vs proxy: the local actor absorbs the whole separation.
+    let (p0, p1) = overlap(&mut m);
+    let one_remote = [false, true];
+    m.step_masked(DT, &[], Some(&one_remote), &sim, t, w);
+    let d = xz_dist(m.actors[0].pos, m.actors[1].pos);
+    assert!(d > 0.45, "pair pushed apart: {d}");
+    assert_eq!(m.actors[1].pos, p1, "the proxy stays put");
+    assert!(
+        (m.actors[0].pos.x - p0.x).abs() > (d - 0.3).abs() * 0.9,
+        "the local moved the full gap"
+    );
+}
+
 // ------------------------------------------------------------------ TR-8.3
 #[test]
 fn tr8_3_gameplay_state_serde_roundtrips() {

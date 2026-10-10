@@ -228,6 +228,21 @@ pub enum SimEvent {
         damage: f32,
         killed: bool,
     },
+    /// A round hit a *remote* (proxy) actor — JS `shouldApplyHit` → `'send'`
+    /// (netmatch.js L711-717, `applyHit` L1551): the shooter's client decides
+    /// the hit, the victim's owner applies it over the `{k:'hit'}` channel
+    /// (Task 21). No damage is applied locally and `killed` is not known yet
+    /// (JS: the kill confirm arrives with the victim's splat replay).
+    HitSend {
+        attacker_slot: usize,
+        victim_slot: usize,
+        /// Victim's team — the proxy identity `(victim_team, victim_slot)`
+        /// resolves to its roster entry (the attacker's `team` alone only
+        /// identifies the shooter).
+        victim_team: usize,
+        team: usize,
+        damage: f32,
+    },
     /// Trigger held but the reservoir is below `ink_per_shot` (JS
     /// `_empty()` → `emit('lowink')` + `empty_click`).
     LowInk { owner_slot: usize },
@@ -483,16 +498,35 @@ impl ProjectileSim {
         paint: &mut PaintGrid,
         t: &PlayerTuning,
     ) {
+        self.step_masked(dt, world, actors, paint, t, None);
+    }
+
+    /// [`Self::step`] with the online actor mask (Task 21): `remote[i]`
+    /// marks actor `i` as a proxy. A round that hits a proxy is *decided*
+    /// here but not applied — JS `applyHit` → `shouldApplyHit` → `'send'`
+    /// (weapons.js L1551, netmatch.js L711-717): the shooter's client
+    /// streams the damage to the victim's owner over `{k:'hit'}`, which we
+    /// surface as [`SimEvent::HitSend`]. `None` = offline (every hit local).
+    pub fn step_masked(
+        &mut self,
+        dt: f32,
+        world: &CollisionWorld,
+        actors: &mut [Actor],
+        paint: &mut PaintGrid,
+        t: &PlayerTuning,
+        remote: Option<&[bool]>,
+    ) {
         let mut i = self.list.len();
         while i > 0 {
             i -= 1;
-            if self.step_one(dt, world, actors, paint, t, i) {
+            if self.step_one(dt, world, actors, paint, t, i, remote) {
                 self.list.swap_remove(i);
             }
         }
     }
 
     /// JS `Projectiles._step(p, dt)` for `type === 'shot'`. True = despawn.
+    #[allow(clippy::too_many_arguments)]
     fn step_one(
         &mut self,
         dt: f32,
@@ -501,6 +535,7 @@ impl ProjectileSim {
         paint: &mut PaintGrid,
         t: &PlayerTuning,
         idx: usize,
+        remote: Option<&[bool]>,
     ) -> bool {
         // ---- integrate (JS order: gravity/drag, then position)
         {
@@ -550,19 +585,36 @@ impl ProjectileSim {
         if let Some((si, at, n, r)) = body_hit {
             let p = &self.list[idx];
             let (owner_slot, dmg, team) = (p.owner_slot, p.damage, p.team);
-            // JS body hit: damage + FX only — no paint splat (`_credit` is
-            // never called on this branch), so `area` is 0. The attacker
-            // identity `(team, owner_slot)` rides `damage` → `lastAttacker`
-            // (JS L188) so a later water splat of the victim can credit it.
-            let outcome = apply_hit(actors, si, dmg, Some((team, owner_slot)), t);
             let victim_slot = actors[si].slot;
-            self.push_event(SimEvent::Hit {
-                attacker_slot: owner_slot,
-                victim_slot,
-                team,
-                damage: dmg,
-                killed: outcome.killed,
-            });
+            let victim_team = actors[si].team;
+            // JS `applyHit` route (weapons.js L1549-1552): a proxy victim is
+            // hit-*decided* here but the damage lands on its owner —
+            // `shouldApplyHit` → 'send' (netmatch.js L715). The round still
+            // dies and the impact FX still fires (JS L1610 runs after the
+            // route branch).
+            let send = remote.is_some_and(|m| m.get(si).copied().unwrap_or(false));
+            if send {
+                self.push_event(SimEvent::HitSend {
+                    attacker_slot: owner_slot,
+                    victim_slot,
+                    victim_team,
+                    team,
+                    damage: dmg,
+                });
+            } else {
+                // JS body hit: damage + FX only — no paint splat (`_credit` is
+                // never called on this branch), so `area` is 0. The attacker
+                // identity `(team, owner_slot)` rides `damage` → `lastAttacker`
+                // (JS L188) so a later water splat of the victim can credit it.
+                let outcome = apply_hit(actors, si, dmg, Some((team, owner_slot)), t);
+                self.push_event(SimEvent::Hit {
+                    attacker_slot: owner_slot,
+                    victim_slot,
+                    team,
+                    damage: dmg,
+                    killed: outcome.killed,
+                });
+            }
             self.push_event(SimEvent::Impact {
                 pos: at,
                 normal: n,
