@@ -340,8 +340,9 @@ pub struct LinkSim {
 }
 
 /// xorshift64* — deterministic stand-in for `Math.random()` (NFR-M2-3).
-/// Output in `[0, 1)` with the same 53-bit shape JS uses.
-fn rand01(state: &mut u64) -> f64 {
+/// Output in `[0, 1)` with the same 53-bit shape JS uses. Also drives the
+/// session layer's room-code / roster shuffles (Task 20).
+pub(crate) fn rand01(state: &mut u64) -> f64 {
     let mut x = *state;
     x ^= x >> 12;
     x ^= x << 25;
@@ -679,8 +680,8 @@ fn mint_id(next: &mut u32) -> SessionId {
 /// The in-process relay peer: enough of `server/src/index.js` for link tests
 /// (welcome/join/leave, `b|`/`s|` routing, host election, `lock`,
 /// `ping`→`pong`). See the module docs for how it differs from the Task 19
-/// shim.
-#[derive(Debug, Default)]
+/// shim. `Clone` shares the same `NetState` (one relay, many endpoints).
+#[derive(Debug, Default, Clone)]
 pub struct FakeRelay {
     net: Rc<RefCell<NetState>>,
 }
@@ -797,6 +798,23 @@ impl FakeTransport {
     #[must_use]
     pub fn id(&self) -> SessionId {
         self.me.borrow().id.clone()
+    }
+
+    /// Test knob: simulate the relay dropping our socket without a clean
+    /// bye (the silent sweep, server/src/index.js L94) — the endpoint goes
+    /// `Closed(reason)` and the relay broadcasts `leave` to the others.
+    pub fn simulate_closed(&mut self, reason: &str) {
+        {
+            let mut b = self.me.borrow_mut();
+            b.open = false;
+            b.next_ping = f64::INFINITY;
+            b.connecting = false;
+            b.events.push_back(TransportEvent::Closed {
+                reason: reason.to_string(),
+            });
+        }
+        let mut n = self.net.borrow_mut();
+        n.part(&self.me);
     }
 }
 
