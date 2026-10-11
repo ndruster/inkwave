@@ -165,7 +165,7 @@
   - **N-7 ✅（偏差声明）**：JS 弹道命中帧内联 sendHit，Rust HitSend 经事件总线排到下一次 `update()`，最多晚一帧（1/60s）；记入模块文档。
 
 ## Task 22: 播放层（时钟 + Hermite + correction）
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 17
 - **Description**:
@@ -176,6 +176,18 @@
   - `rule` TR-22.2: 单测：lag/jitter 注入下 delay 收敛进 85–300ms 带、时钟不越界（不外推超 180ms 后不瞬移）；tp 跳变→切断不滑行；证据为测试输出
   - `rule` TR-22.3: 单测：correction——中途改写已播样本，输出无 pop（帧间差值有界）且渐近收敛新路径；Y 钳制：两端 grounded 时不穿地板；证据为测试输出
   - `rule` TR-22.4: 全门禁 + NFR-M2-2 开销断言（harness 步时增幅 < 20%）；证据为命令输出
+- **Completion Evidence**:
+  - 交付：`inkwave_sim::net::playback`（新文件 1080 行，实现+11 测试）——`on_tick`（JS `_tick` L229-264：off 最快包地板+0.0025 爬移、late/gap 60 窗、want=clamp(0.07,0.3,q95(gap)+q90(late)+0.012)）；`advance_all`（JS `_advance` L271-284：delay 快加×2 慢减×0.35 eased、|target−tr|>0.5 硬同步、±8%/−20/+25% 驶向、ahead<0.015 降至 0.5×）；`push_sample`（L249-253 单调 t 守卫+40 容量尾裁）；`path_at`（JS `_pathAt` L288-303 + `hermite` L766-786：C1 位置用 owner 速度切量、Y 地板钳制、外推 ≤0.18s 弹道、tp 不等→Hold、Early=早于最旧）；`sample`（JS `_sample` L305-346：correction 每帧 prevT 重评、1e-6<j2<16 累加、≥16 清零、临界阻尼 ω=13、handoff err+=prevRaw−S）；`apply`（JS `applyRemote` L349-429 写序：ready 边沿状态机→!ready→!alive respawn_timer→pos=S+err→vel/yaw/aim→离散 flags（GT2 先判，L371 逐字）→hp/ink→invuln 0.1 窗口→turf 棘轮→spawn_pending 隐藏）。接缝改造：`replication.rs` 收包路由进 `Playback`（`on_tick`/`push_sample`/`push_events`），每帧 `advance_all`→`sample`→`apply`（JS 帧序 now→advance→sample→发送→apply）；`on_leave` 增 sim/t 参数走 adopt 语义；`apply_sample` 测试迁移为 `tr22_apply_writes_invuln_window_and_turf_ratchet`。时间算术全 f64，wire t/ts 保持 f32（r3 量化）。
+  - TR-22.1 ✅：`tr22_1_hermite_is_c1_and_exact_through_owner_tangents`——恒速合成序列 9 个内插点误差 <1e-3（2cm 门限的 1/20）、knot 两侧连续无角点、hp u≥0.5 侧切换（L784）；`tr22_quantile_matches_js`（L761-764 floor 索引）。
+  - TR-22.2 ✅：`tr22_2_delay_stays_in_the_85_to_300ms_band`——稳态迟到 20ms 收敛 0.07 下限；单尖峰在 60 窗内时（i=150）q90 忽略之 delay 仍 ≈0.07（审查 M-4 增强：钉住 q90 双侧），20% 持续迟到 q90 命中尖峰钳到 0.3 上限；`tr22_2_extrapolation_capped_at_180ms`（L297 e≤0.18）；`tr22_1_tp_jump_cuts_the_path`（L291-292 tp 不等→Hold 不滑行）；`tr22_buffer_capacity_and_monotonic_guard`（40 容量+等 t 拒收）。
+  - TR-22.3 ✅：`tr22_3_correction_settles_without_a_pop`——中途改写已播样本，帧间 |Δpos| 有界（无 pop）且渐近收敛新路径（err/err_v 清零判据 L339-341）；`tr22_3_hermite_y_never_through_a_floor`（两端 grounded 时 y 钳进 [min−0.02, max+0.02]，L776）；`tr22_handoff_and_adopt_reset_the_path`（handoff err+=prevRaw−S、>16 清零，adopt 续 tp）。
+  - TR-22.4 ✅：`cargo fmt --all --check` ✅、`clippy --workspace --all-targets -- -D warnings` 0 错 ✅、`cargo test --workspace` **239 passed**（42 inkwave + 185 sim（playback 11）+ 8 shim + 4 harness；基线 229→239 净增 10）✅、wasm32 check ✅、`trunk build --release` exit 0 ✅、headless 冒烟 ✅、`cargo tree -p inkwave_sim --depth 1` 仅 glam/serde/serde_json ✅、JS 树（src/server/tools/docs）零改动 ✅。NFR-M2-2 开销断言：`cargo test --release -p inkwave_sim nfr_m2_2 -- --ignored --nocapture` 三臂 bench（bare=step_masked only / playback=时钟+路径+apply 手驱 20Hz 无 JSON / full=整个 Replication overlay 含 tick 编解码仅报告），5 次交错取 min p50 抗调度噪声，shown 计数断言证明 proxy 真实插值——本机 bare p50≈11.8µs、+playback≈12.9µs（**+9.4% < 20% 门限** ✅）、+full≈16.7µs（含 Task 21 JSON 编解码，不在本任务门限内）。
+- **Review 修复附录**（独立审查：0 blocker / 0 major / 4 minor / 4 nit，结论"可合入"；修复后 resume 复审读盘核对，结论 **4/4 PASS、无新问题、可合入**）:
+  - **M-1 ✅**：`apply` 的 ground_team 判序 Rust 先 GT1——JS L371 `f & F.gt2 ? 2 : f & F.gt1 ? 1 : 0` 先查 GT2（双置位损坏帧 JS 报 2）→ 改先 GT2，附逐字注释。
+  - **M-2 ✅**：偏差声明 #2 原"同一时刻"论证不属实。首轮修正误称 'splatted' 走攻击者时钟——复审纠正：JS actor.js L233 受害者 emit、netmatch.js L140 `e.actor || e.victim` 归受害者 owner，事件与死亡样本**同钟**；真实差异是事件按精确 `r3(now())` 打戳、样本按 tick 边界打包，可差 ≤1 tick(50ms)，'respawn' 同理。终版措辞 "approximately"+该论证，并补 owner 两样本间隙死而复生时 JS 短暂隐藏 vs Rust 直接 snap 的次生差异；Task 23 事件时间线关闭两缺口。
+  - **M-3 ✅**：JS L414 `landT`/`lastDamage` 每帧递增未移植且未声明 → 并入偏差声明 #3：`last_damage` 为 Actor 私有字段，读者（step/damage 内 regen/归因、bot getter）全部只跑本地 owner actor，冻结 proxy 不执行。复审指出首轮 "every sim reader" 过宽（bot.rs L350/L889 经 pub getter 也读）→ 终版措辞显式含 bot getters。
+  - **M-4 ✅**：`tr22_2` 尖峰用例 i=100 的尖峰到 i=200 断言时已滑出 60 窗，没真正钉住 q90 → 增强：i==150（尖峰仍在窗内）断言 delay≈0.07（q90 忽略单离群值）+ 新增 pb3（20% 迟到 → q90 命中 → 钳 0.3 上限），双侧钉住 q90 语义。
+  - **N-1~N-4 ✅（核对无误留档）**：`snap_now=false` 死赋值（JS L326 同为死代码，唯一读者 L329 被 handoff 排除）已删并注释声明；quantile NaN 路径、`advance_all` 空 peers、`apply` 越界 idx 均核对与 JS 行为一致，无需改。
 
 ## Task 23: 事件时间线重放（墨汁/ghost/触发）
 - **Status**: `pending`

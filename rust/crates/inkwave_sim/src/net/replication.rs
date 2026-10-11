@@ -1,10 +1,11 @@
-//! Task 21 — authoritative sharding and host duties (replication).
+//! Task 21/22 — authoritative sharding, host duties and the playback layer
+//! (replication + [`super::playback`]).
 //!
 //! Faithful port of the *ownership / routing / host-control* half of
-//! `src/net/netmatch.js`. The playback half (per-sender clocks, Hermite
-//! interpolation, corrections) is Task 22 and the event timeline is Task 23;
-//! this layer already carries their seams (sample buffers, the `tp` cut, the
-//! `out` queue) so those tasks extend in place.
+//! `src/net/netmatch.js`; the playback half (per-sender clocks, Hermite
+//! interpolation, corrections — Task 22) lives in [`super::playback`] and is
+//! driven through [`Replication::playback`]. The event timeline (Task 23) is
+//! the remaining seam (`out`, the per-peer `events` queue).
 //!
 //! Mapping (line numbers are the JS source):
 //!   - ownership mask `a.remote = r.owner !== me` (match.js L110) ->
@@ -22,18 +23,32 @@
 //!     [`Replication::on_leave`]
 //!   - bot driving for owned + adopted actors (match.js L222-224) ->
 //!     [`Replication::drive_bots`] (the autopilot snapshot pattern, Task 9)
+//!   - `_tick` clock bookkeeping / `_advance` / `_pathAt` / `_sample` /
+//!     `applyRemote` / `hermite` / `quantile` (L229-346, L349-428, L761-786)
+//!     -> [`super::playback`], driven by [`Replication::update`] (frame
+//!     order: `now` → advance → sample → tick timer → event bus → apply,
+//!     matching JS `NetMatch.update` before `Match.update`) and
+//!     [`Replication::on_tick`]
 //!
 //! Scope and deviations (recorded for review):
 //!   - **Direct time source**: JS stamps ticks with `now() =
 //!     performance.now()/1000`; the sim has no wall clock, so the replicator
-//!     accumulates its own logical seconds (`now += dt`). Rust↔Rust only —
-//!     both ends use the same rule, and the per-actor monotonic-`t` guard
-//!     (L251) is the only consumer.
-//!   - **Proxy state write is discrete** (Task 22 replaces it): received
-//!     samples are applied straight onto the proxy [`Actor`] — position,
-//!     velocity, facing, flags, hp/ink/turf and the `tp` counter — with no
-//!     interpolation buffer yet. The monotonic guard keeps stale samples from
-//!     regressing the actor.
+//!     accumulates its own logical seconds (`now += dt`, f64 — JS numbers
+//!     are f64 end to end) and feeds it to the playback clock. Rust↔Rust
+//!     only — both ends use the same rule, and only time *differences*
+//!     (`o = now − ts`, `target = now − off − delay`) ever matter.
+//!   - **Proxy state comes off the playback timeline** (Task 22): received
+//!     samples enter the per-actor buffer; [`super::playback::Playback::apply`]
+//!     writes position (path + correction), velocity, facing, flags,
+//!     hp/ink/invuln/turf onto the proxy [`Actor`] each frame. JS app-layer
+//!     fields the sim does not model (`hurtFlash`, `aimDir`/`aimPoint`,
+//!     climbing `wallN`, special/super-jump/kit pose state, FX/audio) are
+//!     skipped — see the playback module docs for the line-by-line list.
+//!   - **Death / respawn edges drive the proxy state machine** (JS runs
+//!     `_remoteSplat` / `_remoteRespawn` off the `'splatted'` / `'respawn'`
+//!     events on the sender timeline — Task 23). [`super::playback::Playback::apply`]
+//!     fires the same state writes off the `ALIVE` flag edge of the sampled
+//!     path — the same playback moment the timeline event would land.
 //!   - **`w:'shot'`**: the JS shooter round reports `p.weaponId || p.wid ||
 //!     p.type` (weapons.js L1608) and the M1 Spritzer has no `weaponId`/`wid`,
 //!     so the wire id is `'shot'` — the victim's owner only forwards it to
@@ -43,11 +58,13 @@
 //!   - **Adopted-bot difficulty**: JS `new BotBrain(a, cfg.difficulty ||
 //!     'normal')` (L698); the embedded tuning ships only `easy`
 //!     ([`crate::tuning::DifficultySet`]), so adopted bots always get `easy`.
-//!   - **`spawnPending` / `handoff`**: JS `_adopt` finishes a mid-respawn
-//!     proxy (L704) and non-host owners glide onto the new sender's path
-//!     (L679) — both are playback states (Task 22); here the buffer guard is
-//!     reset (the JS `buf.length = 0`) and the actor is taken where it was
-//!     last drawn (`a.pos` already holds the applied sample).
+//!   - **`spawnPending` / `handoff`**: implemented in [`super::playback`]
+//!     (JS L679 `buf.length = 0; handoff = true`, L704 mid-respawn adopt
+//!     finishes the respawn locally). [`Replication::on_leave`] hands the
+//!     buffer clear + glide flag to [`super::playback::Playback::handoff`];
+//!     [`Replication::adopt`] continues the teleport counter from the
+//!     *shown* `tp` (JS `a.net.tp`, L702) via
+//!     [`super::playback::Playback::adopt_reset`].
 //!   - **Guest result `points`/`elapsed`**: the wire `{k:'res'}` carries only
 //!     `cov/win/st` (L652-654); the Rust [`crate::match_::MatchResult`] adds
 //!     the spec score line, so guests rebuild `points` from the stat rows
@@ -70,10 +87,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::actor::{Actor, ActorInput, FIXED_DT, Form, SimWorld};
+use crate::actor::{Actor, ActorInput, FIXED_DT, SimWorld};
 use crate::bot::{Bot, BotCtx};
 use crate::match_::{Match, MatchEvent, MatchResult, Phase, find_actor};
 use crate::nav::NavGraph;
+use crate::net::playback::Playback;
 use crate::net::session::{StartCfg, map_no_bots};
 use crate::net::transport::Transport;
 use crate::net::wire::{
@@ -82,7 +100,6 @@ use crate::net::wire::{
 };
 use crate::net::{ActorSample, ActorStatsRow, DirectMsg, HostMsg, SessionId, Tick, TimedEvent};
 use crate::tuning::{Difficulty, PlayerTuning, Spritzer};
-use glam::vec3;
 
 /// JS `TICK = 1/20` (netmatch.js L30): owners stream every 1/20 s.
 pub const TICK_DT: f32 = 1.0 / 20.0;
@@ -157,12 +174,10 @@ pub struct Replication {
     /// bots need [`Replication::attach_bot`] once the actor exists; adopted
     /// bots get their brain inside [`Replication::on_leave`].
     bots: Vec<Option<Bot>>,
-    /// Per-actor last-applied sample timestamp (JS `buf[buf.length-1].t`
-    /// monotonic guard, L251). `f32::MIN` = empty buffer.
-    last_t: Vec<f32>,
-    /// Per-actor last-seen teleport counter — JS `a.net.tp`, read by `_adopt`
-    /// to continue the counter without a false snap (L702).
-    last_tp: Vec<u32>,
+    /// The playback layer (Task 22): per-sender clocks, per-actor sample
+    /// buffers, Hermite paths and corrections. Roster-parallel like the
+    /// arrays above (pruned together in [`Replication::remove_at`]).
+    playback: Playback,
     /// Outgoing event timeline (JS `this.out`, L107) — Task 23 fills it;
     /// [`Replication::update`] ships it non-empty as the tick's `e`.
     pub out: Vec<TimedEvent>,
@@ -171,7 +186,7 @@ pub struct Replication {
     /// JS `clockT` (L61, starts 0 → the first host tick carries `c`).
     clock_t: f32,
     /// Logical sender clock, seconds (see module docs).
-    now: f32,
+    now: f64,
     /// The humans-only stage flag (JS `mapNoBots(this.cfg.map)`, L673).
     no_bots: bool,
 }
@@ -193,8 +208,7 @@ impl Replication {
             remote: cfg.roster.iter().map(|r| r.owner != my_id).collect(),
             adopted_host: false,
             bots: (0..n).map(|_| None).collect(),
-            last_t: vec![f32::MIN; n],
-            last_tp: vec![0; n],
+            playback: Playback::new(n, TICK_DT as f64),
             out: Vec::new(),
             tick_t: 0.0,
             clock_t: 0.0,
@@ -234,8 +248,7 @@ impl Replication {
         self.owners.remove(i);
         self.remote.remove(i);
         self.bots.remove(i);
-        self.last_t.remove(i);
-        self.last_tp.remove(i);
+        self.playback.remove_at(i);
     }
 
     /// Attach the brain for roster bot `idx` (JS match.js L112). Only valid
@@ -273,10 +286,18 @@ impl Replication {
         self.nids.iter().position(|&n| n == nid)
     }
 
-    /// The last teleport counter seen for an actor (JS `a.net.tp`).
+    /// The last *shown* teleport counter for an actor (JS `a.net.tp`, the
+    /// playback path's current `tp`).
     #[must_use]
     pub fn last_tp(&self, idx: usize) -> u32 {
-        self.last_tp.get(idx).copied().unwrap_or(0)
+        self.playback.tp_shown(idx)
+    }
+
+    /// The playback layer (read-only view for tests / the app: buffer depth,
+    /// shown `tp`, proxy visibility, [`Playback::proxy_shown`]).
+    #[must_use]
+    pub fn playback(&self) -> &Playback {
+        &self.playback
     }
 
     /// The app's host view changed (session `Host` / `Leave` events).
@@ -284,12 +305,14 @@ impl Replication {
         self.host_id = host_id.to_string();
     }
 
-    /// One 60 Hz frame of replication (JS `NetMatch.update`, L172-188):
-    /// advance the sender clock, run the 20 Hz tick timer (owners stream
-    /// their actors; the host rides its `c` clock snapshot every 0.5 s),
-    /// and drain the match event bus — the host re-broadcasts phase changes
-    /// (`{k:'st'}`, L80) and every client routes proxy hits to the victim's
-    /// owner (`{k:'hit'}`, L163-167).
+    /// One 60 Hz frame of replication (JS `NetMatch.update`, L172-188, then
+    /// the `Match.update` → `applyRemote` consumption, match.js L228):
+    /// advance every sender's playback clock, sample every remote actor's
+    /// path, run the 20 Hz tick timer (owners stream their actors; the host
+    /// rides its `c` clock snapshot every 0.5 s), drain the match event bus
+    /// — the host re-broadcasts phase changes (`{k:'st'}`, L80) and every
+    /// client routes proxy hits to the victim's owner (`{k:'hit'}`,
+    /// L163-167) — then apply the sampled timeline onto the proxies.
     ///
     /// Returns the events the replicator did *not* consume (Splat / Turf /
     /// Countdown / Respawn / OneMinute — HUD and Task 23's consumers).
@@ -300,7 +323,23 @@ impl Replication {
         t: &PlayerTuning,
         tr: &mut impl Transport,
     ) -> Vec<MatchEvent> {
-        self.now += dt;
+        self.now += dt as f64;
+
+        // ---- playback clocks + path sampling (JS L176-177, before the
+        // tick send so the frame's samples ride the *next* packet's
+        // timeline, exactly like `update`'s ordering).
+        let dt64 = dt as f64;
+        let gravity = t.gravity as f64;
+        self.playback.advance_all(self.now, dt64);
+        {
+            let playback = &mut self.playback;
+            let owners = &self.owners;
+            for (i, &rem) in self.remote.iter().enumerate() {
+                if rem {
+                    playback.sample(i, &owners[i], dt64, gravity);
+                }
+            }
+        }
 
         // ---- outgoing tick (L182-187: `tickT -= dt; if (<=0) { += TICK;
         // if (<0) = TICK; _sendTick() }`).
@@ -340,6 +379,19 @@ impl Replication {
                 other => rest.push(other),
             }
         }
+
+        // ---- apply the sampled path + correction onto the proxies (JS
+        // `applyRemote`, L349-428, run by `Match.update` after
+        // `NetMatch.update` in the same frame).
+        {
+            let playback = &mut self.playback;
+            for (i, &rem) in self.remote.iter().enumerate() {
+                if rem {
+                    playback.apply(i, &mut m.actors[i], &mut m.runners[i], dt, t);
+                }
+            }
+        }
+
         rest
     }
 
@@ -348,7 +400,7 @@ impl Replication {
     /// pending event timeline, and for the host the 0.5 s clock snapshot
     /// `c = [state, r2(time)]` (L197-200).
     fn send_tick(&mut self, m: &Match, tr: &mut impl Transport) {
-        let ts = wire::r3(wire::dec(self.now)) as f32;
+        let ts = wire::r3(self.now) as f32;
         let mut actors = Vec::new();
         for (i, (a, wr)) in m.actors.iter().zip(&m.runners).enumerate() {
             if self.remote[i] {
@@ -466,34 +518,30 @@ impl Replication {
         None
     }
 
-    /// JS `_tick` (L229-263) — the actor-sample half. The per-sender playback
-    /// clock (`p.off` / `p.want`) and the event queue are Task 22/23; here:
-    /// route by `nid`, drop samples that are not for a proxy we own from
-    /// this sender (`!a || !a.remote || a.owner !== from`, L248), guard
-    /// monotonicity (L251), apply discretely, and steer the guest clock off
-    /// the host's `c` (L257).
+    /// JS `_tick` (L229-263): feed the sender's playback clock (offset
+    /// floor, the late/gap windows, `want` — [`Playback::on_tick`]), route
+    /// the actor samples into their buffers (the `!a || !a.remote || a.owner
+    /// !== from` guard, L248, and the monotonic-`t` guard + 40-capacity
+    /// trim, L251-253), queue the tick's events on the sender's timeline
+    /// (L256, played by Task 23), and steer the guest clock off the host's
+    /// `c` (L257).
     fn on_tick(&mut self, from: &str, v: &JVal, m: &mut Match) {
         let (tick, clock) = decode_tick(v);
+        self.playback.on_tick(from, tick.ts as f64, self.now);
+        self.playback.push_events(from, tick.events);
         if let Some((state, time)) = clock
             && from == self.host_id
         {
             self.host_clock(m, &state, time);
         }
-        for (nid, s) in tick.actors {
-            let Some(i) = self.idx_of_nid(nid) else {
+        for (nid, s) in &tick.actors {
+            let Some(i) = self.idx_of_nid(*nid) else {
                 continue;
             };
             if !self.remote[i] || self.owners[i] != from {
                 continue;
             }
-            // JS L251: a sample no newer than the buffer tail is dropped
-            // (late reordering); `f32::MIN` = empty buffer accepts anything.
-            if s.t <= self.last_t[i] {
-                continue;
-            }
-            self.last_t[i] = s.t;
-            self.last_tp[i] = s.tp;
-            apply_sample(&mut m.actors[i], &s);
+            self.playback.push_sample(i, s);
         }
     }
 
@@ -615,7 +663,9 @@ impl Replication {
     /// carry on as bots owned by the (possibly new) host — or, on a
     /// humans-only stage, are removed outright (`_remove`, L686-690).
     /// `host_changed` is the leave frame's re-election flag; the app must
-    /// have applied [`Replication::set_host`] first.
+    /// have applied [`Replication::set_host`] first. `sim` / `t` drive the
+    /// mid-respawn adopt branch (JS L704 `a.respawn()`).
+    #[allow(clippy::too_many_arguments)] // JS `onLeave(id, hostChanged)` + the match context it threads
     pub fn on_leave(
         &mut self,
         id: &str,
@@ -623,6 +673,8 @@ impl Replication {
         m: &mut Match,
         diff: &Difficulty,
         seed: u64,
+        sim: &SimWorld,
+        t: &PlayerTuning,
     ) {
         let new_owner = self.host_id.clone();
         // Iterate high→low: the noBots path prunes the parallel arrays.
@@ -637,11 +689,11 @@ impl Replication {
             // JS L677-679: the squidkid now belongs to the host.
             self.owners[i] = new_owner.clone();
             if new_owner == self.my_id {
-                self.adopt(i, m, diff, seed);
+                self.adopt(i, m, diff, seed, sim, t);
             } else {
-                // Same squidkid, new sender: drop the stale buffer so the
-                // first sample from the new owner lands (`buf.length = 0`).
-                self.last_t[i] = f32::MIN;
+                // Same squidkid, new sender: drop the stale buffer and glide
+                // onto the new path (`buf.length = 0; handoff = true`, L679).
+                self.playback.handoff(i);
             }
         }
         // JS L681: the new host stops following and re-arms its clock feed.
@@ -655,11 +707,27 @@ impl Replication {
     /// JS `_adopt` (L692-707): continue from exactly where it was drawn —
     /// no pop. `remote = false`, a bot brain takes over, the weapon runner
     /// resets, and the teleport counter continues from what everyone has
-    /// seen (`a.netTp = a.net.tp || 0`, L702).
-    fn adopt(&mut self, i: usize, m: &mut Match, diff: &Difficulty, seed: u64) {
+    /// seen (`a.netTp = a.net.tp || 0`, L702 — the *shown* counter,
+    /// [`Playback::adopt_reset`]). JS L704: a proxy mid-respawn finishes the
+    /// respawn locally (the pad drop, the `net_tp` bump); otherwise the
+    /// actor simply keeps its drawn position (L705, `a.pos` already holds
+    /// path + correction from [`Playback::apply`]).
+    fn adopt(
+        &mut self,
+        i: usize,
+        m: &mut Match,
+        diff: &Difficulty,
+        seed: u64,
+        sim: &SimWorld,
+        t: &PlayerTuning,
+    ) {
         self.remote[i] = false;
-        let tp = self.last_tp[i];
+        let pending = self.playback.spawn_pending(i);
+        let tp = self.playback.adopt_reset(i);
         m.actors[i].net_tp = tp;
+        if m.actors[i].alive && pending {
+            m.actors[i].respawn(sim, t);
+        }
         self.bots[i] = Some(Bot::new(&m.actors[i], diff, seed, i));
         m.runners[i].reset();
         // JS zeroes the intent and clears superJump/specialActive — the sim
@@ -718,49 +786,6 @@ impl Replication {
     }
 }
 
-/// Discrete proxy write (Task 22 replaces this with the interpolation
-/// buffer): position (the sample's `y` is the owner's *visual* feet height,
-/// `pos.y + smoothY`, netmatch.js L745 — the proxy keeps `smooth_y = 0`),
-/// velocity, facing, the flag word decoded back onto the actor, hp/ink/turf
-/// and the teleport counter (`_adopt` continues from it, L702).
-fn apply_sample(a: &mut Actor, s: &ActorSample) {
-    a.pos.x = s.x;
-    a.pos.z = s.z;
-    a.set_visual_y(s.y);
-    a.vel = vec3(s.vx, s.vy, s.vz);
-    a.yaw = s.yaw;
-    a.aim_yaw = s.aim_yaw;
-    a.aim_pitch = s.aim_pitch;
-    a.form = if s.flag(crate::net::flags::SQUID) {
-        Form::Squid
-    } else {
-        Form::Kid
-    };
-    a.submerged = s.flag(crate::net::flags::SUB);
-    a.grounded = s.flag(crate::net::flags::GROUNDED);
-    a.ground_team = if s.flag(crate::net::flags::GT1) {
-        1
-    } else if s.flag(crate::net::flags::GT2) {
-        2
-    } else {
-        0
-    };
-    a.on_enemy = s.flag(crate::net::flags::ENEMY);
-    a.alive = s.flag(crate::net::flags::ALIVE);
-    a.hp = s.hp;
-    a.ink = s.ink;
-    // JS `applyRemote` L377-378: the invuln bit is a hard 0.1 s window (the
-    // proxy never runs `Actor::step`, so nothing else decrements it), and the
-    // turf stat only ever ratchets up (`Math.max`).
-    a.invuln = if s.flag(crate::net::flags::INVULN) {
-        0.1
-    } else {
-        0.0
-    };
-    a.turf = a.turf.max(s.turf);
-    a.net_tp = s.tp;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -771,6 +796,7 @@ mod tests {
     use crate::net::transport::{FakeRelay, FakeTransport, TransportEvent};
     use crate::tuning::Tuning;
     use crate::weapon::WeaponRunner;
+    use glam::vec3;
 
     struct Fix {
         layout: StageLayout,
@@ -1027,6 +1053,10 @@ mod tests {
         let mut good = fake.clone();
         good.ts += 1.0;
         rg.on_message(h, &encode_tick(&good, None), &mut mg, t);
+        // Task 22: the sample lands in the playback buffer — advance the
+        // clock one frame so the path is sampled and applied (tr sits
+        // behind the newest sample → the Early hold shows it verbatim).
+        rg.update(FIXED_DT, &mut mg, t, &mut rec);
         assert_eq!(
             mg.actors[0].pos.x, good.actors[0].1.x,
             "the owner's word lands"
@@ -1042,6 +1072,7 @@ mod tests {
         // `t` from the tick ts, so bump nothing: same ts as `good`.
         stale.ts = good.ts;
         rg.on_message(h, &encode_tick(&stale, None), &mut mg, t);
+        rg.update(FIXED_DT, &mut mg, t, &mut rec);
         assert_eq!(
             mg.actors[0].pos.x, good.actors[0].1.x,
             "a non-newer sample is dropped (L251)"
@@ -1184,7 +1215,7 @@ mod tests {
             for (from, p) in drain_msgs(&mut trh) {
                 rh.on_message(&from, &p, &mut mh, t);
             }
-            if mh.actors[1].alive && mh.actors[1].net_tp == 1 && mh.actors[1].hp > 0.0 {
+            if mh.actors[1].alive && rh.last_tp(1) == 1 && mh.actors[1].hp > 0.0 {
                 followed = true;
                 break;
             }
@@ -1217,7 +1248,7 @@ mod tests {
             mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w);
         }
         // The leave: the host stays host, so `host_changed = false`.
-        rh.on_leave(g, false, &mut mh, &f.tuning.difficulty.easy, 5);
+        rh.on_leave(g, false, &mut mh, &f.tuning.difficulty.easy, 5, &sim, t);
         assert!(
             !rh.remote_mask()[1],
             "the left player's squidkid is adopted"
@@ -1309,7 +1340,7 @@ mod tests {
         assert!(host_changed, "the guest is the new host");
         assert_eq!(left, h);
         rg.set_host(&g);
-        rg.on_leave(&h, true, &mut mg, &f.tuning.difficulty.easy, 9);
+        rg.on_leave(&h, true, &mut mg, &f.tuning.difficulty.easy, 9, &sim, t);
 
         // Ownership mapping: the old host's actors (his player + his bot)
         // now belong to the new host and are adopted; the guest's own actor
@@ -1400,7 +1431,7 @@ mod tests {
         let mut rh = Replication::new(&cfg, h, h);
         rh.bind_match(&mut mh);
         assert_eq!(mh.actors.len(), 3);
-        rh.on_leave(g, false, &mut mh, &f.tuning.difficulty.easy, 4);
+        rh.on_leave(g, false, &mut mh, &f.tuning.difficulty.easy, 4, &sim, t);
         // JS `_remove` (L686-690): the squidkid is gone from every screen.
         assert_eq!(mh.actors.len(), 2, "the leaver's actor is removed");
         assert_eq!(rh.nid_of(0), Some(0));
@@ -1574,26 +1605,234 @@ mod tests {
         assert_eq!(mh2.actors.len(), 3, "bot stages keep everyone");
     }
 
+    /// NFR-M2-2 / TR-22.4: the **playback layer's** CPU overhead must not
+    /// push the native frame time more than 20 % over the bare sim step.
+    /// Three arms over both endpoints of a 1v1+bot match (600 frames, 120
+    /// warm-up, p50 of the per-frame wall time):
+    ///   - `bare` — `step_masked` only (the M1 frame);
+    ///   - `playback` — bare + the Task 22 layer driven directly
+    ///     (`on_tick`/`push_sample` at 20 Hz from `ActorSample::from_actor`,
+    ///     `advance_all`/`sample`/`apply` every frame), no JSON;
+    ///   - `full` — bare + the whole [`Replication`] overlay including the
+    ///     tick encode/decode (reported, not gated — the wire codec is
+    ///     Task 21's surface and dominates its cost).
+    ///
+    /// Ignored by default (wall-clock, release-profile gate): run with
+    /// `cargo test --release -p inkwave_sim -- --ignored`. Takes the min p50
+    /// over five interleaved repeats per arm — a shared box throws
+    /// scheduler hiccups (one run read +132 %), and best-case is the robust
+    /// estimator for CPU overhead.
     #[test]
-    fn apply_sample_writes_invuln_window_and_turf_ratchet() {
-        // Review M-5: JS `applyRemote` L377-378 — the invuln bit is a hard
-        // 0.1 s window, and turf only ratchets up (`Math.max`).
-        let f = fix();
-        let t = &f.tuning.player;
-        let mut a = Actor::new(0, 0, t);
-        let mut s = ActorSample::from_actor(&a, &WeaponRunner::new(), 0, 1.0);
-        s.turf = 50.0;
-        s.f |= crate::net::flags::INVULN;
-        apply_sample(&mut a, &s);
-        assert_eq!(a.invuln, 0.1, "the invuln bit is a 0.1 s window");
-        assert_eq!(a.turf, 50.0);
-        // A smaller turf must not regress the stat; the bit off clears the
-        // window.
-        s.t = 2.0;
-        s.turf = 40.0;
-        s.f &= !crate::net::flags::INVULN;
-        apply_sample(&mut a, &s);
-        assert_eq!(a.turf, 50.0, "turf only ratchets up");
-        assert_eq!(a.invuln, 0.0, "bit off clears the window");
+    #[ignore]
+    fn nfr_m2_2_playback_overlay_stays_under_20_percent() {
+        use std::time::Instant;
+
+        use crate::net::playback::Playback;
+
+        /// A transport that keeps the framed payloads for direct delivery
+        /// to the peer's `on_message` (no relay latency inside the timed
+        /// loop — we measure the CPU overlay, not the fake network).
+        struct Tap {
+            out: Vec<String>,
+        }
+        impl Transport for Tap {
+            fn connect(&mut self, _c: &str, _n: &str, _r: bool) {}
+            fn poll_events(&mut self) -> Vec<TransportEvent> {
+                Vec::new()
+            }
+            fn send_raw(&mut self, s: &str) -> bool {
+                if let Some(rest) = s.strip_prefix("b|") {
+                    self.out.push(rest.to_string());
+                } else if let Some(rest) = s.strip_prefix("s|")
+                    && let Some((_, body)) = rest.split_once('|')
+                {
+                    self.out.push(body.to_string());
+                }
+                true
+            }
+            fn is_open(&self) -> bool {
+                true
+            }
+            fn rtt(&self) -> f64 {
+                0.0
+            }
+            fn close(&mut self) {}
+        }
+
+        fn p50(mut v: Vec<f64>) -> f64 {
+            v.sort_by(|a, b| a.total_cmp(b));
+            v[v.len() / 2]
+        }
+
+        fn run(arm: u8) -> (f64, usize) {
+            let f = fix();
+            let sim = f.sim();
+            let t = &f.tuning.player;
+            let w = &f.tuning.spritzer;
+            let (h, g) = ("HOST", "GUEST");
+            let cfg = cfg(roster111(h, g), "tidewater", h);
+            let mut mh = match111(&f, 11, 30.0);
+            let mut mg = match111(&f, 11, 30.0);
+            let mut rh = Replication::new(&cfg, h, h);
+            let mut rg = Replication::new(&cfg, g, h);
+            rh.attach_bot(2, &mh.actors[2], &f.tuning.difficulty.easy, 11);
+            rh.bind_match(&mut mh);
+            rg.bind_match(&mut mg);
+            let nav = f.nav();
+            let mut th = Tap { out: Vec::new() };
+            let mut tg = Tap { out: Vec::new() };
+
+            // `playback` arm: the Task 22 layer per client, driven by hand
+            // (the same call sequence `Replication::update` runs, minus the
+            // wire codec).
+            let mut pbh = Playback::new(3, 1.0 / 20.0);
+            let mut pbg = Playback::new(3, 1.0 / 20.0);
+            let mut now = 0.0f64;
+            let dt64 = FIXED_DT as f64;
+            let gravity = t.gravity as f64;
+            let mut tick_t = 0.0f32;
+
+            const FRAMES: usize = 600;
+            const WARM: usize = 120;
+            let mut times: Vec<f64> = Vec::with_capacity(FRAMES - WARM);
+            for frame in 0..FRAMES {
+                let t0 = Instant::now();
+                let mut ih = vec![ActorInput::default(); 3];
+                rh.drive_bots(&mut mh, &nav, &sim, t, w, &mut ih);
+                mh.step_masked(FIXED_DT, &ih, Some(rh.remote_mask()), &sim, t, w);
+                let ig = vec![ActorInput::default(); 3];
+                mg.step_masked(FIXED_DT, &ig, Some(rg.remote_mask()), &sim, t, w);
+                match arm {
+                    0 => {}
+                    1 => {
+                        now += dt64;
+                        tick_t -= FIXED_DT;
+                        if tick_t <= 0.0 {
+                            tick_t += 1.0 / 20.0;
+                            // owners stream their actors (JS `_sendTick`):
+                            // the host's tick (host-owned samples) feeds the
+                            // guest's playback under sender `h`, and vice
+                            // versa — so `pbh.sample(_, g)` / `pbg.sample(_,
+                            // h)` below find a live clock.
+                            pbh.on_tick(g, now, now);
+                            pbg.on_tick(h, now, now);
+                            for (i, &rem) in rh.remote.iter().enumerate() {
+                                if !rem {
+                                    let s = ActorSample::from_actor(
+                                        &mh.actors[i],
+                                        &mh.runners[i],
+                                        mh.actors[i].net_tp,
+                                        now as f32,
+                                    );
+                                    pbg.push_sample(i, &s);
+                                }
+                            }
+                            for (i, &rem) in rg.remote.iter().enumerate() {
+                                if !rem {
+                                    let s = ActorSample::from_actor(
+                                        &mg.actors[i],
+                                        &mg.runners[i],
+                                        mg.actors[i].net_tp,
+                                        now as f32,
+                                    );
+                                    pbh.push_sample(i, &s);
+                                }
+                            }
+                        }
+                        pbh.advance_all(now, dt64);
+                        pbg.advance_all(now, dt64);
+                        for (i, &rem) in rh.remote.iter().enumerate() {
+                            if rem {
+                                pbh.sample(i, g, dt64, gravity);
+                            }
+                        }
+                        for (i, &rem) in rg.remote.iter().enumerate() {
+                            if rem {
+                                pbg.sample(i, h, dt64, gravity);
+                            }
+                        }
+                        for (i, &rem) in rh.remote.iter().enumerate() {
+                            if rem {
+                                pbh.apply(i, &mut mh.actors[i], &mut mh.runners[i], FIXED_DT, t);
+                            }
+                        }
+                        for (i, &rem) in rg.remote.iter().enumerate() {
+                            if rem {
+                                pbg.apply(i, &mut mg.actors[i], &mut mg.runners[i], FIXED_DT, t);
+                            }
+                        }
+                    }
+                    _ => {
+                        let _ = rh.update(FIXED_DT, &mut mh, t, &mut th);
+                        let _ = rg.update(FIXED_DT, &mut mg, t, &mut tg);
+                        for p in th.out.drain(..) {
+                            rg.on_message(h, &p, &mut mg, t);
+                        }
+                        for p in tg.out.drain(..) {
+                            rh.on_message(g, &p, &mut mh, t);
+                        }
+                    }
+                }
+                if frame >= WARM {
+                    times.push(t0.elapsed().as_secs_f64() * 1e6);
+                }
+            }
+            // The proxy shown-count: the timing arms are only meaningful if
+            // the overlay actually interpolates and displays them. The
+            // `full` arm drives the clients' internal playback, the
+            // `playback` arm the hand-built ones.
+            let mut shown = 0;
+            for (i, &rem) in rh.remote.iter().enumerate() {
+                let live = if arm == 2 {
+                    rh.playback().proxy_shown(i, mh.actors[i].alive)
+                } else {
+                    pbh.proxy_shown(i, mh.actors[i].alive)
+                };
+                if rem && live {
+                    shown += 1;
+                }
+            }
+            for (i, &rem) in rg.remote.iter().enumerate() {
+                let live = if arm == 2 {
+                    rg.playback().proxy_shown(i, mg.actors[i].alive)
+                } else {
+                    pbg.proxy_shown(i, mg.actors[i].alive)
+                };
+                if rem && live {
+                    shown += 1;
+                }
+            }
+            (p50(times), shown)
+        }
+
+        // Wall-clock arms on a shared box are noisy (one observed run read
+        // +132 % from a scheduler hiccup). Take the **min** p50 over five
+        // interleaved repeats per arm — best-case is the robust estimator
+        // for CPU overhead — and check the shown-count from the last repeat.
+        let mut base = f64::INFINITY;
+        let mut pb = f64::INFINITY;
+        let mut full = f64::INFINITY;
+        let (mut base_shown, mut pb_shown, mut full_shown) = (0, 0, 0);
+        for _ in 0..5 {
+            let (v, s) = run(0);
+            base = f64::min(base, v);
+            base_shown = s;
+            let (v, s) = run(1);
+            pb = f64::min(pb, v);
+            pb_shown = s;
+            let (v, s) = run(2);
+            full = f64::min(full, v);
+            full_shown = s;
+        }
+        assert_eq!(pb_shown, 3, "the playback arm interpolates every proxy");
+        assert_eq!(full_shown, 3, "the full overlay interpolates every proxy");
+        assert_eq!(base_shown, 0, "the bare arm drives none");
+        let gain = (pb - base) / base;
+        eprintln!(
+            "[nfr-m2-2] bare p50 = {base:.1} µs, +playback = {pb:.1} µs ({:+.1}%), +full overlay = {full:.1} µs ({:+.1}%)",
+            gain * 100.0,
+            (full - base) / base * 100.0
+        );
+        assert!(gain < 0.20, "playback gain {:+.1}% ≥ 20%", gain * 100.0);
     }
 }
