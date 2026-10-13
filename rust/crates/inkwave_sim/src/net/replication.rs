@@ -26,9 +26,10 @@
 //!   - `_tick` clock bookkeeping / `_advance` / `_pathAt` / `_sample` /
 //!     `applyRemote` / `hermite` / `quantile` (L229-346, L349-428, L761-786)
 //!     -> [`super::playback`], driven by [`Replication::update`] (frame
-//!     order: `now` → advance → sample → record ink → play events → tick
-//!     timer → event bus → apply, matching JS `NetMatch.update` before
-//!     `Match.update`) and [`Replication::on_tick`]
+//!     order: `now` → advance → sample → play events → tick timer → record
+//!     ink + event bus → apply — everything recorded after the send rides
+//!     the *next* tick, like JS `Match.update` running after
+//!     `NetMatch.update`) and [`Replication::on_tick`]
 //!   - event timeline recording / replay (Task 23): local splats, shots,
 //!     triggers and `splatted` / `respawn` events are recorded onto the
 //!     outgoing tick `e` (JS `_rec` / `recSplat` / `recProj` /
@@ -95,6 +96,30 @@
 //!     [`Replication::update`], so the `{k:'hit'}` frame can leave up to one
 //!     frame (1/60 s) later. The victim's owner applies it on arrival either
 //!     way.
+//!   - **`Match::step` runs before [`Replication::update`]** (app/test loop;
+//!     JS runs `NetMatch.update` before `Match.update`): a ghost round
+//!     dequeued by `play_events` starts integrating one frame later than JS,
+//!     and replayed splats land on the grid after this frame's local step
+//!     instead of before it. Both ends of Rust↔Rust agree on the rule, so
+//!     grids stay identical; only the presentation start of a ghost is a
+//!     frame late.
+//!   - **Trigger recording scope**: JS records *every* `character.trigger`
+//!     of a local actor (L90-93); the sim only observes the two triggers
+//!     with gameplay meaning — `'shoot'` (the fire bus record) and
+//!     `'spawn'` (the respawn bus record). Jump/land/dodge/special triggers
+//!     are character animation the M1 Spritzer sim does not model, so they
+//!     never fire and are never recorded.
+//!   - **Kill confirmation**: JS `_remoteSplat` emits a local
+//!     `{killed:true, weaponId}` `'hit'` when the attacker is the local
+//!     player (L618) — HUD/FX feedback. The sim has no consumer for it; the
+//!     attribution itself (`attacker.stats.splats++`, L613) is ported.
+//!   - **Render drain wiring**: [`crate::paint::PaintGrid::drain_ink`] may
+//!     run every frame (the app renderer does), but it must run *after*
+//!     [`Replication::update`] — a drain between `Match::step` and the
+//!     update would remove the local splats before `record_ink` sees them
+//!     (the seq cursor is drain-safe once recorded; the entries themselves
+//!     must still exist when the recorder runs). The
+//!     `regression_recording_survives_render_draining` test pins it.
 
 use serde::{Deserialize, Serialize};
 
@@ -198,12 +223,13 @@ pub struct Replication {
     /// Outgoing event timeline (JS `this.out`, L107) — filled by the local
     /// recorder (Task 23) and shipped non-empty as the tick's `e`.
     pub out: Vec<TimedEvent>,
-    /// How many entries of [`crate::paint::PaintGrid::ink_stream`] this
-    /// client has already recorded onto `out`. The cursor advances past the
-    /// local splats each frame and skips the replayed ones — the Rust
-    /// stand-in of JS's `applying` loop guard (`recSplat`, L110: a splat
-    /// replayed from a peer's timeline is never re-recorded and never
-    /// re-broadcast).
+    /// The [`crate::paint::PaintGrid::ink_seq`] value this client has
+    /// recorded through: only stream entries with a higher `seq` that were
+    /// not painted under `applying` go onto `out`. The Rust stand-in of
+    /// JS's `applying` loop guard (`recSplat`, L110: a splat replayed from
+    /// a peer's timeline is never re-recorded and never re-broadcast). The
+    /// counter is monotonic per grid, so the render layer's `drain_ink`
+    /// cannot hide a local splat; `Match::restart`'s fresh grid resets it.
     recorded_ink: usize,
     /// JS `tickT` (L57, starts 0 → the first frame sends).
     tick_t: f32,
@@ -336,12 +362,13 @@ impl Replication {
     /// path, **replay the due event-timeline records** (JS `_playEvents`,
     /// L179 — before the tick send, exactly like JS), run the 20 Hz tick
     /// timer (owners stream their actors + the locally recorded timeline;
-    /// the host rides its `c` clock snapshot every 0.5 s), drain the match
-    /// event bus — the host re-broadcasts phase changes (`{k:'st'}`, L80),
-    /// every client routes proxy hits to the victim's owner (`{k:'hit'}`,
-    /// L163-167) and records the local splats / shots / triggers / deaths /
-    /// respawns onto the outgoing timeline (Task 23) — then apply the
-    /// sampled timeline onto the proxies.
+    /// the host rides its `c` clock snapshot every 0.5 s), record the local
+    /// splats (Task 23) and drain the match event bus — the host
+    /// re-broadcasts phase changes (`{k:'st'}`, L80), every client routes
+    /// proxy hits to the victim's owner (`{k:'hit'}`, L163-167) and records
+    /// the local shots / triggers / deaths / respawns onto the outgoing
+    /// timeline (Task 23) — then apply the sampled timeline onto the
+    /// proxies.
     ///
     /// Returns the events the replicator did *not* consume (Splat / Turf /
     /// Countdown / OneMinute — HUD consumers; Fire / Respawn / HitSend are
@@ -374,12 +401,6 @@ impl Replication {
             }
         }
 
-        // ---- record the local splats painted since the last frame (JS
-        // `paint.splat` → `recSplat`, paint.js L469-472). Runs *before* the
-        // replay so the cursor never counts a replayed splat — the Rust
-        // stand-in for JS's `applying` guard (see `play_events`).
-        self.record_ink(m);
-
         // ---- event timeline replay (JS `_playEvents`, L179: after
         // sampling, before the tick send — so a due splat paints into this
         // frame's grid and a due death already hides the proxy before its
@@ -396,6 +417,12 @@ impl Replication {
             }
             self.send_tick(m, tr);
         }
+
+        // ---- record the local splats painted since the last frame (JS
+        // `recSplat` fires during `Match.update`, which runs *after*
+        // `NetMatch.update`'s `_sendTick` — so the record rides the next
+        // tick, exactly like the bus records below).
+        self.record_ink(m);
 
         // ---- event bus (JS listens on `match:state` L80, `splatted` /
         // `respawn` / `weapon:fire` through the FORWARD subscription
@@ -497,16 +524,26 @@ impl Replication {
 
     /// JS `recSplat` (L109-114) for every splat the local sim painted since
     /// the last frame. The replayed (remote) splats are *not* re-recorded:
-    /// `play_events` advances this cursor past them before the next call,
-    /// the Rust stand-in of JS's `applying` guard (paint.js L471 never
-    /// reaches `recSplat` while applying).
+    /// `play_events` paints under [`crate::paint::PaintGrid::applying`] (the
+    /// verbatim JS L467-473 guard), which stamps
+    /// [`crate::paint::InkSplat::replayed`] on the pushed entry, and the
+    /// cursor skips it. The cursor keys on the grid's monotonic
+    /// [`crate::paint::PaintGrid::ink_seq`], so the render layer's
+    /// [`crate::paint::PaintGrid::drain_ink`] can never hide a local splat,
+    /// and a rebuilt grid (`Match::restart`) resets the cursor.
     fn record_ink(&mut self, m: &Match) {
-        let stream = m.paint.ink_stream();
-        let start = self.recorded_ink.min(stream.len());
-        for s in &stream[start..] {
-            self.rec(TickEvent::Splat(SplatRecord::from_ink_splat(s)));
+        let seq = m.paint.ink_seq;
+        if seq < self.recorded_ink {
+            self.recorded_ink = 0; // grid rebuilt (Match::restart)
         }
-        self.recorded_ink = stream.len();
+        let stream = m.paint.ink_stream();
+        let start = stream.partition_point(|s| s.seq <= self.recorded_ink);
+        for s in &stream[start..] {
+            if !s.replayed {
+                self.rec(TickEvent::Splat(SplatRecord::from_ink_splat(s)));
+            }
+        }
+        self.recorded_ink = seq;
     }
 
     /// JS `recProj` (L116-122) + `_onLocalEvent('weapon:fire')` (L139-143) +
@@ -651,24 +688,20 @@ impl Replication {
 
     /// JS `_playEvents` / `_play` (L452-498): dequeue every sender's due
     /// timeline records and apply them in sender-clock order. `'s'` splats
-    /// paint through [`crate::paint::PaintGrid::splat`] (the cursor below
-    /// keeps them out of the recorder, JS's `applying` guard stand-in);
-    /// `'p'` rounds spawn visual-only ghosts; `'tr'` triggers land on
-    /// remote actors only (the sim has no character layer to animate, so
-    /// they are consumed — the guard of JS L480 still runs); `'ev'`
-    /// dispatches `splatted` / `respawn` into the proxy state machines and
-    /// ignores the FX-only names (`weapon:fire` presentation is the `'p'`
-    /// ghost + audio, out of sim scope).
+    /// paint through [`crate::paint::PaintGrid::splat`] under
+    /// [`crate::paint::PaintGrid::applying`] — the verbatim JS guard
+    /// (L467-473) that keeps them out of the recorder; `'p'` rounds spawn
+    /// visual-only ghosts; `'tr'` triggers are consumed (their JS consumers
+    /// `_netTrig` / `_trigSideEffects`, L481-482, are character
+    /// presentation the sim does not model); `'ev'` dispatches `splatted` /
+    /// `respawn` into the proxy state machines and ignores the FX-only
+    /// names (`weapon:fire` presentation is the `'p'` ghost + audio, out of
+    /// sim scope).
     fn play_events(&mut self, m: &mut Match, sim: &SimWorld, t: &PlayerTuning) {
         let due = self.playback.due_events();
         if due.is_empty() {
             return;
         }
-        // Replay writes paint + ghosts into the match; JS runs the same
-        // mutations inline in `_play`. Our recorder skips the replayed
-        // splats via the `recorded_ink` cursor (see `record_ink`): advance
-        // it past whatever the replay appends.
-        let mut replayed = m.paint.ink_stream().len();
         for (_from, events) in due {
             for ev in events {
                 match ev.kind {
@@ -696,6 +729,9 @@ impl Replication {
                             },
                             kind: s.kind.as_deref().and_then(SplatKind::from_name),
                         };
+                        // JS L467/L473: `applying` wraps the replayed paint
+                        // so `recSplat` never re-broadcasts it.
+                        m.paint.applying = true;
                         m.paint.splat(
                             sim.collision,
                             vec3(s.x, s.y, s.z),
@@ -703,7 +739,7 @@ impl Replication {
                             s.team as usize,
                             &opts,
                         );
-                        replayed = m.paint.ink_stream().len();
+                        m.paint.applying = false;
                     }
                     TickEvent::Proj(p) => {
                         // JS `_play` 'p' (L476): `byNid.get(e[2])`, then
@@ -741,12 +777,13 @@ impl Replication {
                             ghost: true,
                         });
                     }
-                    TickEvent::Trigger(trig) => {
-                        // JS L478-483: the guard runs, then the character
-                        // trigger + loop side effects — presentation only,
-                        // no sim state in M2 (Spritzer has no charge/spin/
-                        // roll loops).
-                        let _ = trig;
+                    TickEvent::Trigger(_) => {
+                        // JS L478-483: the L480 guard gates `_netTrig` +
+                        // `_trigSideEffects` — character animation and loop
+                        // presentation. The sim has no character layer to
+                        // animate and Spritzer has no charge/spin/roll
+                        // loops, so the record is consumed here; the guard's
+                        // outcome cannot touch sim state either way.
                     }
                     TickEvent::Event(e) => {
                         self.play_event(m, t, &e);
@@ -758,16 +795,15 @@ impl Replication {
                 }
             }
         }
-        // The replayed splats are presentation for us, not our own
-        // timeline — keep the cursor past them (JS `applying` guard).
-        self.recorded_ink = self.recorded_ink.max(replayed);
     }
 
     /// JS `_playEvent` (L573-601): unpack the payload, resolve
     /// `e.actor || e.victim`, require a *remote* actor, then dispatch by
-    /// name. `splatted` / `respawn` drive the proxy state machines; the
-    /// remaining FORWARD names are FX/audio (out of sim scope) and the
-    /// trailing `emit(name, e)` feeds the app bus, not the sim.
+    /// name. `splatted` / `respawn` drive the proxy state machines and
+    /// *early-return* (L580-581) — they never reach JS's trailing
+    /// `emit(name, e)` (L600); the remaining FORWARD names are FX/audio
+    /// (out of sim scope) and that trailing emit feeds the app bus the sim
+    /// does not have.
     fn play_event(&mut self, m: &mut Match, t: &PlayerTuning, e: &EventRecord) {
         let payload = match &e.payload {
             JVal::Obj(pairs) => pairs,
@@ -783,12 +819,13 @@ impl Replication {
                     .map(|n| n as u8)
             })
         };
-        // `const a = e.actor || e.victim` (L576) — respawn carries `actor`,
-        // splatted carries `victim`.
-        let Some(a_nid) = nid_of("actor").or_else(|| nid_of("victim")) else {
-            return;
-        };
-        let Some(ai) = self.idx_of_nid(a_nid) else {
+        // `const a = e.actor || e.victim` (L576) — JS unpacks the payload
+        // first, so an `actor` key whose nid is unknown resolves to `null`
+        // and *falls back* to `victim`. Resolve-then-fallback, not
+        // key-then-lookup. respawn carries `actor`, splatted carries
+        // `victim`.
+        let resolve = |key: &str| nid_of(key).and_then(|n| self.idx_of_nid(n));
+        let Some(ai) = resolve("actor").or_else(|| resolve("victim")) else {
             return;
         };
         if !self.remote[ai] {
@@ -805,11 +842,12 @@ impl Replication {
                     .remote_splat(ai, &mut m.actors[ai], &mut m.runners[ai], t)
                     && let Some(at_nid) = nid_of("attacker")
                     && let Some(ti) = self.idx_of_nid(at_nid)
-                    && !self.remote[ti]
                 {
-                    // JS L613: `attacker.stats.splats++` — the owner that
-                    // locally decided the kill also counts it when the
-                    // victim's splat record confirms it.
+                    // JS L613: `attacker.stats.splats++` — *any* attacker,
+                    // local or proxy. The kill itself is only decided on
+                    // the victim's owner (where the victim is local and
+                    // this event never replays), so each client counts the
+                    // credit exactly once.
                     m.actors[ti].splats += 1;
                 }
             }
@@ -2271,7 +2309,8 @@ mod tests {
     fn tr23_1_splat_replay_matches_grid_and_never_loops_back() {
         // A sprays ink → B replays the timeline: byte-identical coverage
         // grids, and B re-broadcasts nothing (JS `applying` guard, L110 —
-        // Rust: the `recorded_ink` cursor in `play_events`).
+        // Rust: `PaintGrid::applying` + the seq-keyed `recorded_ink`
+        // cursor).
         let f = fix();
         let sim = f.sim();
         let t = &f.tuning.player;
@@ -2355,6 +2394,130 @@ mod tests {
         assert_eq!(
             guest_splat_records, 0,
             "a replayed splat is never re-broadcast (JS `applying`)"
+        );
+    }
+
+    // ------------------------------------------- M-1 regression (review fix)
+    #[test]
+    fn regression_recording_survives_render_draining() {
+        // The app render layer calls [`crate::paint::PaintGrid::drain_ink`]
+        // every frame (ink_render.rs L218). The seq-keyed cursor must still
+        // record the local splat (M-1 regression: the old index cursor saw
+        // an empty stream and silently dropped every local splat once the
+        // renderer drained). Contract: the drain runs *after*
+        // [`Replication::update`] in the same frame.
+        let f = fix();
+        let sim = f.sim();
+        let t = &f.tuning.player;
+        let w = &f.tuning.spritzer;
+        let relay = FakeRelay::new();
+        let (mut trh, mut trg) = pair(&relay);
+        let (h, g) = (trh.id(), trg.id());
+        let cfg = cfg(roster111(&h, &g), "tidewater", &h);
+        let mut mh = match111(&f, 21, 120.0);
+        let mut mg = match111(&f, 21, 120.0);
+        let mut rh = Replication::new(&cfg, &h, &h);
+        let mut rg = Replication::new(&cfg, &g, &h);
+        rh.bind_match(&mut mh);
+        rg.bind_match(&mut mg);
+        for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+        }
+        assert_eq!(mh.phase, Phase::Active);
+
+        let pad0 = sim.spawn_pads[0];
+        let c = vec3(
+            wire::r2(pad0.x as f64) as f32,
+            (wire::r2(pad0.y as f64) + 0.3) as f32,
+            wire::r2(pad0.z as f64) as f32,
+        );
+        let opts = SplatOpts {
+            seed: 0.42,
+            stretch: None,
+            stretch_amt: None,
+            kind: None,
+        };
+        mh.paint.splat(sim.collision, c, 2.0, 0, &opts);
+
+        let mut guest_splat_records = 0;
+        let mut settled = false;
+        for _ in 0..600 {
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut trh);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
+            // Render layer drains *after* the replicator recorded / replayed.
+            mh.paint.drain_ink();
+            mg.paint.drain_ink();
+            trh.advance(16.0);
+            trg.advance(0.0);
+            for (from, p) in drain_msgs(&mut trh) {
+                if from == g
+                    && let Some(v) = parse_json(&p)
+                    && v.field("k").and_then(JVal::as_str) == Some("t")
+                {
+                    let (tick, _) = decode_tick(&v);
+                    guest_splat_records += tick
+                        .events
+                        .iter()
+                        .filter(|e| matches!(e.kind, TickEvent::Splat(_)))
+                        .count();
+                }
+                rh.on_message(&from, &p, &mut mh, t);
+            }
+            for (from, p) in drain_msgs(&mut trg) {
+                rg.on_message(&from, &p, &mut mg, t);
+            }
+            if mg.paint.grid() == mh.paint.grid() {
+                settled = true;
+                break;
+            }
+        }
+        assert!(
+            settled,
+            "a drained stream does not drop the local splat record"
+        );
+        assert_eq!(
+            guest_splat_records, 0,
+            "replayed ink is still never re-broadcast under draining"
+        );
+
+        // Discriminate the seq cursor itself: the guest now splats locally
+        // *after* having replayed. The old index cursor — advanced past the
+        // replayed entries and then reset by the drain — would drop this
+        // record and the host's grid would never converge.
+        let pad1 = sim.spawn_pads[1];
+        let c2 = vec3(
+            wire::r2(pad1.x as f64) as f32,
+            (wire::r2(pad1.y as f64) + 0.3) as f32,
+            wire::r2(pad1.z as f64) as f32,
+        );
+        mg.paint.splat(sim.collision, c2, 2.0, 1, &opts);
+        let mut converged = false;
+        for _ in 0..600 {
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut trh);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
+            mh.paint.drain_ink();
+            mg.paint.drain_ink();
+            trh.advance(16.0);
+            trg.advance(0.0);
+            for (from, p) in drain_msgs(&mut trh) {
+                rh.on_message(&from, &p, &mut mh, t);
+            }
+            for (from, p) in drain_msgs(&mut trg) {
+                rg.on_message(&from, &p, &mut mg, t);
+            }
+            if mg.paint.grid() == mh.paint.grid() {
+                converged = true;
+                break;
+            }
+        }
+        assert!(
+            converged,
+            "a local splat after replay is recorded despite the render drain"
         );
     }
 

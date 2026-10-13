@@ -175,6 +175,13 @@ pub struct InkSplat {
     pub radius: f32,
     pub team: usize,
     pub opts: SplatOpts,
+    /// Monotonic push counter of the owning [`PaintGrid`] at the time this
+    /// entry was painted. The replication recorder uses it as a drain-safe
+    /// cursor key (see [`crate::net::replication::Replication::record_ink`]).
+    pub seq: usize,
+    /// Painted by the event-timeline replay under [`PaintGrid::applying`]
+    /// (JS `applying`, netmatch.js L467-473) — never re-broadcast.
+    pub replayed: bool,
 }
 
 /// Coarse per-face ink grid: 0 none, 1 = team0 (Alpha), 2 = team1 (Bravo).
@@ -197,8 +204,20 @@ pub struct PaintGrid {
     /// Splats recorded since the render layer last drained them (transient;
     /// excluded from snapshots). Headless callers that never drain grow this
     /// unboundedly - call [`PaintGrid::drain_ink`](Self::drain_ink) regularly.
+    /// Each entry carries the monotonic [`Self::ink_seq`] stamped at push
+    /// time, so the replication recorder's cursor survives draining.
     #[serde(skip)]
     ink_stream: Vec<InkSplat>,
+    /// Total splats ever pushed onto [`Self::ink_stream`]; monotonic per
+    /// grid instance (a rebuilt grid — `Match::restart` — starts at 0 again).
+    #[serde(skip)]
+    pub ink_seq: usize,
+    /// JS `applying` (netmatch.js L467-473): set by the event-timeline
+    /// replay around a remote splat so the pushed [`InkSplat`] is flagged
+    /// [`InkSplat::replayed`] and the replication recorder never
+    /// re-broadcasts it.
+    #[serde(skip)]
+    pub applying: bool,
 }
 
 impl PaintGrid {
@@ -260,6 +279,8 @@ impl PaintGrid {
             version: 0,
             splat_ids: Vec::new(),
             ink_stream: Vec::new(),
+            ink_seq: 0,
+            applying: false,
         }
     }
 
@@ -278,11 +299,14 @@ impl PaintGrid {
         team: usize,
         opts: &SplatOpts,
     ) -> f32 {
+        self.ink_seq += 1;
         self.ink_stream.push(InkSplat {
             center,
             radius,
             team,
             opts: *opts,
+            seq: self.ink_seq,
+            replayed: self.applying,
         });
         let seed = opts.seed;
         let st = opts.stretch;

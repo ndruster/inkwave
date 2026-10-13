@@ -1043,6 +1043,8 @@ mod tests {
                 stretch_amt: Some(1.5),
                 kind: Some(crate::paint::SplatKind::Blast),
             },
+            seq: 1,
+            replayed: false,
         };
         let rec = SplatRecord::from_ink_splat(&splat);
         assert_eq!(rec.x, 1.0);
@@ -1066,6 +1068,8 @@ mod tests {
                 seed: 0.25,
                 ..Default::default()
             },
+            seq: 2,
+            replayed: false,
         };
         let rec = SplatRecord::from_ink_splat(&bare);
         assert_eq!(rec.stretch, [0.0; 3]);
