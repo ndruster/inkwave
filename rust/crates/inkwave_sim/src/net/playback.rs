@@ -30,24 +30,16 @@
 //!     frame-accumulated `now` (f64), not a wall clock — same rule both
 //!     Rust ends, and only differences (`o = now − ts`, `target = now − off
 //!     − delay`) ever matter.
-//!   - **Death / respawn are driven by the `ALIVE` flag edge** (JS runs the
-//!     `_remoteSplat` / `_remoteRespawn` state machines off the `'splatted'`
-//!     / `'respawn'` events on the sender timeline — Task 23). The state
-//!     writes are verbatim L603-627 (buffer clear, `ready`/`has` reset,
-//!     `deathTp`, `spawnPending`, respawn timer / hp / invuln, runner
-//!     reset); only the *trigger* differs, and it fires when the sampled
-//!     path crosses the first dead/alive sample — *approximately* the
-//!     moment the timeline event would land: both the `'splatted'` event
-//!     and the dead sample ride the victim-owner's clock (JS records the
-//!     event under `e.actor || e.victim` → the victim, L140), but events
-//!     carry the exact `now()` stamp while samples are packed at the tick
-//!     boundary, so the two can land up to one tick (50 ms) apart — the
-//!     first alive sample trails the `'respawn'` event the same way.
-//!     A further consequence of the same deviation: an owner who dies and
-//!     respawns *between* two of its samples shows JS a brief hide (the
-//!     splat event clears `ready` before any dead sample arrives) where
-//!     Rust never sees a dead sample and snaps straight to the respawn
-//!     point. Task 23's event timeline closes both gaps.
+//!   - **Death / respawn are event-driven** (Task 23, closing the Task 22
+//!     `ALIVE`-edge deviation): the victim owner's `'splatted'` / `'respawn'`
+//!     timeline records run [`Playback::remote_splat`] /
+//!     [`Playback::remote_respawn`] — verbatim L603-627 (buffer clear,
+//!     `ready`/`has` reset, `deathTp`, `spawnPending`, respawn timer / hp /
+//!     invuln, runner reset) — at the sender-clock moment
+//!     [`Playback::due_events`] dequeues them, exactly like JS `_playEvents`
+//!     → `_playEvent`. An owner that dies and respawns between two of its
+//!     samples shows JS's brief hide (the splat clears `ready` before any
+//!     dead sample arrives) because the trigger is the event, not a sample.
 //!   - **App-layer fields do not exist in the sim** and are not ported:
 //!     `hurtFlash` (L374-375), `aimDir`/`aimPoint` (L362-364, derived from
 //!     `aim_yaw`/`aim_pitch` on demand), climbing `wallN` (L373, M1 has no
@@ -67,9 +59,10 @@
 //!   - **`tp_shown` seeds 0** (JS seeds `a.net.tp = -1`, L85, so the first
 //!     sample always "snaps"). With 0 the snap is skipped but the `!has`
 //!     branch zeroes the correction identically — same outcome.
-//!   - **`p.events` is filled but not consumed** (the event timeline is
-//!     Task 23); `boss` / `voices` / `_playEvents` sampling (L178-180) are
-//!     out of M2 turf scope.
+//!   - **Timeline events are consumed by [`Playback::due_events`]** (JS
+//!     `_playEvents`, L452-462), driven by
+//!     [`super::replication::Replication`]'s event replay (Task 23); `boss` /
+//!     `voices` (L178-180) are out of M2 turf scope.
 
 use crate::actor::{Actor, Form};
 use crate::net::flags;
@@ -602,44 +595,18 @@ impl Playback {
         n.ready = true;
     }
 
-    /// JS `applyRemote` (L349-428) sim-side subset + the `_remoteSplat` /
-    /// `_remoteRespawn` state machines (L603-627, triggered off the `ALIVE`
-    /// flag edge — see module docs). Writes the proxy actor in place of
-    /// `Actor::step` (the mask freezes it, match.rs `step_masked`).
-    pub fn apply(
-        &mut self,
-        idx: usize,
-        a: &mut Actor,
-        wr: &mut WeaponRunner,
-        dt: f32,
-        t: &PlayerTuning,
-    ) {
+    /// JS `applyRemote` (L349-428) sim-side subset. Writes the proxy actor in
+    /// place of `Actor::step` (the mask freezes it, match.rs `step_masked`).
+    /// Death / respawn state machines are **not** run here: they are driven by
+    /// the `'splatted'` / `'respawn'` timeline events through
+    /// [`Playback::remote_splat`] / [`Playback::remote_respawn`] (JS
+    /// `_playEvent` → `_remoteSplat` / `_remoteRespawn`, L573-627 — Task 23
+    /// closed the Task 22 `ALIVE`-edge deviation).
+    pub fn apply(&mut self, idx: usize, a: &mut Actor, dt: f32) {
         let Some(n) = self.actors.get_mut(idx) else {
             return;
         };
         let s = n.cur;
-        if n.ready {
-            let sample_alive = s.flag(flags::ALIVE);
-            if a.alive && !sample_alive {
-                // JS `_remoteSplat` (L603-616)
-                a.alive = false;
-                a.hp = 0.0;
-                a.respawn_timer = t.respawn_time;
-                a.deaths += 1;
-                wr.reset();
-                n.buf.clear();
-                n.ready = false;
-                n.has = false;
-                n.death_tp = n.tp_shown;
-            } else if !a.alive && sample_alive {
-                // JS `_remoteRespawn` (L623-627)
-                a.alive = true;
-                a.hp = t.hp;
-                a.invuln = t.spawn_invuln;
-                a.respawn_timer = 0.0;
-                n.spawn_pending = true;
-            }
-        }
         if !n.ready {
             return;
         }
@@ -699,6 +666,71 @@ impl Playback {
             }
             n.spawn_pending = false;
         }
+    }
+
+    /// JS `_remoteSplat` (L603-616), driven by the victim owner's `'splatted'`
+    /// timeline record (Task 23). The `!victim || !victim.alive` guard of
+    /// JS L604 is the caller's `a.remote` check plus the `alive` test here.
+    /// Returns whether the splat was applied (JS also credits
+    /// `attacker.stats.splats++`, L613, which the caller routes).
+    pub fn remote_splat(
+        &mut self,
+        idx: usize,
+        a: &mut Actor,
+        wr: &mut WeaponRunner,
+        t: &PlayerTuning,
+    ) -> bool {
+        if !a.alive {
+            return false;
+        }
+        a.alive = false;
+        a.hp = 0.0;
+        a.respawn_timer = t.respawn_time;
+        a.deaths += 1;
+        wr.reset();
+        let Some(n) = self.actors.get_mut(idx) else {
+            return true;
+        };
+        n.buf.clear();
+        n.ready = false;
+        n.has = false;
+        n.death_tp = n.tp_shown;
+        true
+    }
+
+    /// JS `_remoteRespawn` (L623-627), driven by the owner's `'respawn'`
+    /// timeline record. The respawn timer / hp / invuln values come from the
+    /// tuning (JS reads the same `PLAYER` constants).
+    pub fn remote_respawn(&mut self, idx: usize, a: &mut Actor, t: &PlayerTuning) {
+        a.alive = true;
+        a.hp = t.hp;
+        a.invuln = t.spawn_invuln;
+        a.respawn_timer = 0.0;
+        if let Some(n) = self.actors.get_mut(idx) {
+            n.spawn_pending = true;
+        }
+    }
+
+    /// JS `_playEvents` (L452-462): dequeue every sender's due timeline
+    /// records — `while (events[i][0] <= p.tr)` — in peer insertion order, so
+    /// one frame's replay keeps the sender-clock ordering. A peer without a
+    /// clock yet (`tr` unset, i.e. before its first tick) plays nothing.
+    pub fn due_events(&mut self) -> Vec<(SessionId, Vec<TimedEvent>)> {
+        let mut out = Vec::new();
+        for (id, p) in &mut self.peers {
+            if p.events.is_empty() {
+                continue;
+            }
+            let Some(tr) = p.tr else { continue };
+            let mut n = 0;
+            while n < p.events.len() && (p.events[n].ts as f64) <= tr {
+                n += 1;
+            }
+            if n > 0 {
+                out.push((id.clone(), p.events.drain(..n).collect()));
+            }
+        }
+        out
     }
 
     /// JS `onLeave` L679 (non-self takeover): same squidkid, new sender —
@@ -1049,7 +1081,6 @@ mod tests {
         let dt = 1.0 / 60.0f32;
         let mut pb = Playback::new(1, 1.0 / 20.0);
         let mut a = Actor::new(0, 0, t);
-        let mut wr = WeaponRunner::new();
         let mut s = sample(0.0, 0.0);
         s.f |= flags::INVULN;
         s.turf = 50.0;
@@ -1058,14 +1089,14 @@ mod tests {
         pb.advance_all(0.0, dt as f64);
         pb.sample(0, "H", dt as f64, 25.0);
         assert!(pb.actors[0].ready);
-        pb.apply(0, &mut a, &mut wr, dt, t);
+        pb.apply(0, &mut a, dt);
         assert_eq!(a.invuln, 0.1, "the invuln bit is a 0.1 s window");
         assert_eq!(a.turf, 50.0);
         // bit off + smaller turf: the window clears, the stat never regresses
         let mut s2 = sample(0.05, 0.0);
         s2.turf = 40.0;
         pb.actors[0].cur = s2;
-        pb.apply(0, &mut a, &mut wr, dt, t);
+        pb.apply(0, &mut a, dt);
         assert_eq!(a.turf, 50.0, "turf only ratchets up");
         assert_eq!(a.invuln, 0.0, "bit off clears the window");
     }

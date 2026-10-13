@@ -79,6 +79,26 @@ impl SplatKind {
             Self::Speck => "speck",
         }
     }
+
+    /// Inverse of [`Self::name`] — JS `paint.js` `_kind` resolves
+    /// `opts.kind` through the `K` table (L454-459), so the wire carries the
+    /// **string name** and replay looks it up here. An unknown name falls
+    /// back to the radius inference exactly like JS (`K[opts.kind]` →
+    /// undefined → `_kind` continues with `kind = undefined`).
+    #[must_use]
+    pub fn from_name(s: &str) -> Option<Self> {
+        match s {
+            "shot" => Some(Self::Shot),
+            "line" => Some(Self::Line),
+            "blast" => Some(Self::Blast),
+            "bomb" => Some(Self::Bomb),
+            "trail" => Some(Self::Trail),
+            "drop" => Some(Self::Drop),
+            "roll" => Some(Self::Roll),
+            "speck" => Some(Self::Speck),
+            _ => None,
+        }
+    }
 }
 
 /// Main-blob outline: organic lobes + two narrow "fingers" thrown out by the
@@ -367,6 +387,22 @@ impl PaintGrid {
     /// them onto its [`InkAtlas`](crate::ink_atlas::InkAtlas) bitmap.
     pub fn drain_ink(&mut self) -> Vec<InkSplat> {
         std::mem::take(&mut self.ink_stream)
+    }
+
+    /// Read-only view of the recorded splat stream (Task 23: the replication
+    /// layer records local splats from here without consuming them — the
+    /// render layer still owns [`PaintGrid::drain_ink`]).
+    #[must_use]
+    pub fn ink_stream(&self) -> &[InkSplat] {
+        &self.ink_stream
+    }
+
+    /// The raw per-face coverage bytes (`0` / team `1` / team `2`), the same
+    /// order the snapshot serialises. Task 23's TR-23.1 asserts two clients'
+    /// grids byte-for-byte after splat replay.
+    #[must_use]
+    pub fn grid(&self) -> &[u8] {
+        &self.grid
     }
 
     /// Rasterise one splat onto a single face (JS `_cpuSplat`).

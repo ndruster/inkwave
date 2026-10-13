@@ -182,15 +182,25 @@ pub struct Projectile {
     pub trail_radius: f32,
     /// Deterministic blob seed (JS `p.seed`).
     pub seed: f32,
+    /// Visual-only replay of someone else's round (JS `p.ghost`,
+    /// netmatch.js `ghostProjectile` L867-875): it never paints and never
+    /// damages (JS wraps its step in `nm.mute++/--`, weapons.js L1572-1574,
+    /// and `damage: 0` skips `applyHit`, L1608), but it still integrates
+    /// motion and despawns on the same hit/life/water expiry as a live round.
+    #[serde(default)]
+    pub ghost: bool,
 }
 
 /// Gameplay events produced by the weapon layer (JS `emit(...)`). The match
 /// layer drains these for scoring/FX/netcode (Task 8, [`crate::match_`]).
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SimEvent {
-    /// A round left the muzzle (JS `weapon:fire`).
+    /// A round left the muzzle (JS `weapon:fire`). `team` joins `owner_slot`
+    /// into the full firing identity (slots repeat per team), needed by the
+    /// net recorder to pair the muzzle with its roster entry (Task 23).
     Fire {
         owner_slot: usize,
+        team: usize,
         muzzle: Vec3,
         dir: Vec3,
     },
@@ -478,9 +488,11 @@ impl ProjectileSim {
             trail_every: w.trail_every,
             trail_radius: w.trail_radius,
             seed,
+            ghost: false,
         });
         self.push_event(SimEvent::Fire {
             owner_slot: a.slot,
+            team: a.team,
             muzzle: m,
             dir,
         });
@@ -552,6 +564,13 @@ impl ProjectileSim {
             p.pos += p.vel * dt;
         }
         let mut dead = false;
+        // JS wraps a ghost round's whole `_step` in `nm.mute++/--`
+        // (weapons.js L1572-1574): every `paint.splat` it would make returns
+        // 0 before rasterising (paint.js L470), and `damage: 0` skips
+        // `applyHit` (L1608). The round still integrates, still dies on the
+        // same hit / life / water expiry, and its `weapon:impact` emits are
+        // FX/audio-only with no sim consumer.
+        let ghost = self.list[idx].ghost;
 
         // ---- actors: enemy capsules only (JS `e.team === p.team || !e.alive`
         // skip). The victim's *visual* body is the hitbox (JS `hitBase`).
@@ -591,29 +610,34 @@ impl ProjectileSim {
             // hit-*decided* here but the damage lands on its owner —
             // `shouldApplyHit` → 'send' (netmatch.js L715). The round still
             // dies and the impact FX still fires (JS L1610 runs after the
-            // route branch).
+            // route branch). JS L1608 only routes a round that actually
+            // carries damage — a ghost round (`damage: 0`, netmatch.js
+            // `ghostProjectile` L871) never reaches `applyHit`, so it neither
+            // damages nor decides a hit on any victim.
             let send = remote.is_some_and(|m| m.get(si).copied().unwrap_or(false));
-            if send {
-                self.push_event(SimEvent::HitSend {
-                    attacker_slot: owner_slot,
-                    victim_slot,
-                    victim_team,
-                    team,
-                    damage: dmg,
-                });
-            } else {
-                // JS body hit: damage + FX only — no paint splat (`_credit` is
-                // never called on this branch), so `area` is 0. The attacker
-                // identity `(team, owner_slot)` rides `damage` → `lastAttacker`
-                // (JS L188) so a later water splat of the victim can credit it.
-                let outcome = apply_hit(actors, si, dmg, Some((team, owner_slot)), t);
-                self.push_event(SimEvent::Hit {
-                    attacker_slot: owner_slot,
-                    victim_slot,
-                    team,
-                    damage: dmg,
-                    killed: outcome.killed,
-                });
+            if dmg > 0.0 {
+                if send {
+                    self.push_event(SimEvent::HitSend {
+                        attacker_slot: owner_slot,
+                        victim_slot,
+                        victim_team,
+                        team,
+                        damage: dmg,
+                    });
+                } else {
+                    // JS body hit: damage + FX only — no paint splat (`_credit` is
+                    // never called on this branch), so `area` is 0. The attacker
+                    // identity `(team, owner_slot)` rides `damage` → `lastAttacker`
+                    // (JS L188) so a later water splat of the victim can credit it.
+                    let outcome = apply_hit(actors, si, dmg, Some((team, owner_slot)), t);
+                    self.push_event(SimEvent::Hit {
+                        attacker_slot: owner_slot,
+                        victim_slot,
+                        team,
+                        damage: dmg,
+                        killed: outcome.killed,
+                    });
+                }
             }
             self.push_event(SimEvent::Impact {
                 pos: at,
@@ -656,7 +680,15 @@ impl ProjectileSim {
                 };
                 // JS `_impact` → `_credit(p, G.paint.splat(...))`: the newly
                 // claimed area rides the impact event to the match layer.
-                let area = paint.splat(world, at, rad, team, &opts);
+                // Under the ghost `mute` the splat call itself returns 0
+                // before rasterising (paint.js L470), so nothing paints and
+                // `_credit` gets 0 — the jitter draw and the impact emit
+                // still happen (JS L1670/L1680 run outside the mute guard).
+                let area = if ghost {
+                    0.0
+                } else {
+                    paint.splat(world, at, rad, team, &opts)
+                };
                 let owner_slot = self.list[idx].owner_slot;
                 self.push_event(SimEvent::Impact {
                     pos: hit.point,
@@ -695,17 +727,24 @@ impl ProjectileSim {
                     let jit = 0.8 + self.rng.next_f32() * 0.4;
                     let seed = self.rng.next_f32();
                     // JS `_credit(p, splat(...))`: drip turf counts for the
-                    // owner (upstream emits no `weapon:impact` here).
-                    let area = paint.splat(
-                        world,
-                        g.point + g.normal * 0.1,
-                        trail_r * jit,
-                        team,
-                        &SplatOpts {
-                            seed,
-                            ..SplatOpts::default()
-                        },
-                    );
+                    // owner (upstream emits no `weapon:impact` here). Under
+                    // the ghost `mute` the splat returns 0 (paint.js L470),
+                    // so the drip paints nothing but the raycast and the
+                    // fresh jitter/seed draws still happen (rng stream parity).
+                    let area = if ghost {
+                        0.0
+                    } else {
+                        paint.splat(
+                            world,
+                            g.point + g.normal * 0.1,
+                            trail_r * jit,
+                            team,
+                            &SplatOpts {
+                                seed,
+                                ..SplatOpts::default()
+                            },
+                        )
+                    };
                     if area > 0.0 {
                         let owner_slot = self.list[idx].owner_slot;
                         self.push_event(SimEvent::Turf {

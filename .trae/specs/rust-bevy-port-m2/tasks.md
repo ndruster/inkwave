@@ -190,7 +190,7 @@
   - **N-1~N-4 ✅（核对无误留档）**：`snap_now=false` 死赋值（JS L326 同为死代码，唯一读者 L329 被 handoff 排除）已删并注释声明；quantile NaN 路径、`advance_all` 空 peers、`apply` 越界 idx 均核对与 JS 行为一致，无需改。
 
 ## Task 23: 事件时间线重放（墨汁/ghost/触发）
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 21, Task 22
 - **Description**:
@@ -201,6 +201,14 @@
   - `rule` TR-23.2: 单测：ghost 弹丸只表现不判定（不扣血不喷墨）；事件与路径同序（splat 时刻 = 其 sender-clock）；证据为测试输出
   - `rule` TR-23.3: 全门禁 + JS 树零改动；证据为命令输出
 - **Notes**: 涂地计分仍由 host 权威（各端本地网格仅用于呈现与本地预测，结算以 `res` 为准）。
+- **Completion Evidence**:
+  - **消费侧（`replication.rs::play_events` / `play_event`，JS `_playEvents`/`_play`/`_playEvent` L447-619）**：每帧在 sample 之后、tick 发送之前（JS L179 帧序）排空 `Playback::due_events`（`ts <= p.tr` 逐 peer 有序 drain）。`'s'`→还原 SplatOpts（stretch 三分量非零判据 L468-471、`e[8]` kind 名查 `SplatKind::from_name`、`stretchAmt` 随 stretch）后 `paint.splat`，seeded 形状各端一致；`'p'`→ghost `Projectile`（`damage:0`、`ghost:true`、seed 取本地 rng、trail -1.5/0.45，JS `ghostProjectile` L867-875；无 remote 守卫，对齐 L476 仅 byNid 查找）直接入 `projectiles.list`；`'tr'`→守卫（`!a || !a.remote || (!a.alive && name!=='spawn')`，L480）后消费即弃（sim 无 character 表现层）；`'ev'`→`play_event`：`actor||victim`→nid→idx→`!remote` return→`splatted`→`Playback::remote_splat`（JS `_remoteSplat` L603-619 全字段：alive=false/hp=0/respawnTimer/deaths++/runner.reset/buf 清/ready/has/deathTp，+attacker 存在时 `stats.splats++` L613）/`respawn`→`remote_respawn`（L621-627）/其余 FX 名忽略。
+  - **录制侧（`rec`/`record_ink`/`record_fire`/`record_splat_event`/`record_event`，bus drain 内）**：`_rec` 语义 = `r3(now)` 前缀入 `out`，随下一 tick `e` 发出。ink 流游标 `recorded_ink` 逐帧录 `SplatRecord::from_ink_splat`（JS `recSplat` L109-114）；**防回环 = 游标法**（record_ink 在 play_events 前跑只录本地新条目，play_events 末尾 `max(replayed)` 跳过重放条目——JS `applying` 标志 L110 的 Rust 等价物，模块 docs 声明）；单发三记录 `p`→`ev weapon:fire`→`tr shoot` 顺序逐字对齐 JS（recProj L116 / _onLocalEvent L139 / trigger L179）；`MatchEvent::Respawn` 本地先 `tr spawn` 后 `ev respawn`（actor.js L172-175 顺序）；`MatchEvent::Splat` 仅本地 victim 录 `ev splatted`（packEvent 键序 victim/attacker/cause，attacker None→键缺失）；`'tr hit'` 不录（character 表现层 seam，M2 范围外，模块 docs 声明）。
+  - **ghost 判定守卫（`weapon.rs step_one`）**：JS mute 语义核实——paint.js L470 `mute>0 return 0` 在光栅化**之前**（不喷墨但照常耗 rng）、weapons.js L1608 `dmg>0` 才 applyHit、L1610 impact emit 无条件。Rust：body_hit 伤害块套 `dmg > 0.0` 守卫（Impact 事件在守卫外）；world-hit 与 drip 分支 `ghost → area=0`（跳过 `paint.splat`，rng 抖动照常消耗）；死亡/世界判定/raycast 照常。`SimEvent::Fire{owner_slot,team,muzzle,dir}` 经 `MatchEvent::Fire` 上总线供录制。
+  - **死亡/重生事件驱动（关闭 Task 22 偏差声明 #2 两缺口）**：`Playback::apply` 删 ALIVE 边沿机（只剩 !ready/!alive respawn_timer/路径写入）；`remote_splat`/`remote_respawn` 由 timeline 事件成熟时驱动；owner 两样本间隙死而复生按 JS 同序处理。playback.rs 与 replication.rs 模块 docs 偏差声明改写为已关闭表述。
+  - TR-23.1 ✅：`tr23_1_splat_replay_matches_grid_and_never_loops_back`——双端 FakeRelay，A 本地 splat（r2 干净圆心，量化无损）→ B 重放后 `paint.grid()` **字节级相等**；B 出向 tick 的 `e` 中 SplatRecord 计数恒 0（回环检查在路由前扫描 B→host 帧）。
+  - TR-23.2 ✅：`tr23_2_ghost_round_never_damages`——单发命中：B 侧 ghost 圆存在（`ghost && damage==0`）且受害者 hp 只掉一次 d（容差带排除双次应用与 hp regen 噪声），两端圆到期消亡；`tr23_2_ghost_never_paints_and_splats_land_on_the_sender_clock`——抛射落地：host 先喷墨、B 的 ghost 全程不新增墨（B `ink_stream` 纯重放、长度与 host 相等），且 B 喷墨帧号晚于 host ≥3 帧（重放等 playback 时钟成熟而非包到即放）；splat 时刻=sender-clock 由 `due_events` 的 `ts<=tr` 门与同帧路径采样共享时钟保证（与 TR-22 时钟测试合证）。
+  - TR-23.3 ✅：`cargo fmt --all --check` ✅、`clippy --workspace --all-targets -- -D warnings` 0 错 ✅、`cargo test --workspace` **242 passed**（42 inkwave + 188 sim（replication 新增 3）+ 8 shim + 4 harness；基线 239→242）✅、wasm32 check（`-p inkwave -p inkwave_sim` 口径）✅、`trunk build --release` exit 0 ✅、headless 冒烟（`--headless --frames 120` boot+complete）✅、`cargo tree -p inkwave_sim --depth 1` 仅 glam/serde/serde_json ✅、JS 树（src/server/tools/docs）`git status` 零改动 ✅。
 
 ## Task 24: 极简大厅 UI
 - **Status**: `pending`

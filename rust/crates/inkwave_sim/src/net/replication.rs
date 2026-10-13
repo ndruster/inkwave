@@ -26,9 +26,16 @@
 //!   - `_tick` clock bookkeeping / `_advance` / `_pathAt` / `_sample` /
 //!     `applyRemote` / `hermite` / `quantile` (L229-346, L349-428, L761-786)
 //!     -> [`super::playback`], driven by [`Replication::update`] (frame
-//!     order: `now` → advance → sample → tick timer → event bus → apply,
-//!     matching JS `NetMatch.update` before `Match.update`) and
-//!     [`Replication::on_tick`]
+//!     order: `now` → advance → sample → record ink → play events → tick
+//!     timer → event bus → apply, matching JS `NetMatch.update` before
+//!     `Match.update`) and [`Replication::on_tick`]
+//!   - event timeline recording / replay (Task 23): local splats, shots,
+//!     triggers and `splatted` / `respawn` events are recorded onto the
+//!     outgoing tick `e` (JS `_rec` / `recSplat` / `recProj` /
+//!     `_onLocalEvent`, L107-143) by [`Replication::record_ink`] and the bus
+//!     drain; received events play on the sender timeline (JS `_playEvents` /
+//!     `_play` / `_playEvent` / `_remoteSplat` / `_remoteRespawn`,
+//!     L447-619) via [`Replication::play_events`]
 //!
 //! Scope and deviations (recorded for review):
 //!   - **Direct time source**: JS stamps ticks with `now() =
@@ -44,11 +51,15 @@
 //!     fields the sim does not model (`hurtFlash`, `aimDir`/`aimPoint`,
 //!     climbing `wallN`, special/super-jump/kit pose state, FX/audio) are
 //!     skipped — see the playback module docs for the line-by-line list.
-//!   - **Death / respawn edges drive the proxy state machine** (JS runs
-//!     `_remoteSplat` / `_remoteRespawn` off the `'splatted'` / `'respawn'`
-//!     events on the sender timeline — Task 23). [`super::playback::Playback::apply`]
-//!     fires the same state writes off the `ALIVE` flag edge of the sampled
-//!     path — the same playback moment the timeline event would land.
+//!   - **Death / respawn are event-driven** (Task 23, closing the Task 22
+//!     ALIVE-edge deviation): the victim's owner records `'ev splatted'` /
+//!     `'ev respawn'` on its timeline (JS `_onLocalEvent`, L139-143) and every
+//!     receiver runs [`super::playback::Playback::remote_splat`] /
+//!     [`super::playback::Playback::remote_respawn`] when the event matures
+//!     (JS `_remoteSplat` / `_remoteRespawn`, L603-619). [`super::playback::Playback::apply`]
+//!     no longer touches the ALIVE edge. A player who dies and respawns
+//!     between two samples is now handled exactly like JS (the events land in
+//!     order on the sender timeline).
 //!   - **`w:'shot'`**: the JS shooter round reports `p.weaponId || p.wid ||
 //!     p.type` (weapons.js L1608) and the M1 Spritzer has no `weaponId`/`wid`,
 //!     so the wire id is `'shot'` — the victim's owner only forwards it to
@@ -98,8 +109,14 @@ use crate::net::wire::{
     self, JVal, decode_direct, decode_host, decode_tick, encode_direct, encode_host, encode_tick,
     parse_json,
 };
-use crate::net::{ActorSample, ActorStatsRow, DirectMsg, HostMsg, SessionId, Tick, TimedEvent};
+use crate::net::{
+    ActorSample, ActorStatsRow, DirectMsg, EventRecord, ForwardEvent, HostMsg, ProjectileRecord,
+    SessionId, SplatRecord, Tick, TickEvent, TimedEvent, TrigData, TriggerRecord,
+};
+use crate::paint::{SplatKind, SplatOpts};
 use crate::tuning::{Difficulty, PlayerTuning, Spritzer};
+use crate::weapon::{PROJ_DRAG, PROJ_GRAV, PROJ_SIZE, SHOT_LIFE};
+use glam::{Vec3, vec3};
 
 /// JS `TICK = 1/20` (netmatch.js L30): owners stream every 1/20 s.
 pub const TICK_DT: f32 = 1.0 / 20.0;
@@ -178,9 +195,16 @@ pub struct Replication {
     /// buffers, Hermite paths and corrections. Roster-parallel like the
     /// arrays above (pruned together in [`Replication::remove_at`]).
     playback: Playback,
-    /// Outgoing event timeline (JS `this.out`, L107) — Task 23 fills it;
-    /// [`Replication::update`] ships it non-empty as the tick's `e`.
+    /// Outgoing event timeline (JS `this.out`, L107) — filled by the local
+    /// recorder (Task 23) and shipped non-empty as the tick's `e`.
     pub out: Vec<TimedEvent>,
+    /// How many entries of [`crate::paint::PaintGrid::ink_stream`] this
+    /// client has already recorded onto `out`. The cursor advances past the
+    /// local splats each frame and skips the replayed ones — the Rust
+    /// stand-in of JS's `applying` loop guard (`recSplat`, L110: a splat
+    /// replayed from a peer's timeline is never re-recorded and never
+    /// re-broadcast).
+    recorded_ink: usize,
     /// JS `tickT` (L57, starts 0 → the first frame sends).
     tick_t: f32,
     /// JS `clockT` (L61, starts 0 → the first host tick carries `c`).
@@ -210,6 +234,7 @@ impl Replication {
             bots: (0..n).map(|_| None).collect(),
             playback: Playback::new(n, TICK_DT as f64),
             out: Vec::new(),
+            recorded_ink: 0,
             tick_t: 0.0,
             clock_t: 0.0,
             now: 0.0,
@@ -308,19 +333,27 @@ impl Replication {
     /// One 60 Hz frame of replication (JS `NetMatch.update`, L172-188, then
     /// the `Match.update` → `applyRemote` consumption, match.js L228):
     /// advance every sender's playback clock, sample every remote actor's
-    /// path, run the 20 Hz tick timer (owners stream their actors; the host
-    /// rides its `c` clock snapshot every 0.5 s), drain the match event bus
-    /// — the host re-broadcasts phase changes (`{k:'st'}`, L80) and every
-    /// client routes proxy hits to the victim's owner (`{k:'hit'}`,
-    /// L163-167) — then apply the sampled timeline onto the proxies.
+    /// path, **replay the due event-timeline records** (JS `_playEvents`,
+    /// L179 — before the tick send, exactly like JS), run the 20 Hz tick
+    /// timer (owners stream their actors + the locally recorded timeline;
+    /// the host rides its `c` clock snapshot every 0.5 s), drain the match
+    /// event bus — the host re-broadcasts phase changes (`{k:'st'}`, L80),
+    /// every client routes proxy hits to the victim's owner (`{k:'hit'}`,
+    /// L163-167) and records the local splats / shots / triggers / deaths /
+    /// respawns onto the outgoing timeline (Task 23) — then apply the
+    /// sampled timeline onto the proxies.
     ///
     /// Returns the events the replicator did *not* consume (Splat / Turf /
-    /// Countdown / Respawn / OneMinute — HUD and Task 23's consumers).
+    /// Countdown / OneMinute — HUD consumers; Fire / Respawn / HitSend are
+    /// recorded / routed here).
+    #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
         dt: f32,
         m: &mut Match,
+        sim: &SimWorld,
         t: &PlayerTuning,
+        w: &Spritzer,
         tr: &mut impl Transport,
     ) -> Vec<MatchEvent> {
         self.now += dt as f64;
@@ -341,6 +374,18 @@ impl Replication {
             }
         }
 
+        // ---- record the local splats painted since the last frame (JS
+        // `paint.splat` → `recSplat`, paint.js L469-472). Runs *before* the
+        // replay so the cursor never counts a replayed splat — the Rust
+        // stand-in for JS's `applying` guard (see `play_events`).
+        self.record_ink(m);
+
+        // ---- event timeline replay (JS `_playEvents`, L179: after
+        // sampling, before the tick send — so a due splat paints into this
+        // frame's grid and a due death already hides the proxy before its
+        // sample is applied below).
+        self.play_events(m, sim, t);
+
         // ---- outgoing tick (L182-187: `tickT -= dt; if (<=0) { += TICK;
         // if (<0) = TICK; _sendTick() }`).
         self.tick_t -= dt;
@@ -352,9 +397,10 @@ impl Replication {
             self.send_tick(m, tr);
         }
 
-        // ---- event bus (JS listens on `match:state` L80 and the weapon
-        // layer calls `sendHit` inline, L163-167; the sim surfaces both as
-        // bus events drained here).
+        // ---- event bus (JS listens on `match:state` L80, `splatted` /
+        // `respawn` / `weapon:fire` through the FORWARD subscription
+        // L77/L139-143, and calls `sendHit` inline, L163-167; the sim
+        // surfaces all of these as bus events drained here).
         let drained = std::mem::take(&mut m.events);
         let mut rest = Vec::new();
         for e in drained {
@@ -376,6 +422,51 @@ impl Replication {
                 } => {
                     self.send_hit(m, t, tr, attacker, victim, damage);
                 }
+                MatchEvent::Fire { owner, muzzle, dir } => {
+                    // JS order inside one shot: `recProj` (weapons.js
+                    // `_push` → netmatch L116) → `emit('weapon:fire')` →
+                    // `_onLocalEvent` (L139) → `character.trigger('shoot')`
+                    // (L179, after `fireShooter` returns).
+                    self.record_fire(m, w, owner, muzzle, dir);
+                }
+                MatchEvent::Respawn { team, slot } => {
+                    // JS `respawn()` (actor.js L172-175): `trigger('spawn')`
+                    // fires *before* `emit('respawn')`, so the timeline
+                    // carries `tr spawn` ahead of `ev respawn`.
+                    if let Some(i) = find_actor(&m.actors, team, slot)
+                        && !self.remote[i]
+                    {
+                        let nid = self.nids[i];
+                        self.rec(TickEvent::Trigger(TriggerRecord {
+                            nid,
+                            name: "spawn".to_string(),
+                            data: TrigData::Zero,
+                        }));
+                    }
+                    self.record_event(m, ForwardEvent::Respawn, team, slot);
+                    rest.push(MatchEvent::Respawn { team, slot });
+                }
+                MatchEvent::Splat {
+                    victim_team,
+                    victim_slot,
+                    attacker,
+                    cause,
+                } => {
+                    // JS `_onLocalEvent` (L139-143): forwarded only for
+                    // *local* victims — a proxy's death is decided by its
+                    // owner and arrives on the owner's timeline instead.
+                    if let Some(vi) = find_actor(&m.actors, victim_team, victim_slot)
+                        && !self.remote[vi]
+                    {
+                        self.record_splat_event(m, vi, attacker, cause);
+                    }
+                    rest.push(MatchEvent::Splat {
+                        victim_team,
+                        victim_slot,
+                        attacker,
+                        cause,
+                    });
+                }
                 other => rest.push(other),
             }
         }
@@ -387,12 +478,349 @@ impl Replication {
             let playback = &mut self.playback;
             for (i, &rem) in self.remote.iter().enumerate() {
                 if rem {
-                    playback.apply(i, &mut m.actors[i], &mut m.runners[i], dt, t);
+                    playback.apply(i, &mut m.actors[i], dt);
                 }
             }
         }
 
         rest
+    }
+
+    /// JS `_rec` (L107): prefix the record with this client's logical
+    /// sender-clock (`r3(now())`) and queue it onto the outgoing timeline.
+    fn rec(&mut self, kind: TickEvent) {
+        self.out.push(TimedEvent {
+            ts: wire::r3(self.now) as f32,
+            kind,
+        });
+    }
+
+    /// JS `recSplat` (L109-114) for every splat the local sim painted since
+    /// the last frame. The replayed (remote) splats are *not* re-recorded:
+    /// `play_events` advances this cursor past them before the next call,
+    /// the Rust stand-in of JS's `applying` guard (paint.js L471 never
+    /// reaches `recSplat` while applying).
+    fn record_ink(&mut self, m: &Match) {
+        let stream = m.paint.ink_stream();
+        let start = self.recorded_ink.min(stream.len());
+        for s in &stream[start..] {
+            self.rec(TickEvent::Splat(SplatRecord::from_ink_splat(s)));
+        }
+        self.recorded_ink = stream.len();
+    }
+
+    /// JS `recProj` (L116-122) + `_onLocalEvent('weapon:fire')` (L139-143) +
+    /// the `character.trigger('shoot')` wrapper (L90-93, weapons.js L179):
+    /// one local shot leaves three timeline records, in that order. The
+    /// projectile's own fields are rebuilt from the [`Spritzer`] tuning —
+    /// the M1 Spritzer round is fully determined by it (`ptype: 'shot'`, no
+    /// `wid`, no `delay`, `life = min(range/speed, 1.2)` like the local
+    /// `fire_shooter`).
+    fn record_fire(
+        &mut self,
+        m: &Match,
+        w: &Spritzer,
+        owner: (usize, usize),
+        muzzle: Vec3,
+        dir: Vec3,
+    ) {
+        let Some(i) = find_actor(&m.actors, owner.0, owner.1) else {
+            return;
+        };
+        if self.remote[i] {
+            return; // JS `recProj`: `if (!o || o.remote …) return`
+        }
+        let nid = self.nids[i];
+        let speed = w.proj_speed;
+        self.rec(TickEvent::Proj(ProjectileRecord {
+            nid,
+            ptype: "shot".to_string(),
+            wid: None,
+            pos: [muzzle.x, muzzle.y, muzzle.z],
+            vel: [dir.x * speed, dir.y * speed, dir.z * speed],
+            delay: 0.0,
+            life: (w.range / w.proj_speed).min(SHOT_LIFE),
+            straight: w.straight_time,
+            radius: w.impact_radius,
+            size: PROJ_SIZE,
+            grav: PROJ_GRAV,
+            drag: PROJ_DRAG,
+            trail_every: w.trail_every,
+            head: false,
+            vis: 0.1,
+            tail0: 0.8,
+            tail_k: 1.3,
+            wob: 0.035,
+            wob_f: 26.0,
+            nose: 0.3,
+            sats: 3.0,
+        }));
+        // `packEvent({actor, weapon, muzzle, dir})` (L803-813): actor →
+        // `{n}`, weapon id string passes through, Vector3 → `[r2 ×3]`.
+        let payload = JVal::Obj(vec![
+            (
+                "actor".to_string(),
+                JVal::Obj(vec![("n".to_string(), JVal::Num(f64::from(nid)))]),
+            ),
+            ("weapon".to_string(), JVal::Str(w.id.clone())),
+            (
+                "muzzle".to_string(),
+                JVal::Arr(vec![
+                    JVal::Num(wire::r2(f64::from(muzzle.x))),
+                    JVal::Num(wire::r2(f64::from(muzzle.y))),
+                    JVal::Num(wire::r2(f64::from(muzzle.z))),
+                ]),
+            ),
+            (
+                "dir".to_string(),
+                JVal::Arr(vec![
+                    JVal::Num(wire::r2(f64::from(dir.x))),
+                    JVal::Num(wire::r2(f64::from(dir.y))),
+                    JVal::Num(wire::r2(f64::from(dir.z))),
+                ]),
+            ),
+        ]);
+        self.rec(TickEvent::Event(EventRecord {
+            name: ForwardEvent::WeaponFire,
+            payload,
+        }));
+        self.rec(TickEvent::Trigger(TriggerRecord {
+            nid,
+            name: "shoot".to_string(),
+            data: TrigData::Zero,
+        }));
+    }
+
+    /// JS `_onLocalEvent('splatted')` → `packEvent({victim, attacker,
+    /// cause})` (L139-143, L803-813). Key order is the JS object-literal
+    /// insertion order (`actor.js` L233): `victim`, `attacker`, `cause`.
+    /// `attacker` is `null` for water deaths — `packEvent` drops nulls, so
+    /// the key is simply absent (JS L807-810 skips `v == null`).
+    fn record_splat_event(
+        &mut self,
+        m: &Match,
+        vi: usize,
+        attacker: Option<(usize, usize)>,
+        cause: crate::actor::SplatCause,
+    ) {
+        let mut pairs = vec![(
+            "victim".to_string(),
+            JVal::Obj(vec![("n".to_string(), JVal::Num(f64::from(self.nids[vi])))]),
+        )];
+        if let Some((at, aslot)) = attacker
+            && let Some(ai) = find_actor(&m.actors, at, aslot)
+        {
+            pairs.push((
+                "attacker".to_string(),
+                JVal::Obj(vec![("n".to_string(), JVal::Num(f64::from(self.nids[ai])))]),
+            ));
+        }
+        pairs.push((
+            "cause".to_string(),
+            JVal::Str(
+                match cause {
+                    crate::actor::SplatCause::Weapon => "weapon",
+                    crate::actor::SplatCause::Water => "water",
+                }
+                .to_string(),
+            ),
+        ));
+        self.rec(TickEvent::Event(EventRecord {
+            name: ForwardEvent::Splatted,
+            payload: JVal::Obj(pairs),
+        }));
+    }
+
+    /// JS `_onLocalEvent` for a named event whose payload is
+    /// `{actor: <local actor>}` (`respawn`, actor.js L175 → `{n: nid}`).
+    fn record_event(&mut self, m: &Match, name: ForwardEvent, team: usize, slot: usize) {
+        let Some(i) = find_actor(&m.actors, team, slot) else {
+            return;
+        };
+        if self.remote[i] {
+            return;
+        }
+        self.rec(TickEvent::Event(EventRecord {
+            name,
+            payload: JVal::Obj(vec![(
+                "actor".to_string(),
+                JVal::Obj(vec![("n".to_string(), JVal::Num(f64::from(self.nids[i])))]),
+            )]),
+        }));
+    }
+
+    /// JS `_playEvents` / `_play` (L452-498): dequeue every sender's due
+    /// timeline records and apply them in sender-clock order. `'s'` splats
+    /// paint through [`crate::paint::PaintGrid::splat`] (the cursor below
+    /// keeps them out of the recorder, JS's `applying` guard stand-in);
+    /// `'p'` rounds spawn visual-only ghosts; `'tr'` triggers land on
+    /// remote actors only (the sim has no character layer to animate, so
+    /// they are consumed — the guard of JS L480 still runs); `'ev'`
+    /// dispatches `splatted` / `respawn` into the proxy state machines and
+    /// ignores the FX-only names (`weapon:fire` presentation is the `'p'`
+    /// ghost + audio, out of sim scope).
+    fn play_events(&mut self, m: &mut Match, sim: &SimWorld, t: &PlayerTuning) {
+        let due = self.playback.due_events();
+        if due.is_empty() {
+            return;
+        }
+        // Replay writes paint + ghosts into the match; JS runs the same
+        // mutations inline in `_play`. Our recorder skips the replayed
+        // splats via the `recorded_ink` cursor (see `record_ink`): advance
+        // it past whatever the replay appends.
+        let mut replayed = m.paint.ink_stream().len();
+        for (_from, events) in due {
+            for ev in events {
+                match ev.kind {
+                    TickEvent::Splat(s) => {
+                        let opts = SplatOpts {
+                            seed: s.seed,
+                            // JS L468: the stretch vector exists only when
+                            // any component is non-zero; `stretchAmt` rides
+                            // it (L471), defaulting like `recSplat`'s `?? 1`.
+                            stretch: if s.stretch[0] != 0.0
+                                || s.stretch[1] != 0.0
+                                || s.stretch[2] != 0.0
+                            {
+                                Some(vec3(s.stretch[0], s.stretch[1], s.stretch[2]))
+                            } else {
+                                None
+                            },
+                            stretch_amt: if s.stretch[0] != 0.0
+                                || s.stretch[1] != 0.0
+                                || s.stretch[2] != 0.0
+                            {
+                                Some(s.stretch_amt)
+                            } else {
+                                None
+                            },
+                            kind: s.kind.as_deref().and_then(SplatKind::from_name),
+                        };
+                        m.paint.splat(
+                            sim.collision,
+                            vec3(s.x, s.y, s.z),
+                            s.radius,
+                            s.team as usize,
+                            &opts,
+                        );
+                        replayed = m.paint.ink_stream().len();
+                    }
+                    TickEvent::Proj(p) => {
+                        // JS `_play` 'p' (L476): `byNid.get(e[2])`, then
+                        // `ghostProjectile` — no `remote` guard (a ghost of
+                        // your own round can arrive from a peer you adopt
+                        // mid-flight; JS lets it die silently).
+                        let Some(i) = self.idx_of_nid(p.nid) else {
+                            continue;
+                        };
+                        let owner_team = m.actors[i].team;
+                        m.projectiles.list.push(crate::weapon::Projectile {
+                            pos: vec3(p.pos[0], p.pos[1], p.pos[2]),
+                            prev: vec3(p.pos[0], p.pos[1], p.pos[2]),
+                            start: vec3(p.pos[0], p.pos[1], p.pos[2]),
+                            vel: vec3(p.vel[0], p.vel[1], p.vel[2]),
+                            team: owner_team,
+                            owner_slot: m.actors[i].slot,
+                            age: 0.0,
+                            life: p.life,
+                            straight: p.straight,
+                            radius: p.radius,
+                            // JS `ghostProjectile` L870: `damage: 0` — the
+                            // ghost never hurts; its motion comes from the
+                            // record's own `grav` / `drag`.
+                            damage: 0.0,
+                            grav: p.grav,
+                            drag: p.drag,
+                            trail: -1.5,
+                            trail_every: p.trail_every,
+                            trail_radius: 0.45,
+                            // JS L871: `seed: Math.random()` — the ghost's
+                            // paint is muted, so the seed only feeds this
+                            // client's own rng stream.
+                            seed: m.projectiles.rng.next_f32(),
+                            ghost: true,
+                        });
+                    }
+                    TickEvent::Trigger(trig) => {
+                        // JS L478-483: the guard runs, then the character
+                        // trigger + loop side effects — presentation only,
+                        // no sim state in M2 (Spritzer has no charge/spin/
+                        // roll loops).
+                        let _ = trig;
+                    }
+                    TickEvent::Event(e) => {
+                        self.play_event(m, t, &e);
+                    }
+                    // M1/M2 placeholders (`b`/`k`/`z`): no kit/bomb/zone
+                    // gameplay in scope — JS L477/L486-493 would hand them
+                    // to the kit/boss/zones layers, which the sim lacks.
+                    _ => {}
+                }
+            }
+        }
+        // The replayed splats are presentation for us, not our own
+        // timeline — keep the cursor past them (JS `applying` guard).
+        self.recorded_ink = self.recorded_ink.max(replayed);
+    }
+
+    /// JS `_playEvent` (L573-601): unpack the payload, resolve
+    /// `e.actor || e.victim`, require a *remote* actor, then dispatch by
+    /// name. `splatted` / `respawn` drive the proxy state machines; the
+    /// remaining FORWARD names are FX/audio (out of sim scope) and the
+    /// trailing `emit(name, e)` feeds the app bus, not the sim.
+    fn play_event(&mut self, m: &mut Match, t: &PlayerTuning, e: &EventRecord) {
+        let payload = match &e.payload {
+            JVal::Obj(pairs) => pairs,
+            _ => return,
+        };
+        let nid_of = |key: &str| -> Option<u8> {
+            payload.iter().find(|(k, _)| k == key).and_then(|(_, v)| {
+                let JVal::Obj(inner) = v else { return None };
+                inner
+                    .iter()
+                    .find(|(k, _)| k == "n")
+                    .and_then(|(_, n)| n.as_f64())
+                    .map(|n| n as u8)
+            })
+        };
+        // `const a = e.actor || e.victim` (L576) — respawn carries `actor`,
+        // splatted carries `victim`.
+        let Some(a_nid) = nid_of("actor").or_else(|| nid_of("victim")) else {
+            return;
+        };
+        let Some(ai) = self.idx_of_nid(a_nid) else {
+            return;
+        };
+        if !self.remote[ai] {
+            return; // JS L577: our own events never replay through us
+        }
+        match e.name {
+            ForwardEvent::Splatted => {
+                // JS L580 → `_remoteSplat(e.victim, e.attacker, e.cause)`
+                // (L603-619). The `!victim` half of the L604 guard is the
+                // nid resolution above (the payload's `victim` is the same
+                // actor as `e.victim` for a splat record).
+                if self
+                    .playback
+                    .remote_splat(ai, &mut m.actors[ai], &mut m.runners[ai], t)
+                    && let Some(at_nid) = nid_of("attacker")
+                    && let Some(ti) = self.idx_of_nid(at_nid)
+                    && !self.remote[ti]
+                {
+                    // JS L613: `attacker.stats.splats++` — the owner that
+                    // locally decided the kill also counts it when the
+                    // victim's splat record confirms it.
+                    m.actors[ti].splats += 1;
+                }
+            }
+            ForwardEvent::Respawn => {
+                // JS L581 → `_remoteRespawn(a)` (L623-627).
+                self.playback.remote_respawn(ai, &mut m.actors[ai], t);
+            }
+            // FX/audio-only forwards (jump / superjump / special / dodge /
+            // weapon:fire — the ghost round itself rode the `'p'` record).
+            _ => {}
+        }
     }
 
     /// JS `_sendTick` (L190-203): pack every **owned** actor
@@ -1029,7 +1457,7 @@ mod tests {
         // Tick content: the host streams only its owned actors (L192) and
         // rides the clock snapshot (L197-200).
         let mut rec = Rec::default();
-        rh.update(TICK_DT, &mut mh, t, &mut rec);
+        rh.update(TICK_DT, &mut mh, &sim, t, w, &mut rec);
         let (to, payload) = rec.find("t").clone();
         assert_eq!(to, None, "ticks are broadcast");
         let v = parse_json(&payload).unwrap();
@@ -1056,7 +1484,7 @@ mod tests {
         // Task 22: the sample lands in the playback buffer — advance the
         // clock one frame so the path is sampled and applied (tr sits
         // behind the newest sample → the Early hold shows it verbatim).
-        rg.update(FIXED_DT, &mut mg, t, &mut rec);
+        rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut rec);
         assert_eq!(
             mg.actors[0].pos.x, good.actors[0].1.x,
             "the owner's word lands"
@@ -1072,7 +1500,7 @@ mod tests {
         // `t` from the tick ts, so bump nothing: same ts as `good`.
         stale.ts = good.ts;
         rg.on_message(h, &encode_tick(&stale, None), &mut mg, t);
-        rg.update(FIXED_DT, &mut mg, t, &mut rec);
+        rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut rec);
         assert_eq!(
             mg.actors[0].pos.x, good.actors[0].1.x,
             "a non-newer sample is dropped (L251)"
@@ -1143,8 +1571,8 @@ mod tests {
                 sent = Some(damage);
             }
             // rh.update consumes the HitSend and routes `{k:'hit'}` to G.
-            let _ = rh.update(FIXED_DT, &mut mh, t, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, t, &mut trg);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut trh);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
             trh.advance(16.0);
             trg.advance(0.0);
             for (from, p) in drain_msgs(&mut trh) {
@@ -1179,8 +1607,8 @@ mod tests {
             }
             mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w);
             mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
-            let _ = rh.update(FIXED_DT, &mut mh, t, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, t, &mut trg);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut trh);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
             trh.advance(16.0);
             trg.advance(0.0);
             for (from, p) in drain_msgs(&mut trh) {
@@ -1207,8 +1635,8 @@ mod tests {
         for _ in 0..120 {
             mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w);
             mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
-            let _ = rh.update(FIXED_DT, &mut mh, t, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, t, &mut trg);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut trh);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
             trh.advance(16.0);
             trg.advance(0.0);
             // The guest's respawned actor-1 sample arrives at the HOST inbox.
@@ -1307,8 +1735,8 @@ mod tests {
             let mut ig = vec![ActorInput::default(); 3];
             ig[1].move_dir = vec3(0.0, 0.0, -1.0);
             mg.step_masked(FIXED_DT, &ig, Some(rg.remote_mask()), &sim, t, w);
-            let _ = rh.update(FIXED_DT, &mut mh, t, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, t, &mut trg);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut trh);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
             trh.advance(16.0);
             trg.advance(0.0);
             for (from, p) in drain_msgs(&mut trh) {
@@ -1358,7 +1786,7 @@ mod tests {
             let mut ig = vec![ActorInput::default(); 3];
             rg.drive_bots(&mut mg, &nav, &sim, t, w, &mut ig);
             mg.step_masked(FIXED_DT, &ig, Some(rg.remote_mask()), &sim, t, w);
-            let _ = rg.update(FIXED_DT, &mut mg, t, &mut trg);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
             drain_msgs(&mut trg);
             trg.advance(16.0);
             obs.advance(0.0);
@@ -1529,7 +1957,9 @@ mod tests {
         // sendHit frame (netmatch.js L165): {k:'hit', v, a, d, w} with d
         // already r2'd; our channel uses w:'shot' (weapons.js L1608 fallback).
         let f = fix();
+        let sim = f.sim();
         let t = &f.tuning.player;
+        let w = &f.tuning.spritzer;
         let cfg = cfg(roster111("H", "G"), "tidewater", "H");
         let mut m = match111(&f, 1, 30.0);
         let mut r = Replication::new(&cfg, "H", "H");
@@ -1540,7 +1970,7 @@ mod tests {
             victim: (1, 0),
             damage: 33.333,
         });
-        let rest = r.update(FIXED_DT, &mut m, t, &mut rec);
+        let rest = r.update(FIXED_DT, &mut m, &sim, t, w, &mut rec);
         assert!(
             !rest.iter().any(|e| matches!(e, MatchEvent::HitSend { .. })),
             "HitSend is consumed"
@@ -1753,18 +2183,18 @@ mod tests {
                         }
                         for (i, &rem) in rh.remote.iter().enumerate() {
                             if rem {
-                                pbh.apply(i, &mut mh.actors[i], &mut mh.runners[i], FIXED_DT, t);
+                                pbh.apply(i, &mut mh.actors[i], FIXED_DT);
                             }
                         }
                         for (i, &rem) in rg.remote.iter().enumerate() {
                             if rem {
-                                pbg.apply(i, &mut mg.actors[i], &mut mg.runners[i], FIXED_DT, t);
+                                pbg.apply(i, &mut mg.actors[i], FIXED_DT);
                             }
                         }
                     }
                     _ => {
-                        let _ = rh.update(FIXED_DT, &mut mh, t, &mut th);
-                        let _ = rg.update(FIXED_DT, &mut mg, t, &mut tg);
+                        let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut th);
+                        let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut tg);
                         for p in th.out.drain(..) {
                             rg.on_message(h, &p, &mut mg, t);
                         }
@@ -1834,5 +2264,281 @@ mod tests {
             (full - base) / base * 100.0
         );
         assert!(gain < 0.20, "playback gain {:+.1}% ≥ 20%", gain * 100.0);
+    }
+
+    // ------------------------------------------------------------------ TR-23.1
+    #[test]
+    fn tr23_1_splat_replay_matches_grid_and_never_loops_back() {
+        // A sprays ink → B replays the timeline: byte-identical coverage
+        // grids, and B re-broadcasts nothing (JS `applying` guard, L110 —
+        // Rust: the `recorded_ink` cursor in `play_events`).
+        let f = fix();
+        let sim = f.sim();
+        let t = &f.tuning.player;
+        let w = &f.tuning.spritzer;
+        let relay = FakeRelay::new();
+        let (mut trh, mut trg) = pair(&relay);
+        let (h, g) = (trh.id(), trg.id());
+        let cfg = cfg(roster111(&h, &g), "tidewater", &h);
+        let mut mh = match111(&f, 21, 120.0);
+        let mut mg = match111(&f, 21, 120.0);
+        let mut rh = Replication::new(&cfg, &h, &h);
+        let mut rg = Replication::new(&cfg, &g, &h);
+        rh.bind_match(&mut mh);
+        rg.bind_match(&mut mg);
+        for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+        }
+        assert_eq!(mh.phase, Phase::Active);
+        assert!(
+            mh.paint.grid().iter().all(|&v| v == 0),
+            "both grids start ink-free"
+        );
+
+        // A's splat at an r2-clean centre (the wire quantization is a no-op,
+        // so a faithful replay must land on byte-identical cells).
+        let pad0 = sim.spawn_pads[0];
+        let c = vec3(
+            wire::r2(pad0.x as f64) as f32,
+            (wire::r2(pad0.y as f64) + 0.3) as f32,
+            wire::r2(pad0.z as f64) as f32,
+        );
+        let opts = SplatOpts {
+            seed: 0.42,
+            stretch: None,
+            stretch_amt: None,
+            kind: None,
+        };
+        mh.paint.splat(sim.collision, c, 2.0, 0, &opts);
+        assert!(
+            mh.paint.grid().iter().any(|&v| v != 0),
+            "the host splat painted cells"
+        );
+
+        // Run until B's grid catches up. B's own outgoing ticks must never
+        // carry a splat record for the replayed ink (loopback).
+        let mut guest_splat_records = 0;
+        let mut settled = false;
+        for _ in 0..600 {
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut trh);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
+            trh.advance(16.0);
+            trg.advance(0.0);
+            // Host inbox: B's ticks — scan them for splat records *before*
+            // routing (the loopback check).
+            for (from, p) in drain_msgs(&mut trh) {
+                if from == g
+                    && let Some(v) = parse_json(&p)
+                    && v.field("k").and_then(JVal::as_str) == Some("t")
+                {
+                    let (tick, _) = decode_tick(&v);
+                    guest_splat_records += tick
+                        .events
+                        .iter()
+                        .filter(|e| matches!(e.kind, TickEvent::Splat(_)))
+                        .count();
+                }
+                rh.on_message(&from, &p, &mut mh, t);
+            }
+            for (from, p) in drain_msgs(&mut trg) {
+                rg.on_message(&from, &p, &mut mg, t);
+            }
+            if mg.paint.grid() == mh.paint.grid() {
+                settled = true;
+                break;
+            }
+        }
+        assert!(settled, "B replays A's ink: grids byte-identical");
+        assert_eq!(
+            guest_splat_records, 0,
+            "a replayed splat is never re-broadcast (JS `applying`)"
+        );
+    }
+
+    // ------------------------------------------------------------------ TR-23.2
+    #[test]
+    fn tr23_2_ghost_round_never_damages() {
+        // One host round decides exactly one hit; the `'hit'` channel applies
+        // it once on the owner. The guest's ghost copy flies the same path
+        // and must not damage its own victim a second time (JS
+        // `ghostProjectile` `damage: 0`, weapons.js L871 + the `dmg > 0`
+        // guard, L1608).
+        let f = fix();
+        let sim = f.sim();
+        let t = &f.tuning.player;
+        let w = &f.tuning.spritzer;
+        let relay = FakeRelay::new();
+        let (mut trh, mut trg) = pair(&relay);
+        let (h, g) = (trh.id(), trg.id());
+        let cfg = cfg(roster111(&h, &g), "tidewater", &h);
+        let mut mh = match111(&f, 22, 120.0);
+        let mut mg = match111(&f, 22, 120.0);
+        let mut rh = Replication::new(&cfg, &h, &h);
+        let mut rg = Replication::new(&cfg, &g, &h);
+        rh.bind_match(&mut mh);
+        rg.bind_match(&mut mg);
+        for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+        }
+        let pad0 = sim.spawn_pads[0];
+        let victim_p = vec3(pad0.x, pad0.y, pad0.z + 3.0);
+        for a in [&mut mh.actors[0], &mut mg.actors[0]] {
+            a.pos = pad0;
+            a.yaw = 0.0;
+            a.aim_yaw = 0.0;
+            a.aim_pitch = 0.0;
+            a.invuln = 0.0;
+        }
+        for m in [&mut mh.actors[1], &mut mg.actors[1]] {
+            m.pos = victim_p;
+            m.invuln = 0.0;
+        }
+        let hp_before = mg.actors[1].hp;
+
+        // Exactly one round: the trigger is held for a single frame.
+        let mut inputs = vec![ActorInput::default(); 3];
+        let mut dmg = None;
+        let mut saw_ghost = false;
+        for frame in 0..(1.5 * 60.0) as usize {
+            inputs[0].fire = frame == 0;
+            // keep the pinned geometry (proxies redraw from samples)
+            mh.actors[1].pos = victim_p;
+            mg.actors[1].pos = victim_p;
+            mh.actors[0].pos = pad0;
+            mh.actors[0].aim_yaw = 0.0;
+            mh.actors[0].aim_pitch = 0.0;
+            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+            if dmg.is_none() {
+                dmg = mh.events.iter().find_map(|e| match e {
+                    MatchEvent::HitSend { damage, .. } => Some(*damage),
+                    _ => None,
+                });
+            }
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut trh);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
+            if !saw_ghost {
+                saw_ghost = mg
+                    .projectiles
+                    .list
+                    .iter()
+                    .any(|p| p.ghost && p.damage == 0.0);
+            }
+            trh.advance(16.0);
+            trg.advance(0.0);
+            for (from, p) in drain_msgs(&mut trh) {
+                rh.on_message(&from, &p, &mut mh, t);
+            }
+            for (from, p) in drain_msgs(&mut trg) {
+                rg.on_message(&from, &p, &mut mg, t);
+            }
+        }
+        let d = dmg.expect("the host round hit the proxy");
+        assert!(saw_ghost, "the 'p' record spawned a ghost round on B");
+        assert!(mg.actors[1].alive, "one round does not splat the victim");
+        // The owner applied the round's damage exactly once; the guest's
+        // ghost copy must not hurt its own victim a second time (a double
+        // application would land near `hp_before - 2*d`, far below the
+        // tolerance band — hp regen over the test window is a few points).
+        let lost = hp_before - mg.actors[1].hp;
+        assert!(
+            lost > 0.0 && lost < d + 6.0,
+            "exactly one damage application — the ghost never hurts: lost {lost} vs d {d}"
+        );
+        assert!(
+            mh.projectiles.list.is_empty() && mg.projectiles.list.is_empty(),
+            "both rounds die on expiry"
+        );
+    }
+
+    #[test]
+    fn tr23_2_ghost_never_paints_and_splats_land_on_the_sender_clock() {
+        // A steep round into the turf: the host paints (its impact splat is
+        // recorded as `'s'`), the guest's ghost flies the same path and must
+        // add nothing of its own — and the replayed splat matures on the
+        // playback timeline (~delay behind the sender clock), not the moment
+        // the packet arrives (JS `_playEvents` gates on `p.tr`, L452-462).
+        let f = fix();
+        let sim = f.sim();
+        let t = &f.tuning.player;
+        let w = &f.tuning.spritzer;
+        let relay = FakeRelay::new();
+        let (mut trh, mut trg) = pair(&relay);
+        let (h, g) = (trh.id(), trg.id());
+        let cfg = cfg(roster111(&h, &g), "tidewater", &h);
+        let mut mh = match111(&f, 23, 120.0);
+        let mut mg = match111(&f, 23, 120.0);
+        let mut rh = Replication::new(&cfg, &h, &h);
+        let mut rg = Replication::new(&cfg, &g, &h);
+        rh.bind_match(&mut mh);
+        rg.bind_match(&mut mg);
+        for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+        }
+        let pad0 = sim.spawn_pads[0];
+        let stand = vec3(pad0.x, pad0.y, pad0.z + 2.0);
+        for a in [&mut mh.actors[0], &mut mg.actors[0]] {
+            a.pos = stand;
+            a.yaw = 0.0;
+            a.aim_yaw = 0.0;
+            a.aim_pitch = 0.0;
+        }
+
+        let mut inputs = vec![ActorInput::default(); 3];
+        let mut host_at = None;
+        let mut guest_at = None;
+        let mut saw_ghost = false;
+        for frame in 0..150 {
+            inputs[0].fire = frame == 0;
+            mh.actors[0].pos = stand;
+            mh.actors[0].aim_pitch = -1.4;
+            mg.actors[0].pos = stand;
+            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut trh);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
+            if host_at.is_none() && !mh.paint.ink_stream().is_empty() {
+                host_at = Some(frame);
+            }
+            if !saw_ghost {
+                saw_ghost = mg.projectiles.list.iter().any(|p| p.ghost);
+            }
+            if guest_at.is_none() && !mg.paint.ink_stream().is_empty() {
+                guest_at = Some(frame);
+            }
+            trh.advance(16.0);
+            trg.advance(0.0);
+            for (from, p) in drain_msgs(&mut trh) {
+                rh.on_message(&from, &p, &mut mh, t);
+            }
+            for (from, p) in drain_msgs(&mut trg) {
+                rg.on_message(&from, &p, &mut mg, t);
+            }
+        }
+        let hf = host_at.expect("the host round painted the turf");
+        let gf = guest_at.expect("the splat replayed onto B");
+        assert!(
+            gf > hf,
+            "the replay waits for the playback clock (arrived frame {hf}, played {gf})"
+        );
+        assert!(
+            gf - hf >= 3,
+            "the splat lands ~sender-clock + playback delay, not on packet arrival: {gf} - {hf}"
+        );
+        assert!(saw_ghost, "the 'p' record spawned a ghost on B");
+        assert_eq!(
+            mg.paint.ink_stream().len(),
+            mh.paint.ink_stream().len(),
+            "the ghost painted nothing extra — B's stream is pure replay"
+        );
+        assert!(
+            mh.projectiles.list.is_empty() && mg.projectiles.list.is_empty(),
+            "the ghost disappears on expiry"
+        );
     }
 }

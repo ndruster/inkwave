@@ -64,7 +64,7 @@ use crate::actor::{Actor, ActorEvent, ActorInput, FireGate, SimWorld, SplatCause
 use crate::paint::{PaintGrid, SplatOpts};
 use crate::tuning::{MatchConfig, PlayerTuning, Spritzer};
 use crate::weapon::{ProjectileSim, Rng, SimEvent, WeaponRunner};
-use glam::vec3;
+use glam::{Vec3, vec3};
 
 /// JS intro length (match.js L193: `stateT > 4.2`).
 pub const INTRO_TIME: f32 = 4.2;
@@ -170,6 +170,16 @@ pub enum MatchEvent {
         /// Victim identity `(team, slot)`.
         victim: (usize, usize),
         damage: f32,
+    },
+    /// A round left a local actor's muzzle (JS `weapon:fire`, forwarded by
+    /// netmatch `_onLocalEvent` L139-143 → `recProj` → the `['p', …]` timeline
+    /// record + `ghostFire` on the receivers, Task 23). The replication layer
+    /// drains this to record the shot; identities are `(team, slot)` pairs.
+    Fire {
+        /// Firing actor identity `(team, slot)`.
+        owner: (usize, usize),
+        muzzle: Vec3,
+        dir: Vec3,
     },
 }
 
@@ -518,19 +528,36 @@ impl Match {
         // `victim_team` (the two differ by construction: JS `applyHit` only
         // routes enemy victims, weapons.js L1543).
         for e in &pev {
-            if let SimEvent::HitSend {
-                attacker_slot,
-                victim_slot,
-                victim_team,
-                team,
-                damage,
-            } = e
-            {
-                self.events.push(MatchEvent::HitSend {
-                    attacker: (*team, *attacker_slot),
-                    victim: (*victim_team, *victim_slot),
-                    damage: *damage,
-                });
+            match e {
+                SimEvent::HitSend {
+                    attacker_slot,
+                    victim_slot,
+                    victim_team,
+                    team,
+                    damage,
+                } => {
+                    self.events.push(MatchEvent::HitSend {
+                        attacker: (*team, *attacker_slot),
+                        victim: (*victim_team, *victim_slot),
+                        damage: *damage,
+                    });
+                }
+                // JS `weapon:fire` (weapons.js `fireShooter` emit): netmatch
+                // `_onLocalEvent` forwards it for local actors → `recProj`
+                // records the `['p', …]` timeline record (Task 23).
+                SimEvent::Fire {
+                    owner_slot,
+                    team,
+                    muzzle,
+                    dir,
+                } => {
+                    self.events.push(MatchEvent::Fire {
+                        owner: (*team, *owner_slot),
+                        muzzle: *muzzle,
+                        dir: *dir,
+                    });
+                }
+                _ => {}
             }
         }
 
