@@ -27,6 +27,13 @@ use inkwave_sim::tuning::Tuning;
 use crate::actors::team_color;
 use crate::ink_render::DemoSim;
 use crate::input::PlayerControls;
+use crate::net::OnlineSession;
+use crate::net::match_link::NetEvents;
+use inkwave_sim::net::session::{SessionEvent, SessionState};
+
+pub mod online;
+
+use self::online::{SessionCmd, run_cmd};
 
 /// Which screen is live (exactly one at a time).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -39,6 +46,10 @@ pub enum Screen {
     Pause,
     /// Results (match reached `Phase::End`).
     Results,
+    /// Online hub (Task 24; menus.js `online` / `_scr_online` L2401).
+    OnlineHub,
+    /// Lobby (Task 24; menus.js `lobby` / `_scr_lobby` L2774).
+    OnlineLobby,
 }
 
 /// Upstream default match length (config.js `MATCH.defaultDuration`).
@@ -52,6 +63,18 @@ pub struct UiState {
     pub screen: Screen,
     /// Selected match length (upstream `MATCH.defaultDuration` = 180).
     pub duration: u32,
+    /// Task 24: the online flow owns the screen — offline Play/Restart are
+    /// refused and the Results buttons switch semantics (JS screens
+    /// `online`/`lobby` + `main.js` `startNetMatch` hiding the menu).
+    pub net_mode: bool,
+    /// Task 24: the host pressed BACK TO LOBBY on the net Results screen
+    /// (JS `netBackToLobby`, main.js L383); `net_tick` consumes the flag to
+    /// fire `sendEnd` + `endMatch` before the screen tears down.
+    pub net_back_pressed: bool,
+    /// Task 24: `st.autoT` (menus.js L2554) — the 320 ms auto-join countdown
+    /// armed when the fifth character lands in the last cell. `0.0` = no
+    /// timer pending.
+    pub auto_join: f64,
 }
 
 impl Default for UiState {
@@ -59,6 +82,9 @@ impl Default for UiState {
         Self {
             screen: Screen::Menu,
             duration: DEFAULT_DURATION,
+            net_mode: false,
+            net_back_pressed: false,
+            auto_join: 0.0,
         }
     }
 }
@@ -79,8 +105,9 @@ pub(crate) struct BarRole(&'static str);
 #[derive(Component)]
 pub(crate) struct Crosshair;
 
-/// Button command handled by `ui_state_machine` on click.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// Button command handled by `ui_state_machine` on click. (No `Eq`: the
+/// Task 24 `Online(OnlineAction)` arm carries an `f64` duration.)
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Action {
     /// Start a fresh match of N seconds (upstream `MATCH.durations`).
     Play(u32),
@@ -91,6 +118,38 @@ pub enum Action {
     /// close so the button is hidden there, see `build_ui`).
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     Quit,
+    /// Task 24: an online-flow button; mapped onto a `SessionCmd` / screen
+    /// hop by `ui_state_machine`.
+    Online(OnlineAction),
+    /// Task 24: Results "BACK TO LOBBY" (JS `netMatchEnd` brings the lobby
+    /// back, main.js L769-846).
+    NetBackToLobby,
+}
+
+/// The online screens' button intents (menus.js `_scr_online` /
+/// `_scr_lobby` click handlers). `Duration(f64)` keeps this off `Eq`.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum OnlineAction {
+    /// Main-menu ONLINE card → hub screen.
+    EnterHub,
+    /// `doCreate` (L2657).
+    Create,
+    /// `doJoin` (L2617) / CANCEL while connecting (L2439).
+    Join,
+    /// BACK to the main menu (hub only).
+    HubBack,
+    /// `toggleReady` (L3048): host ⇒ `tryStart`.
+    Ready,
+    /// `requestTeam` (L3075).
+    Team(online::TeamSel),
+    /// `hostSet({duration})` (L2841).
+    Duration(f64),
+    /// `hostSet({bots})` toggle (L2848).
+    Bots,
+    /// `hostSet({difficulty})` cycle (L2850).
+    Difficulty,
+    /// `askLeave` two-step (L3026, deviation ⑦).
+    Leave,
 }
 
 #[derive(Component, Clone, Copy, Debug)]
@@ -268,6 +327,18 @@ fn label(text: impl Into<String>, size: f32, color: Color) -> (Text, TextFont, T
 
 /// Spawn a button with a centred label child under `parent`.
 fn button(commands: &mut Commands, parent: Entity, text: &str, action: Action) {
+    button_dyn(commands, parent, text, action, None);
+}
+
+/// [`button`] with an optional [`LabelRole`] on the label so `ui_update`
+/// (or `online_ui_update`) can rewrite it (JOIN/CANCEL, READY?/START!).
+fn button_dyn(
+    commands: &mut Commands,
+    parent: Entity,
+    text: &str,
+    action: Action,
+    role: Option<&'static str>,
+) {
     let btn = commands
         .spawn((
             Button,
@@ -283,7 +354,33 @@ fn button(commands: &mut Commands, parent: Entity, text: &str, action: Action) {
             ChildOf(parent),
         ))
         .id();
-    commands.spawn((label(text, 20.0, Color::WHITE), ChildOf(btn)));
+    let lbl = commands
+        .spawn((label(text, 20.0, Color::WHITE), ChildOf(btn)))
+        .id();
+    if let Some(r) = role {
+        commands.entity(lbl).insert(LabelRole(r));
+    }
+}
+
+/// Compact button for the lobby settings rows (JS `_seg`/`_toggle` are much
+/// smaller than the full-width menu buttons).
+fn small_button(commands: &mut Commands, parent: Entity, text: &str, action: Action) {
+    let btn = commands
+        .spawn((
+            Button,
+            UiAction(action),
+            Node {
+                width: Val::Px(110.0),
+                height: Val::Px(36.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(BTN_BG),
+            ChildOf(parent),
+        ))
+        .id();
+    commands.spawn((label(text, 15.0, Color::WHITE), ChildOf(btn)));
 }
 
 /// Build all four screen trees (only one is displayed at a time).
@@ -302,6 +399,14 @@ pub fn build_ui(mut commands: Commands) {
     ));
     button(&mut commands, menu_col, "PLAY 90s", Action::Play(90));
     button(&mut commands, menu_col, "PLAY 180s", Action::Play(180));
+    // Task 24: the ONLINE entry (JS main menu's ONLINE button, menus.js
+    // L2407 "the main menu's ONLINE button is --b too").
+    button(
+        &mut commands,
+        menu_col,
+        "ONLINE",
+        Action::Online(OnlineAction::EnterHub),
+    );
     // Spec: main menu "退出". A browser tab has no window to close, so the
     // button only exists on native.
     #[cfg(not(target_arch = "wasm32"))]
@@ -585,8 +690,244 @@ pub fn build_ui(mut commands: Commands) {
         ),
         ChildOf(res_col),
     ));
-    button(&mut commands, res_col, "PLAY AGAIN", Action::Restart);
+    button_dyn(
+        &mut commands,
+        res_col,
+        "PLAY AGAIN",
+        Action::Restart,
+        Some("res_again"),
+    );
     button(&mut commands, res_col, "MAIN MENU", Action::Menu);
+
+    // ================= online hub (Task 24, `_scr_online`) =================
+    let hub = commands.spawn(full_panel(Screen::OnlineHub, PANEL_BG)).id();
+    let hub_col = commands.spawn((col(14.0), ChildOf(hub))).id();
+    commands.spawn((label("ONLINE", 44.0, Color::WHITE), ChildOf(hub_col)));
+    commands.spawn((
+        label("Private rooms · 4 v 4 · up to 8 squidkids", 16.0, DIM),
+        ChildOf(hub_col),
+    ));
+    // the five code cells (L2424-2433: one box per character)
+    let code_row = commands.spawn((row(10.0), ChildOf(hub_col))).id();
+    for i in 0..5 {
+        let role = match i {
+            0 => "hub_c0",
+            1 => "hub_c1",
+            2 => "hub_c2",
+            3 => "hub_c3",
+            _ => "hub_c4",
+        };
+        commands.spawn((
+            (
+                LabelRole(role),
+                Text::new(" "),
+                TextFont::from_font_size(40.0),
+                TextColor(Color::WHITE),
+            ),
+            ChildOf(code_row),
+        ));
+    }
+    commands.spawn((
+        (
+            LabelRole("hub_hint"),
+            Text::new(""),
+            TextFont::from_font_size(16.0),
+            TextColor(DIM),
+        ),
+        ChildOf(hub_col),
+    ));
+    commands.spawn((
+        (
+            LabelRole("hub_err"),
+            Text::new(""),
+            TextFont::from_font_size(18.0),
+            TextColor(RED),
+        ),
+        ChildOf(hub_col),
+    ));
+    button(
+        &mut commands,
+        hub_col,
+        "CREATE ROOM",
+        Action::Online(OnlineAction::Create),
+    );
+    // `createStatus` (doCreate L2665/L2680): the create card's own line —
+    // "Opening a room" while in flight, the rejection text on failure.
+    commands.spawn((
+        (
+            LabelRole("hub_create"),
+            Text::new(""),
+            TextFont::from_font_size(16.0),
+            TextColor(DIM),
+        ),
+        ChildOf(hub_col),
+    ));
+    button_dyn(
+        &mut commands,
+        hub_col,
+        "JOIN",
+        Action::Online(OnlineAction::Join),
+        Some("hub_join"),
+    );
+    button(
+        &mut commands,
+        hub_col,
+        "BACK",
+        Action::Online(OnlineAction::HubBack),
+    );
+    commands.spawn((
+        label(
+            "A-Z / 0-9 type the code · Backspace edit · Enter join · Esc back",
+            14.0,
+            DIM,
+        ),
+        ChildOf(hub_col),
+    ));
+
+    // ================= lobby (Task 24, `_scr_lobby`) =================
+    let lob = commands
+        .spawn(full_panel(Screen::OnlineLobby, PANEL_BG))
+        .id();
+    let lob_col = commands.spawn((col(10.0), ChildOf(lob))).id();
+    // room code big tiles (L2793)
+    commands.spawn((
+        (
+            LabelRole("lob_code"),
+            Text::new(""),
+            TextFont::from_font_size(34.0),
+            TextColor(AMBER),
+        ),
+        ChildOf(lob_col),
+    ));
+    commands.spawn((
+        (
+            LabelRole("lob_count"),
+            Text::new("SQUIDKIDS 1/8"),
+            TextFont::from_font_size(16.0),
+            TextColor(DIM),
+        ),
+        ChildOf(lob_col),
+    ));
+    // eight fixed roster slots (L2922-2928 `open[k]`)
+    for i in 0..8 {
+        let role = match i {
+            0 => "lob_row0",
+            1 => "lob_row1",
+            2 => "lob_row2",
+            3 => "lob_row3",
+            4 => "lob_row4",
+            5 => "lob_row5",
+            6 => "lob_row6",
+            _ => "lob_row7",
+        };
+        commands.spawn((
+            (
+                LabelRole(role),
+                Text::new("OPEN"),
+                TextFont::from_font_size(18.0),
+                TextColor(Color::WHITE),
+            ),
+            ChildOf(lob_col),
+        ));
+    }
+    commands.spawn((
+        (
+            LabelRole("lob_status"),
+            Text::new(""),
+            TextFont::from_font_size(16.0),
+            TextColor(DIM),
+        ),
+        ChildOf(lob_col),
+    ));
+    // team row (L2901: ALPHA | AUTO | BRAVO)
+    let team_row = commands.spawn((row(8.0), ChildOf(lob_col))).id();
+    small_button(
+        &mut commands,
+        team_row,
+        "ALPHA",
+        Action::Online(OnlineAction::Team(online::TeamSel::Zero)),
+    );
+    small_button(
+        &mut commands,
+        team_row,
+        "AUTO",
+        Action::Online(OnlineAction::Team(online::TeamSel::Auto)),
+    );
+    small_button(
+        &mut commands,
+        team_row,
+        "BRAVO",
+        Action::Online(OnlineAction::Team(online::TeamSel::One)),
+    );
+    // READY?/READY!/START! (L3354: the host's button reads START!)
+    button_dyn(
+        &mut commands,
+        lob_col,
+        "READY?",
+        Action::Online(OnlineAction::Ready),
+        Some("lob_ready"),
+    );
+    // host settings row (L2841/L2848/L2850)
+    let set_row = commands.spawn((row(8.0), ChildOf(lob_col))).id();
+    small_button(
+        &mut commands,
+        set_row,
+        "LEN 90",
+        Action::Online(OnlineAction::Duration(90.0)),
+    );
+    small_button(
+        &mut commands,
+        set_row,
+        "LEN 180",
+        Action::Online(OnlineAction::Duration(180.0)),
+    );
+    small_button(
+        &mut commands,
+        set_row,
+        "BOTS",
+        Action::Online(OnlineAction::Bots),
+    );
+    small_button(
+        &mut commands,
+        set_row,
+        "SKILL",
+        Action::Online(OnlineAction::Difficulty),
+    );
+    commands.spawn((
+        (
+            LabelRole("lob_settings"),
+            Text::new(""),
+            TextFont::from_font_size(15.0),
+            TextColor(DIM),
+        ),
+        ChildOf(lob_col),
+    ));
+    button(
+        &mut commands,
+        lob_col,
+        "LEAVE",
+        Action::Online(OnlineAction::Leave),
+    );
+    // banners: the lobby toast (waiting-for / start block) and the two-step
+    // leave confirm (deviation ⑦).
+    commands.spawn((
+        (
+            LabelRole("lob_banner"),
+            Text::new(""),
+            TextFont::from_font_size(18.0),
+            TextColor(AMBER),
+        ),
+        ChildOf(lob_col),
+    ));
+    commands.spawn((
+        (
+            LabelRole("lob_leave"),
+            Text::new(""),
+            TextFont::from_font_size(16.0),
+            TextColor(RED),
+        ),
+        ChildOf(lob_col),
+    ));
 }
 
 // ---------------------------------------------------------------- logic
@@ -602,24 +943,44 @@ pub fn apply_action(
 ) {
     match a {
         Action::Play(d) => {
+            if st.net_mode {
+                // Task 24: the online flow owns the sim; offline Play is
+                // refused (JS hides the menu during a net match).
+                return;
+            }
             st.duration = d;
             demo.replay(d as f32);
             st.screen = Screen::Hud;
         }
         Action::Resume => st.screen = Screen::Hud,
         Action::Restart => {
+            if st.net_mode {
+                return; // the net Results button is remapped to
+                // `NetBackToLobby` by `ui_state_machine`
+            }
             let d = st.duration;
             demo.replay(d as f32);
             st.screen = Screen::Hud;
         }
         Action::Menu => st.screen = Screen::Menu,
         Action::Quit => *quit = true,
+        // Task 24: the online buttons drive the session resource, which this
+        // pure helper has no access to; `ui_state_machine` dispatches them
+        // through `handle_online_action` instead.
+        Action::Online(_) => {}
+        // Results "BACK TO LOBBY" (JS `netMatchEnd` re-shows the lobby,
+        // main.js L769-846).
+        Action::NetBackToLobby => st.screen = Screen::OnlineLobby,
     }
     pc.paused = st.screen != Screen::Hud;
 }
 
 /// State machine: pause edge / Enter shortcuts / button clicks, plus the
 /// event drain feeding the kill feed and the results transition.
+///
+/// Task 24: in online mode (`st.net_mode`) the same machine also pumps the
+/// [`OnlineSession`], keeps the screen in step with the session state (JS
+/// `_onNetState` L2359-2368) and routes the hub/lobby keys + buttons.
 #[allow(clippy::too_many_arguments)]
 pub fn ui_state_machine(
     mut st: ResMut<UiState>,
@@ -633,15 +994,101 @@ pub fn ui_state_machine(
     mut cursor: Query<&mut CursorOptions, With<PrimaryWindow>>,
     mut exits: MessageWriter<AppExit>,
     time: Res<Time>,
+    mut os: NonSendMut<OnlineSession>,
+    mut net_ev: ResMut<NetEvents>,
 ) {
     let prev = st.screen;
     let mut quit = false;
+    // Deref the `NonSendMut` once so the online paths can take disjoint
+    // field borrows (`&mut os.sess` + `&mut os.flags`) behind `run_cmd`.
+    let os = &mut *os;
+
+    if st.net_mode {
+        // Pump the session (JS `Net` is socket-callback driven; the Rust
+        // `NetSession` needs `update` + `poll_events` every frame) and
+        // settle the in-flight flags when a connect resolves or is rejected
+        // (`tok === st.token` arms, menus.js L2637/L2643/L2669/L2674).
+        os.sess.update(f64::from(time.delta_secs().min(0.1)));
+        // `poll_events` is drained exactly once here (plan risk R1); the
+        // match-driving events are staged for `net_tick`, which runs later
+        // in the chain and owns the replication controller + transport.
+        for ev in os.sess.poll_events() {
+            if let SessionEvent::State { state } = ev
+                && state != SessionState::Connecting
+            {
+                // A rejection carries the session error so `settle` can route
+                // it (join ⇒ jstat panel L2607-2616, create ⇒ create card
+                // L2673-2682, mid-match ⇒ the `_roomGone` toast arm).
+                let err = if state == SessionState::Error {
+                    os.sess.error().map(str::to_string)
+                } else {
+                    None
+                };
+                os.flags.settle(err.as_deref());
+            }
+            net_ev.0.push(ev);
+        }
+        // Screen follows the session (JS `_onNetState` L2359-2368 +
+        // `leaveRoom` → `show('online')` L3045): hub ↔ lobby ↔ in-match.
+        match online::project(&online_facts(os)).screen {
+            online::OnlineScreen::Hub => {
+                if st.screen == Screen::OnlineLobby {
+                    st.screen = Screen::OnlineHub;
+                }
+            }
+            online::OnlineScreen::Lobby | online::OnlineScreen::MatchLoading => {
+                if st.screen == Screen::OnlineHub {
+                    st.screen = Screen::OnlineLobby;
+                }
+            }
+            online::OnlineScreen::Match => {
+                if matches!(st.screen, Screen::OnlineHub | Screen::OnlineLobby) {
+                    st.screen = Screen::Hud;
+                }
+            }
+        }
+        // `st.autoT` (menus.js L2554): the 320 ms auto-join fires only while
+        // the hub is still in entry mode with a full code — the JS callback
+        // guard `st.alive && st.mode === 'entry' && full()`. Cancel does not
+        // clear the timer (JS quirk: it re-checks and re-joins, L2554).
+        if st.screen == Screen::OnlineHub && st.auto_join > 0.0 {
+            st.auto_join -= f64::from(time.delta_secs());
+            if st.auto_join <= 0.0 {
+                st.auto_join = 0.0;
+                if !os.flags.busy && online::code_full(&os.flags.code_draft) {
+                    run_cmd(&mut os.sess, &mut os.flags, SessionCmd::Join);
+                }
+            }
+        }
+    }
 
     // Esc/P edge from `map_input` (TR-12.1): Hud <-> Pause.
     if std::mem::take(&mut pc.pause_edge) {
         match st.screen {
             Screen::Hud => st.screen = Screen::Pause,
             Screen::Pause => st.screen = Screen::Hud,
+            // Task 24: Esc on the hub leaves online mode; while connecting
+            // it cancels the connect instead (onKey L2725).
+            Screen::OnlineHub => {
+                if os.flags.busy {
+                    run_cmd(&mut os.sess, &mut os.flags, SessionCmd::Cancel);
+                } else {
+                    // Leaving the hub destroys the JS screen (`st.alive`
+                    // permanently drops the pending auto-join, L2554).
+                    st.auto_join = 0.0;
+                    st.net_mode = false;
+                    st.screen = Screen::Menu;
+                }
+            }
+            // Esc on the lobby is the two-step leave (askLeave L3026,
+            // deviation ⑦); ignored while launching (L3534 `!S.launching`).
+            Screen::OnlineLobby if os.sess.state() == SessionState::Lobby => {
+                if os.flags.leave_confirm {
+                    run_cmd(&mut os.sess, &mut os.flags, SessionCmd::Leave);
+                } else {
+                    os.flags.leave_confirm = true;
+                }
+            }
             _ => {}
         }
         println!("[inkwave] ui {:?}", st.screen);
@@ -660,9 +1107,76 @@ pub fn ui_state_machine(
             ),
             Screen::Pause => apply_action(&mut st, &mut pc, Action::Resume, &mut demo, &mut quit),
             Screen::Results => {
-                apply_action(&mut st, &mut pc, Action::Restart, &mut demo, &mut quit)
+                if st.net_mode {
+                    // net Results: Enter = BACK TO LOBBY (`netMatchEnd`).
+                    // JS `netBackToLobby` (main.js L383) is host-only — a
+                    // guest stays until the host's `{k:'end'}` arrives.
+                    if os.sess.is_host() {
+                        st.net_back_pressed = true;
+                        apply_action(
+                            &mut st,
+                            &mut pc,
+                            Action::NetBackToLobby,
+                            &mut demo,
+                            &mut quit,
+                        );
+                    }
+                } else {
+                    apply_action(&mut st, &mut pc, Action::Restart, &mut demo, &mut quit);
+                }
             }
             Screen::Hud => {}
+            // Task 24: Enter on the hub joins (onKey L2733 `doJoin`), on the
+            // lobby it toggles ready (the READY? button's accept).
+            // `doJoin` opens with `clearTimeout(st.autoT)` (L2619) even on
+            // the short-code early return.
+            Screen::OnlineHub => {
+                st.auto_join = 0.0;
+                run_cmd(&mut os.sess, &mut os.flags, SessionCmd::Join);
+            }
+            Screen::OnlineLobby => run_cmd(&mut os.sess, &mut os.flags, SessionCmd::ToggleReady),
+        }
+    }
+    // Task 24: R toggles ready on the lobby (keyboard ready shortcut).
+    if st.screen == Screen::OnlineLobby && keys.just_pressed(KeyCode::KeyR) {
+        run_cmd(&mut os.sess, &mut os.flags, SessionCmd::ToggleReady);
+    }
+    // Task 24: hub code entry (onKey L2722-2745): while connecting only
+    // Escape/Backspace get through (cancelConnect); otherwise alphabet keys
+    // type and Backspace edits.
+    if st.screen == Screen::OnlineHub {
+        if os.flags.busy {
+            if keys.just_pressed(KeyCode::Backspace) {
+                run_cmd(&mut os.sess, &mut os.flags, SessionCmd::Cancel);
+            }
+        } else {
+            for kc in keys.get_just_pressed() {
+                if let Some(c) = key_to_code_char(*kc) {
+                    // `type()` opens with `clearError()` (L2540): the jstat
+                    // panel drops and the hint line returns to its default
+                    // (render L2526) unless the char is rejected.
+                    os.flags.err_panel = false;
+                    let fb = online::code_type(c, &mut os.flags.code_draft, &mut os.flags.caret);
+                    // `type()` L2554: the fifth valid char landing in the last
+                    // cell (re-)arms the 320 ms auto-join (`st.autoT`); an
+                    // invalid char early-returns at L2546 and never touches
+                    // the timer (JS quirk kept verbatim).
+                    if fb.is_none()
+                        && online::auto_join_armed(&os.flags.code_draft, os.flags.caret, c)
+                    {
+                        st.auto_join = 0.32;
+                    }
+                    os.flags.hint = fb.map(str::to_string);
+                }
+            }
+            if keys.just_pressed(KeyCode::Backspace) {
+                // `backspace()` opens with `clearError()` too (L2558) and
+                // cancels the pending auto-join (L2559).
+                os.flags.err_panel = false;
+                st.auto_join = 0.0;
+                online::code_backspace(&mut os.flags.code_draft, &mut os.flags.caret);
+                os.flags.hint = None;
+            }
         }
     }
     // Button clicks.
@@ -671,7 +1185,33 @@ pub fn ui_state_machine(
             continue;
         }
         if let Some(a) = actions.get(ev.entity).ok().copied() {
-            apply_action(&mut st, &mut pc, a.0, &mut demo, &mut quit);
+            match a.0 {
+                // Task 24: online buttons drive the session, not the
+                // offline screen transitions.
+                Action::Online(oa) => handle_online_action(&mut st, oa, &mut *os),
+                // In online mode MAIN MENU leaves the room first (leaveRoom
+                // L3040-3046) and the Results PLAY AGAIN reads BACK TO
+                // LOBBY (label rewritten by `ui_update`).
+                Action::Menu if st.net_mode => {
+                    run_cmd(&mut os.sess, &mut os.flags, SessionCmd::Leave);
+                    st.net_mode = false;
+                    st.screen = Screen::Menu;
+                }
+                Action::Restart if st.net_mode && st.screen == Screen::Results => {
+                    // Host-only, exactly like JS `netBackToLobby` L383.
+                    if os.sess.is_host() {
+                        st.net_back_pressed = true;
+                        apply_action(
+                            &mut st,
+                            &mut pc,
+                            Action::NetBackToLobby,
+                            &mut demo,
+                            &mut quit,
+                        );
+                    }
+                }
+                other => apply_action(&mut st, &mut pc, other, &mut demo, &mut quit),
+            }
             println!("[inkwave] ui click {:?} -> {:?}", a.0, st.screen);
         }
     }
@@ -726,6 +1266,253 @@ pub fn ui_state_machine(
 
     if quit {
         exits.write(AppExit::Success);
+    }
+}
+
+/// Snapshot the session + UI flags into the pure layer's [`online::OnlineFacts`]
+/// (the arguments of [`online::project`] / the screen sync).
+fn online_facts(os: &OnlineSession) -> online::OnlineFacts<'_> {
+    online::OnlineFacts {
+        state: os.sess.state(),
+        flags: &os.flags,
+        is_host: os.sess.is_host(),
+        code: os.sess.code(),
+        lobby: os.sess.lobby(),
+        can_start: os.sess.can_start(),
+        start_block: os.sess.start_block(),
+        error: os.sess.error(),
+    }
+}
+
+/// Bevy `KeyCode` → a hub code-entry character (menus.js onKey L2728:
+/// `/^[a-z0-9]$/i`; `online::code_type` then rejects the letters `CODE_ABC`
+/// skips, L2544). Manual mapping — no IME layer in bevy input.
+fn key_to_code_char(k: KeyCode) -> Option<char> {
+    use KeyCode::*;
+    Some(match k {
+        KeyA => 'A',
+        KeyB => 'B',
+        KeyC => 'C',
+        KeyD => 'D',
+        KeyE => 'E',
+        KeyF => 'F',
+        KeyG => 'G',
+        KeyH => 'H',
+        KeyI => 'I',
+        KeyJ => 'J',
+        KeyK => 'K',
+        KeyL => 'L',
+        KeyM => 'M',
+        KeyN => 'N',
+        KeyO => 'O',
+        KeyP => 'P',
+        KeyQ => 'Q',
+        KeyR => 'R',
+        KeyS => 'S',
+        KeyT => 'T',
+        KeyU => 'U',
+        KeyV => 'V',
+        KeyW => 'W',
+        KeyX => 'X',
+        KeyY => 'Y',
+        KeyZ => 'Z',
+        Digit0 => '0',
+        Digit1 => '1',
+        Digit2 => '2',
+        Digit3 => '3',
+        Digit4 => '4',
+        Digit5 => '5',
+        Digit6 => '6',
+        Digit7 => '7',
+        Digit8 => '8',
+        Digit9 => '9',
+        _ => return None,
+    })
+}
+
+/// Route one online button to the session / screen flags (the JS click
+/// handlers in `_scr_online` / `_scr_lobby`; the screen-local `st` lives in
+/// [`online::OnlineFlags`]).
+fn handle_online_action(st: &mut UiState, oa: OnlineAction, os: &mut OnlineSession) {
+    match oa {
+        // Main-menu ONLINE card → hub (`show('online')`, menus.js L2407).
+        OnlineAction::EnterHub => {
+            st.net_mode = true;
+            st.screen = Screen::OnlineHub;
+        }
+        OnlineAction::HubBack => {
+            // Leaving the hub destroys the JS screen (`st.alive = false`
+            // permanently drops the pending auto-join, L2554 callback).
+            st.auto_join = 0.0;
+            st.net_mode = false;
+            st.screen = Screen::Menu;
+        }
+        OnlineAction::Create => run_cmd(&mut os.sess, &mut os.flags, SessionCmd::Create),
+        OnlineAction::Join => {
+            // joinBtn click (L2439): connecting ⇒ `cancelConnect`, else
+            // `doJoin` (whose busy guard swallows a create in flight).
+            let cmd = if os.flags.joining {
+                SessionCmd::Cancel
+            } else {
+                // `doJoin` opens with `clearTimeout(st.autoT)` (L2619)
+                // regardless of the trigger source.
+                st.auto_join = 0.0;
+                SessionCmd::Join
+            };
+            run_cmd(&mut os.sess, &mut os.flags, cmd);
+        }
+        OnlineAction::Ready => run_cmd(&mut os.sess, &mut os.flags, SessionCmd::ToggleReady),
+        OnlineAction::Team(t) => run_cmd(&mut os.sess, &mut os.flags, SessionCmd::SetTeam(t)),
+        OnlineAction::Duration(d) => {
+            run_cmd(&mut os.sess, &mut os.flags, SessionCmd::SetDuration(d))
+        }
+        OnlineAction::Bots => {
+            // botTgl flip (L2848): `hostSet({ bots: v })` with the toggled
+            // value.
+            let v = !os.sess.lobby().bots;
+            run_cmd(&mut os.sess, &mut os.flags, SessionCmd::SetBots(v));
+        }
+        OnlineAction::Difficulty => {
+            // diffSeg cycle over the `DIFFICULTY` insertion order
+            // (config.js L503-508): easy → normal → hard → easy.
+            let next = match os.sess.lobby().difficulty.as_str() {
+                "easy" => "normal",
+                "normal" => "hard",
+                _ => "easy",
+            };
+            run_cmd(
+                &mut os.sess,
+                &mut os.flags,
+                SessionCmd::SetDifficulty(next.to_string()),
+            );
+        }
+        OnlineAction::Leave => {
+            // askLeave two-step (L3026-3046, deviation ⑦): first press arms
+            // the confirm banner, second leaves the room.
+            if os.flags.leave_confirm {
+                run_cmd(&mut os.sess, &mut os.flags, SessionCmd::Leave);
+            } else {
+                os.flags.leave_confirm = true;
+            }
+        }
+    }
+}
+
+/// Task 24: per-frame hub/lobby label refresh (equality-guarded writes, the
+/// same no-dirty-layout pattern as `ui_update`).
+#[allow(clippy::too_many_lines)]
+pub fn online_ui_update(
+    st: Res<UiState>,
+    os: NonSend<OnlineSession>,
+    mut labels: Query<(&LabelRole, &mut Text, &mut TextColor)>,
+) {
+    if !st.net_mode {
+        return;
+    }
+    let view = online::project(&online_facts(&os));
+    let hub = &view.hub;
+    let lob = &view.lobby;
+    let loading = view.screen == online::OnlineScreen::MatchLoading;
+    for (role, mut text, mut color) in labels.iter_mut() {
+        // (new text, new colour) — `None` colour keeps the current one.
+        let (t, c): (String, Option<Color>) = match role.0 {
+            "hub_c0" => (hub.cells[0].to_string(), None),
+            "hub_c1" => (hub.cells[1].to_string(), None),
+            "hub_c2" => (hub.cells[2].to_string(), None),
+            "hub_c3" => (hub.cells[3].to_string(), None),
+            "hub_c4" => (hub.cells[4].to_string(), None),
+            "hub_hint" => (hub.hint.clone(), None),
+            "hub_err" => match (&hub.err_title, &hub.err_text) {
+                (Some(ti), Some(te)) => (format!("{ti} — {te}"), Some(RED)),
+                _ => (String::new(), None),
+            },
+            "hub_create" => match &hub.create_status {
+                Some(s) => (
+                    s.clone(),
+                    if hub.create_err { Some(RED) } else { Some(DIM) },
+                ),
+                None => (String::new(), Some(DIM)),
+            },
+            "hub_join" => (hub.join_label.to_string(), None),
+            "lob_code" => (lob.code_tiles.clone(), None),
+            "lob_count" => (format!("SQUIDKIDS {}/8", lob.count), None),
+            "lob_row0" => roster_row(lob, 0),
+            "lob_row1" => roster_row(lob, 1),
+            "lob_row2" => roster_row(lob, 2),
+            "lob_row3" => roster_row(lob, 3),
+            "lob_row4" => roster_row(lob, 4),
+            "lob_row5" => roster_row(lob, 5),
+            "lob_row6" => roster_row(lob, 6),
+            "lob_row7" => roster_row(lob, 7),
+            "lob_status" => (lob.status_txt.clone(), None),
+            // renderBar L3354-3355: the host's button reads START!
+            "lob_ready" => (
+                if lob.ready_is_start {
+                    "START!"
+                } else if lob.ready_on {
+                    "READY!"
+                } else {
+                    "READY?"
+                }
+                .to_string(),
+                None,
+            ),
+            "lob_settings" => (
+                format!(
+                    "LEN {} · BOTS {} · SKILL {}",
+                    lob.duration,
+                    if lob.bots { "ON" } else { "OFF" },
+                    lob.difficulty.to_uppercase()
+                ),
+                None,
+            ),
+            // `launchLobby` overlay (L2362) while `starting`; else the
+            // one-shot toast from `run_cmd`.
+            "lob_banner" => (
+                if loading {
+                    "Starting the match…".to_string()
+                } else {
+                    lob.banner.clone().unwrap_or_default()
+                },
+                None,
+            ),
+            "lob_leave" => (lob.leave_text.clone().unwrap_or_default(), None),
+            _ => continue,
+        };
+        if text.0 != t {
+            text.0 = t;
+        }
+        if let Some(c) = c
+            && color.0 != c
+        {
+            color.0 = c;
+        }
+    }
+}
+
+/// One roster slot line (JS nameplate `open[k]`, menus.js L2922-2928):
+/// `OPEN` for an empty slot, else `★ name (you) · TEAM · READY?/READY!`
+/// tinted by team.
+fn roster_row(lob: &online::LobbyView, k: usize) -> (String, Option<Color>) {
+    match lob.rows.get(k) {
+        None => ("OPEN".to_string(), Some(DIM)),
+        Some(r) => {
+            let mut s = String::new();
+            if r.host {
+                s.push_str("★ ");
+            }
+            s.push_str(&r.name);
+            if r.you {
+                s.push_str(" (you)");
+            }
+            s.push_str(if r.team == 1 {
+                " · BRAVO"
+            } else {
+                " · ALPHA"
+            });
+            s.push_str(if r.ready { " · READY!" } else { " · READY?" });
+            (s, Some(team_color(r.team as usize)))
+        }
     }
 }
 
@@ -799,6 +1586,17 @@ pub fn ui_update(
                     None,
                 ),
                 "res_stats" if on_results => (stats_rows(&demo), None),
+                // Task 24: in online mode the same button is BACK TO LOBBY
+                // (JS `netMatchEnd` re-shows the lobby; the click is
+                // remapped in `ui_state_machine`).
+                "res_again" if on_results => (
+                    if st.net_mode {
+                        "BACK TO LOBBY".to_string()
+                    } else {
+                        "PLAY AGAIN".to_string()
+                    },
+                    None,
+                ),
                 _ => continue,
             };
             if text.0 != t {
@@ -936,6 +1734,48 @@ mod tests {
 
         apply_action(&mut st, &mut pc, Action::Quit, &mut demo, &mut quit);
         assert!(quit, "QUIT asks the app to exit");
+    }
+
+    /// TR-24.1: in net mode the offline Play/Restart transitions are refused
+    /// and the Results button becomes BACK TO LOBBY (JS `netBackToLobby`
+    /// remap, main.js L383/L872).
+    #[test]
+    fn tr24_net_mode_results_buttons() {
+        use inkwave_sim::collision::CollisionWorld;
+        let layout = inkwave_sim::embedded_tidewater();
+        let world = CollisionWorld::from_layout(&layout);
+        let mut demo = DemoSim::new(layout, world, 20261004);
+        let mut st = UiState::default();
+        let mut pc = PlayerControls::default();
+        let mut quit = false;
+        st.net_mode = true;
+        st.screen = Screen::Results;
+
+        // Restart on net results must NOT restart the sim: `ui_state_machine`
+        // remaps the button to `NetBackToLobby` (host-gated there).
+        apply_action(&mut st, &mut pc, Action::Restart, &mut demo, &mut quit);
+        assert_eq!(st.screen, Screen::Results);
+        // Offline Play is refused while online (the flow owns the sim).
+        apply_action(&mut st, &mut pc, Action::Play(90), &mut demo, &mut quit);
+        assert_eq!(st.screen, Screen::Results);
+
+        // The remapped button lands on the lobby screen.
+        apply_action(
+            &mut st,
+            &mut pc,
+            Action::NetBackToLobby,
+            &mut demo,
+            &mut quit,
+        );
+        assert_eq!(st.screen, Screen::OnlineLobby);
+        assert!(pc.paused, "the sim stays frozen off the Hud");
+
+        // Offline mode keeps the classic Restart behaviour.
+        st.net_mode = false;
+        st.screen = Screen::Results;
+        apply_action(&mut st, &mut pc, Action::Restart, &mut demo, &mut quit);
+        assert_eq!(st.screen, Screen::Hud);
+        assert!(!pc.paused);
     }
 
     /// TR-13.1 (headless half): the screen roots exist, only the live screen
@@ -1196,6 +2036,7 @@ mod tests {
         // bevy_ui's image-node system needs this asset collection registered
         // (normally via TextureAtlasPlugin, which we don't add wholesale).
         .init_asset::<TextureAtlasLayout>()
+        .init_resource::<NetEvents>()
         .insert_resource(demo)
         .insert_resource(atlas)
         .insert_resource(PlayerControls {
@@ -1205,8 +2046,14 @@ mod tests {
         .init_resource::<UiState>()
         .init_resource::<Feed>()
         .init_resource::<HitFlash>()
+        // Task 24: the state machine pumps the online session; the test app
+        // never enters `net_mode`, so the transport thread stays idle.
+        .insert_non_send(crate::net::OnlineSession::new("ws://127.0.0.1:8787"))
         .add_systems(Startup, build_ui)
-        .add_systems(Update, (ui_state_machine, ui_update).chain());
+        .add_systems(
+            Update,
+            (ui_state_machine, ui_update, online_ui_update).chain(),
+        );
         app
     }
 }

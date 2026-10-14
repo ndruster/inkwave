@@ -864,6 +864,12 @@ impl<T: Transport, F: FnMut() -> T> NetSession<T, F> {
     pub fn host_id(&self) -> Option<&str> {
         self.host_id.as_deref()
     }
+    /// The relay-authoritative member ids — JS `this._members` (L31), the
+    /// set `NetMatch.bind` prunes against (netmatch.js L79).
+    #[must_use]
+    pub fn member_ids(&self) -> Vec<String> {
+        self.members.keys().cloned().collect()
+    }
     #[must_use]
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()

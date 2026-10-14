@@ -512,7 +512,21 @@ impl Plugin for WorldPlugin {
             .init_resource::<crate::input::LookSettings>()
             .init_resource::<crate::ui::UiState>()
             .init_resource::<crate::ui::Feed>()
-            .init_resource::<crate::ui::HitFlash>();
+            .init_resource::<crate::ui::HitFlash>()
+            // Task 24: the net-match link resources (plan Step 4).
+            .init_resource::<crate::net::match_link::NetMatchState>()
+            .init_resource::<crate::net::match_link::NetEvents>();
+        // Task 24: the online session. Stored as a *non-send* resource — the
+        // platform transport is not `Send + Sync` (native `Receiver`, wasm
+        // `Rc`), and the Bevy main thread owns it. `RelayBase` is inserted by
+        // `main.rs` before this plugin (the headless branch builds neither).
+        let relay = app
+            .world()
+            .get_resource::<crate::net::RelayBase>()
+            .map(|r| r.0.clone())
+            .unwrap_or_default();
+        app.world_mut()
+            .insert_non_send(crate::net::OnlineSession::new(&relay));
         // Task 14: procedural SFX (silent degradation when no audio device).
         crate::audio::add_audio(app);
         app.add_systems(
@@ -531,10 +545,16 @@ impl Plugin for WorldPlugin {
                 // Before the UI state machine: it drains `Match::events`.
                 crate::audio::audio_sfx,
                 crate::ui::ui_state_machine,
+                // Task 24: consumes the staged session events and steps the
+                // replication controller before the atlas drain (`ink_upload`)
+                // and before the visual-tree rebuild/sync.
+                crate::net::match_link::net_tick,
                 crate::input::tune_sensitivity,
                 crate::ink_render::ink_upload,
+                crate::actors::sync_actor_count,
                 crate::actors::sync_actors,
                 crate::ui::ui_update,
+                crate::ui::online_ui_update,
                 crate::ui::ui_button_style,
                 crate::audio::sfx_gc,
                 toggle_shadows,
@@ -783,9 +803,11 @@ fn toggle_shadows(
     }
 }
 
-/// Third-person follow of the local player (slot 0): the pivot tracks the
-/// actor's visual position, look comes from `PlayerControls`, and the boom
-/// shrinks when a wall blocks the line of sight (cameraRig.js follow).
+/// Third-person follow of the local player (`demo.player_slot` — slot 0
+/// offline, the net roster's local index in a net match, JS
+/// `rig.follow(m.local)`): the pivot tracks the actor's visual position,
+/// look comes from `PlayerControls`, and the boom shrinks when a wall blocks
+/// the line of sight (cameraRig.js follow).
 fn camera_rig(
     mut rig: ResMut<CamRig>,
     sim: Res<SimWorld>,
@@ -797,7 +819,7 @@ fn camera_rig(
 ) {
     let (yaw, pitch) = (pc.yaw, pc.pitch);
     // follow the player's feet + visual offset, damped (upstream pivot lerp)
-    if let Some(a) = demo.m.actors.first() {
+    if let Some(a) = demo.m.actors.get(demo.player_slot) {
         let target = Vec3::from_array(a.pos.to_array()) + Vec3::Y * a.smooth_y();
         let k = 1.0 - (-18.0 * time.delta_secs()).exp();
         rig.pivot = rig.pivot.lerp(target, k);

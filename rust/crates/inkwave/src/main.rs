@@ -28,6 +28,9 @@ struct Args {
     frames: u32,
     /// TR-16.1: native render-FPS bench for N seconds (0 = disabled).
     bench: u32,
+    /// Task 24: `--relay=ws://…` relay override (native; the wasm build has
+    /// no CLI and reads `?relay=` from the page instead).
+    relay: Option<String>,
 }
 
 /// Minimal flag parsing (works without extra deps; no-op flags on WASM).
@@ -36,6 +39,7 @@ fn parse_args() -> Args {
         headless: false,
         frames: 10,
         bench: 0,
+        relay: None,
     };
     let mut iter = std::env::args().skip(1);
     while let Some(arg) = iter.next() {
@@ -51,7 +55,11 @@ fn parse_args() -> Args {
                     args.bench = v.parse().unwrap_or(args.bench);
                 }
             }
-            _ => {}
+            other => {
+                if let Some(v) = other.strip_prefix("--relay=") {
+                    args.relay = Some(v.to_string());
+                }
+            }
         }
     }
     args
@@ -76,22 +84,26 @@ fn main() {
         // on a real GPU) so the measured rate is render+submit throughput,
         // not the display refresh cap.
         let bench_mode = args.bench > 0;
-        app.add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: format!("INKWAVE (Rust port M1, sim {})", inkwave_sim::SIM_VERSION),
-                resolution: (1920, 1080).into(),
-                present_mode: if bench_mode {
-                    PresentMode::AutoNoVsync
-                } else {
-                    default()
-                },
+        // Task 24: resolve the relay base once at boot (`--relay=` > env >
+        // localhost probe > PROD on native; `location` + `?relay=` on wasm).
+        // WorldPlugin reads it to build the session resource.
+        app.insert_resource(net::default_relay_base(args.relay.as_deref()))
+            .add_plugins(DefaultPlugins.set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: format!("INKWAVE (Rust port M1, sim {})", inkwave_sim::SIM_VERSION),
+                    resolution: (1920, 1080).into(),
+                    present_mode: if bench_mode {
+                        PresentMode::AutoNoVsync
+                    } else {
+                        default()
+                    },
+                    ..default()
+                }),
                 ..default()
-            }),
-            ..default()
-        }))
-        .add_plugins(world::WorldPlugin {
-            layout: inkwave_sim::embedded_tidewater(),
-        });
+            }))
+            .add_plugins(world::WorldPlugin {
+                layout: inkwave_sim::embedded_tidewater(),
+            });
         #[cfg(not(target_arch = "wasm32"))]
         if bench_mode {
             app.insert_resource(bench::Bench {

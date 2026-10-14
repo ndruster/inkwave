@@ -69,6 +69,29 @@ pub fn lean_from_speed(speed: f32, run_speed: f32) -> f32 {
     (speed / run_speed.max(0.001)).min(1.0) * 0.28
 }
 
+/// Shared part geometry (one mesh per kind, reused across all slots).
+struct PartMeshes {
+    kid_body: Handle<Mesh>,
+    head: Handle<Mesh>,
+    hair: Handle<Mesh>,
+    gun: Handle<Mesh>,
+    squid_body: Handle<Mesh>,
+    squid_head: Handle<Mesh>,
+    muzzle: Handle<Mesh>,
+}
+
+fn make_part_meshes(meshes: &mut Assets<Mesh>) -> PartMeshes {
+    PartMeshes {
+        kid_body: meshes.add(Capsule3d::new(0.25, 0.45)),
+        head: meshes.add(Sphere::new(0.32)),
+        hair: meshes.add(Cuboid::new(0.62, 0.20, 0.62)),
+        gun: meshes.add(Cuboid::new(0.10, 0.14, 0.55)),
+        squid_body: meshes.add(Capsule3d::new(0.22, 0.55)),
+        squid_head: meshes.add(Sphere::new(0.26)),
+        muzzle: meshes.add(Sphere::new(0.11)),
+    }
+}
+
 /// Spawn the 8-slot visual trees (kid + squid subtrees, muzzle flash).
 pub fn spawn_actors(
     mut commands: Commands,
@@ -76,117 +99,145 @@ pub fn spawn_actors(
     mut materials: ResMut<Assets<StandardMaterial>>,
     demo: Res<DemoSim>,
 ) {
-    // Shared geometry (one mesh per part kind, reused across all slots).
-    let kid_body = meshes.add(Capsule3d::new(0.25, 0.45));
-    let head = meshes.add(Sphere::new(0.32));
-    let hair = meshes.add(Cuboid::new(0.62, 0.20, 0.62));
-    let gun = meshes.add(Cuboid::new(0.10, 0.14, 0.55));
-    let squid_body = meshes.add(Capsule3d::new(0.22, 0.55));
-    let squid_head = meshes.add(Sphere::new(0.26));
-    let muzzle = meshes.add(Sphere::new(0.11));
-
+    let pm = make_part_meshes(&mut meshes);
     for (slot, a) in demo.m.actors.iter().enumerate() {
-        let col = team_color(a.team);
-        let mat = materials.add(StandardMaterial {
-            base_color: col,
-            alpha_mode: AlphaMode::Blend,
-            perceptual_roughness: 0.6,
-            ..default()
-        });
-        // Hair is a darkened team colour.
-        let hair_mat = materials.add(StandardMaterial {
-            base_color: col.mix(&Color::srgb(0.12, 0.12, 0.14), 0.55),
-            alpha_mode: AlphaMode::Blend,
-            perceptual_roughness: 0.8,
-            ..default()
-        });
-        let flash_mat = materials.add(StandardMaterial {
-            base_color: Color::srgb(1.0, 0.97, 0.85),
-            emissive: LinearRgba::new(3.0, 2.4, 1.2, 1.0),
-            unlit: true,
-            ..default()
-        });
+        build_actor_tree(&mut commands, &pm, &mut materials, slot, a);
+    }
+}
 
-        let root = commands
-            .spawn((
-                ActorRoot { slot },
-                ActorMat(vec![mat.clone(), hair_mat.clone()]),
-                Visibility::Visible,
-                Transform::default(),
-            ))
-            .id();
+/// Task 24: the net match swaps `demo.m.actors` for the session roster
+/// (JS tears the whole match down and builds a new one — `startNetMatch`
+/// L776-794). When the count no longer matches the visual trees, rebuild
+/// them all. Runs before `sync_actors` so the same frame's sync sees the
+/// fresh entities.
+pub fn sync_actor_count(
+    mut commands: Commands,
+    demo: Res<DemoSim>,
+    roots: Query<Entity, (With<ActorRoot>, Without<ActorPart>)>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let roots: Vec<Entity> = roots.iter().collect();
+    if roots.len() == demo.m.actors.len() {
+        return;
+    }
+    for e in roots {
+        commands.entity(e).despawn();
+    }
+    let pm = make_part_meshes(&mut meshes);
+    for (slot, a) in demo.m.actors.iter().enumerate() {
+        build_actor_tree(&mut commands, &pm, &mut materials, slot, a);
+    }
+}
 
-        // ---- kid parts (face +Z, the sim yaw convention) ----
-        let kid_parts = [
-            (
-                kid_body.clone(),
-                mat.clone(),
-                Vec3::new(0.0, 0.95, 0.0),
-                ActorPart::Kid,
-            ),
-            (
-                head.clone(),
-                mat.clone(),
-                Vec3::new(0.0, 1.62, 0.0),
-                ActorPart::Kid,
-            ),
-            (
-                hair.clone(),
-                hair_mat,
-                Vec3::new(0.0, 1.86, 0.0),
-                ActorPart::Kid,
-            ),
-            (
-                gun.clone(),
-                mat.clone(),
-                Vec3::new(0.34, 1.05, 0.38),
-                ActorPart::Kid,
-            ),
-            (
-                muzzle.clone(),
-                flash_mat.clone(),
-                Vec3::new(0.34, 1.15, 0.66),
-                ActorPart::Muzzle,
-            ),
-        ];
-        for (mesh, m, pos, part) in kid_parts {
-            commands.spawn((
-                Mesh3d(mesh),
-                MeshMaterial3d(m),
-                part,
-                ActorRoot { slot },
-                Visibility::default(),
-                Transform::from_translation(pos),
-                ChildOf(root),
-            ));
-        }
+/// One slot's visual tree (root + kid parts + muzzle + squid parts).
+fn build_actor_tree(
+    commands: &mut Commands,
+    pm: &PartMeshes,
+    materials: &mut Assets<StandardMaterial>,
+    slot: usize,
+    a: &inkwave_sim::actor::Actor,
+) {
+    let col = team_color(a.team);
+    let mat = materials.add(StandardMaterial {
+        base_color: col,
+        alpha_mode: AlphaMode::Blend,
+        perceptual_roughness: 0.6,
+        ..default()
+    });
+    // Hair is a darkened team colour.
+    let hair_mat = materials.add(StandardMaterial {
+        base_color: col.mix(&Color::srgb(0.12, 0.12, 0.14), 0.55),
+        alpha_mode: AlphaMode::Blend,
+        perceptual_roughness: 0.8,
+        ..default()
+    });
+    let flash_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.97, 0.85),
+        emissive: LinearRgba::new(3.0, 2.4, 1.2, 1.0),
+        unlit: true,
+        ..default()
+    });
 
-        // ---- squid parts (spindle hugging the ink surface) ----
+    let root = commands
+        .spawn((
+            ActorRoot { slot },
+            ActorMat(vec![mat.clone(), hair_mat.clone()]),
+            Visibility::Visible,
+            Transform::default(),
+        ))
+        .id();
+
+    // ---- kid parts (face +Z, the sim yaw convention) ----
+    let kid_parts = [
+        (
+            pm.kid_body.clone(),
+            mat.clone(),
+            Vec3::new(0.0, 0.95, 0.0),
+            ActorPart::Kid,
+        ),
+        (
+            pm.head.clone(),
+            mat.clone(),
+            Vec3::new(0.0, 1.62, 0.0),
+            ActorPart::Kid,
+        ),
+        (
+            pm.hair.clone(),
+            hair_mat,
+            Vec3::new(0.0, 1.86, 0.0),
+            ActorPart::Kid,
+        ),
+        (
+            pm.gun.clone(),
+            mat.clone(),
+            Vec3::new(0.34, 1.05, 0.38),
+            ActorPart::Kid,
+        ),
+        (
+            pm.muzzle.clone(),
+            flash_mat.clone(),
+            Vec3::new(0.34, 1.15, 0.66),
+            ActorPart::Muzzle,
+        ),
+    ];
+    for (mesh, m, pos, part) in kid_parts {
         commands.spawn((
-            Mesh3d(squid_body.clone()),
-            MeshMaterial3d(mat.clone()),
-            ActorPart::Squid,
+            Mesh3d(mesh),
+            MeshMaterial3d(m),
+            part,
             ActorRoot { slot },
             Visibility::default(),
-            Transform {
-                translation: Vec3::new(0.0, 0.26, 0.0),
-                // Bevy capsule axis is +Y; rotate onto +Z so length runs
-                // along the facing.
-                rotation: Quat::from_rotation_x(90_f32.to_radians()),
-                ..default()
-            },
-            ChildOf(root),
-        ));
-        commands.spawn((
-            Mesh3d(squid_head.clone()),
-            MeshMaterial3d(mat),
-            ActorPart::Squid,
-            ActorRoot { slot },
-            Visibility::default(),
-            Transform::from_translation(Vec3::new(0.0, 0.28, 0.72)),
+            Transform::from_translation(pos),
             ChildOf(root),
         ));
     }
+
+    // ---- squid parts (spindle hugging the ink surface) ----
+    commands.spawn((
+        Mesh3d(pm.squid_body.clone()),
+        MeshMaterial3d(mat.clone()),
+        ActorPart::Squid,
+        ActorRoot { slot },
+        Visibility::default(),
+        Transform {
+            translation: Vec3::new(0.0, 0.26, 0.0),
+            // Bevy capsule axis is +Y; rotate onto +Z so length runs
+            // along the facing.
+            rotation: Quat::from_rotation_x(90_f32.to_radians()),
+            ..default()
+        },
+        ChildOf(root),
+    ));
+    commands.spawn((
+        Mesh3d(pm.squid_head.clone()),
+        MeshMaterial3d(mat),
+        ActorPart::Squid,
+        ActorRoot { slot },
+        Visibility::default(),
+        Transform::from_translation(Vec3::new(0.0, 0.28, 0.72)),
+        ChildOf(root),
+    ));
 }
 
 /// Push sim state onto the visual trees every render frame.

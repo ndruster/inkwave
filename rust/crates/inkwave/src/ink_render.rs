@@ -124,13 +124,21 @@ pub fn ink_upload(
     mut images: ResMut<Assets<Image>>,
     image: Res<InkImage>,
     pc: Res<crate::input::PlayerControls>,
+    nms: Res<crate::net::match_link::NetMatchState>,
 ) {
     if pc.paused {
         // Esc pause freezes the match (camera and atlas stay as-is).
         return;
     }
-    demo.player = Some((pc.intent, pc.yaw, pc.pitch));
-    demo.step_and_drain(&mut atlas, time.delta_secs().min(0.1));
+    if nms.rep.is_some() {
+        // Task 24: a net match is live — `net_tick` owns the sim step (the
+        // replication controller drives bots, masked physics and playback).
+        // Only replay its paint stream onto the atlas here.
+        demo.drain_atlas(&mut atlas);
+    } else {
+        demo.player = Some((pc.intent, pc.yaw, pc.pitch));
+        demo.step_and_drain(&mut atlas, time.delta_secs().min(0.1));
+    }
     if atlas.atlas.version() != atlas.last_upload {
         atlas.last_upload = atlas.atlas.version();
         atlas.atlas.take_dirty();
@@ -159,10 +167,14 @@ pub struct DemoSim {
     /// `PaintGrid::version` seen at the previous drain; a drop below it means
     /// `Match::restart` rebuilt the grid and the atlas bitmap must follow.
     last_grid_version: u32,
-    /// Local player override for slot 0: (intent, aim_yaw, aim_pitch).
+    /// Local player override for `player_slot`: (intent, aim_yaw, aim_pitch).
     /// `Some` replaces the easy-bot brain for that slot (Task 12 input
     /// wiring); `None` keeps the demo fully bot-driven (headless / TR-11).
     pub player: Option<(ActorInput, f32, f32)>,
+    /// Task 24: the local player's roster slot (JS `m.local`). Offline it is
+    /// 0; a net match sets it to the session's local index, and the camera
+    /// rig follows the same slot.
+    pub player_slot: usize,
     /// Seed the roster/bots were built with (kept so `replay` can rebuild
     /// the bot brains fresh, matching the first match).
     seed: u64,
@@ -195,6 +207,7 @@ impl DemoSim {
             splats: 0,
             last_grid_version: 0,
             player: None,
+            player_slot: 0,
             seed,
         }
     }
@@ -209,6 +222,13 @@ impl DemoSim {
             self.step_once();
             steps += 1;
         }
+        self.drain_atlas(atlas);
+    }
+
+    /// Task 24: replay the match's recorded splat stream onto the atlas
+    /// (the drain half of [`step_and_drain`], reused while `net_tick` owns
+    /// the sim step of a net match).
+    pub fn drain_atlas(&mut self, atlas: &mut InkAtlasRes) {
         if self.m.paint.version < self.last_grid_version {
             // Match::restart rebuilt the gameplay grid: wipe the bitmap so
             // both views stay in lock-step.
@@ -234,14 +254,14 @@ impl DemoSim {
                 self.mate_goals[i] = b.goal_node();
             }
             for i in 0..n {
-                if i == 0
+                if i == self.player_slot
                     && let Some((intent, yaw, pitch)) = self.player
                 {
-                    // local player drives slot 0: the bot brain stands down
+                    // local player drives its slot: the bot brain stands down
                     // and the aim angles come from the mouse look.
-                    self.inputs[0] = intent;
-                    self.m.actors[0].aim_yaw = yaw;
-                    self.m.actors[0].aim_pitch = pitch;
+                    self.inputs[i] = intent;
+                    self.m.actors[i].aim_yaw = yaw;
+                    self.m.actors[i].aim_pitch = pitch;
                     continue;
                 }
                 let ctx = BotCtx {

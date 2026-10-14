@@ -222,7 +222,7 @@
   - **修复后全门禁 ✅**：fmt/clippy ✅、`cargo test --workspace` **243 passed**（基线 242→243，新增回归测试）✅、wasm32（`-p inkwave -p inkwave_sim`）✅、`trunk build --release` ✅、headless 冒烟 ✅、`cargo tree` 依赖面不变 ✅、JS 树零改动 ✅。
 
 ## Task 24: 极简大厅 UI
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: medium
 - **Depends On**: Task 20
 - **Description**:
@@ -232,6 +232,30 @@
   - `rule` TR-24.1: UI 状态→会话动作映射单测（可测部分抽纯函数；按钮禁用逻辑随状态）；证据为测试输出
   - `rule` TR-24.2: 双窗口原生人工试玩记录（create/join/ready/start/回大厅）；证据为操作记录
   - `rule` TR-24.3: 全门禁（含 trunk wasm 构建）+ JS 树零改动；证据为命令输出
+- **Completion Evidence**:
+  - **纯映射层（`ui/online.rs`，TR-24.1）**：`run_cmd` 11 命令逐一对应 JS 处理器（doCreate L2657-2684、doJoin L2617-2647 含短码 `caret=firstEmpty()`、cancelConnect L2648-2656、leaveRoom L3040-3046、toggleReady L3048-3058 host⇒tryStart、requestTeam L3080-3083、hostSet×3 L2944-2950、tryStart L3060-3072；lobby 命令均带 `state != Lobby` ≡ JS `S.launching` 守卫，requestTeam 另带 `any(p.you)` ≡ `!me`）；`project` 将会话事实投为 HubView/LobbyView（JOIN_ERR 六条 L49-54、`error_detail`/`room_gone_toast` L2378、码输入 `code_type`/`code_backspace`/`first_empty`/`code_full`/`auto_join_armed` L2508-2564、`list_names`/`waiting_banner` L3062-3073、`leave_text` L3028-3033 含 padded code L2781、renderBar L3344-3369、statusTxt L3282-3296）；`OnlineFlags::settle(err)` 按 JS 路由：join 失败→jstat 面板+`caret=4`+保留 "Connecting to room X…" hint（showError L2607-2616，render L2525-26 error 模式不重写 hintEl）、create 失败→create 卡 `create_error_text` 三分支（L2673-2682，U+2014/U+2019 逐字）、成功→hint 回默认。
+  - **屏幕层（`ui/mod.rs`）**：`Screen::OnlineHub`/`OnlineLobby` + Bevy 节点树（含 `hub_create` create 卡状态行）；键盘输入（type/backspace/Enter/Esc/R）与 `handle_online_action` 按钮分发；session pump + `settle` + 屏幕同步（`_onNetState` L2359-2368）；**autoJoin**：`UiState.auto_join` 320 ms 倒计时逐字移植 L2554（第 5 有效字符落末格武装、回调守卫 `screen==OnlineHub && !busy && full` ≡ `alive && mode==='entry' && full`；backspace L2559/Enter L2619/JOIN 按钮/离开 hub（≡`st.alive=false`）清零；无效字符与 Cancel 不清=JS quirk 保留）。
+  - **对局接线（`net/match_link.rs` + sim `member_ids`/`local_slot`）**：`start_net_match`（main.js L770-807）建局+bind+bot 脑+`prune_loading_leavers`（netmatch.js L79 humans-only 门控，members=`sess.member_ids()` ≡ `_members` session.js L31/L100-101）+`local_roster_index` 同门控解析 local（match.js L116 最终数组语义）；`net_tick` 驱动 replication，`!net_mode` 时自动 teardown；judge→`res`/`end`→results→回大厅（netMatchEnd L823-842、host 12 s 结果倒计时 L972、guest 等 host `end`）；Leave 臂 `on_leave` 收缩后经 `rep.local_slot` 重解析 `local_idx`/`demo.player_slot` 并 resize inputs。
+  - TR-24.1 ✅：16 个 `tr24_*` 测试（`online.rs`：error_copy/leave_confirm/code_char_feedback/list_names+waiting_banner/project_hub_gating/project_start_enable/run_cmd_maps_to_session/settle_error_routing/first_empty_and_auto_join_armed/start_block_banner/project_start 等；`match_link.rs`：lobby_flow_two_clients/build_net_match_roster_order/match_end_returns_lobby/local_roster_index_follows_prune_gate/local_slot_follows_leave_removal）——FakeRelay 双 `NetSession` 走与 app 完全相同的 `project`/`run_cmd`/`build_net_match` 路径。
+  - TR-24.2 ⏳（登记待复核）：沙箱无 GPU/窗口，真实双窗口人工试玩无法执行；等价验证=上述双会话全流程集成测试（create/join/ready/start/回大厅/断线提示 6 步均有断言）。**真实双窗口人工试玩登记为"待用户机器复核"条目**，随 Task 26 建立 REVIEW_CHECKLIST 时列入执行清单。
+  - TR-24.3 ✅：`cargo fmt --all --check` ✅、`clippy --workspace --all-targets -- -D warnings` 0 错 ✅、`cargo test --workspace` **259 passed**（58 inkwave + 189 sim + 4 acceptance + 8 relay_shim；基线 255→259）✅、wasm32 check（`-p inkwave -p inkwave_sim` 口径）✅、`trunk build --release` ✅、headless 冒烟（`--headless --frames 120` boot+complete）✅、`cargo tree -p inkwave_sim` 依赖面不变（仅 glam/serde）✅、JS 树（src/server/tools/docs）`git status` 零改动 ✅。
+- **Review 修复附录**（首轮独立审查：1 major / 8 minor / 2 nit，结论"需修复后合入"；修复后复审读盘核对 11 项全部落码且与 JS 等价，另核 autoJoin 补项并发现 1 minor + 2 nit，修复后再跑全门禁；除 m-7 转偏差⑧外全部代码修复）:
+  - **M-1 ✅（local_idx 与 prune 门控不一致，真 bug）**：提取 `local_roster_index(roster, my, members, no_bots)` 纯函数，filter 门控与 `prune_loading_leavers` 一致（bots 舞台不剔除、humans 舞台剔除缺席 owner），`start_net_match` 与测试助手 `build_side` 共用；回归测试 `tr24_local_roster_index_follows_prune_gate`（bots 舞台缺席保留偏移=1 / humans 舞台剔除=0 / bot 条目永不作 local / 自身 `owner==my` 短路守卫）。
+  - **m-1 ✅**：prune 的 members 改用会话权威集合——`session.rs` 新增 `pub fn member_ids()`（`members.keys()` ≡ `_members`），match_link 调用之。
+  - **m-2 ✅**：`net_tick` 顶部 `!st.net_mode → teardown_net_match + return`（Pause→Menu 离开后 replication 不再孤儿步进，≡ netMatchEnd dispose 语义）。
+  - **m-3 ✅**：run_cmd Join 短码臂 `caret = first_empty(draft)`（L2621-2622）；测试断言 caret==3。
+  - **m-4 ✅**：ToggleReady/SetTeam/Start/SetDuration/SetBots/SetDifficulty 六臂补 `state != Lobby`（≡`S.launching` L2945/L3051/L3061/L3080）；测试补 no-double-launch 断言。
+  - **m-5 ✅**：join 失败 settle 路由（err_panel+caret=4+connecting hint 保留）；投影 label=JOIN、join_ready=full()（mode 'error' ≠ 'connecting'，L2520/L2522）。
+  - **m-6 ✅**：create 失败走 create 卡（`create_error_text` known→`title — text`/unknown→raw/empty→"Couldn't open a room"），不碰 jstat/hint；`hub_create` 标签节点渲染。
+  - **m-7 ✅→偏差⑧**：pad 输入模式省略，声明落 online.rs 模块 docs 并回填计划文档。
+  - **m-8 ✅**：Leave 臂 on_leave 前后长度比对，收缩时 `rep.local_slot(my)` 重解析并同步 `nms.local_idx`/`demo.player_slot`、`inputs.resize`；`replication.rs` 新增 `pub local_slot`；回归测试 `tr24_local_slot_follows_leave_removal`（cargo 舞台 Some(1)→on_leave→Some(0)、缺席 id→None）。
+  - **n-1 ✅**：leave_text 插值 padded code（大写+padEnd(5,'•')+≤8，L2781/L3032-33）。
+  - **n-2 ✅**：solo 用例显式 `bots:true/false` 双分支确定断言（"Just you and the bots"/"Nobody to play against yet!"）。
+  - **autoJoin ✅（首轮审查漏项，本轮自主补齐）**：L2554 320 ms 自动加入定时器逐字移植（见 Completion Evidence 屏幕层条目）；复审推演确认 busy 期间到期丢弃、Cancel 后到点重 Join 的 quirk 与 JS 净效果一致。
+  - **复审 minor-1 ✅**：JOIN 按钮点击路径与 Esc/HubBack 离 hub 清 `auto_join`（doJoin L2619 clearTimeout 与触发源无关；离 hub ≡ `st.alive=false` 永久丢弃，防冻结后复活）。
+  - **复审 nit-1 ✅**：注释锚点 `session.js L788` 更正为 `L31/L100-101`（session.js 实存 399 行，原锚笔误）。
+  - **复审 nit-2 ✅**：run_cmd Create 与 settle create 臂不再清 hint（doCreate/catch 不触 hintEl、不调 render，L2657-2666/L2673-2682）。
+  - **修复后全门禁 ✅**：fmt/clippy ✅、`cargo test --workspace` 259 passed（基线只增）✅、wasm32 ✅、`trunk build --release` ✅、headless 120 帧 ✅、`cargo tree` 依赖面不变 ✅、JS 树零改动 ✅。
 
 ## Task 25: 端到端集成——Rust↔Rust 完整对局
 - **Status**: `pending`

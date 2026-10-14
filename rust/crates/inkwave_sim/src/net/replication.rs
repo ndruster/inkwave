@@ -277,7 +277,7 @@ impl Replication {
     /// JS `bind` L79: on a humans-only stage, an actor whose owner left
     /// *while the match was loading* (before a NetMatch existed to hear the
     /// leave frame) is dropped now. The app passes the session's current
-    /// member ids (`s._members`, session.js L788); own actors are never
+    /// member ids (`s._members`, session.js L31/L100-101); own actors are never
     /// pruned. No-op on stages that keep bots.
     pub fn prune_loading_leavers(&mut self, m: &mut Match, members: &[SessionId]) {
         if !self.no_bots {
@@ -289,6 +289,17 @@ impl Replication {
                 self.remove_at(m, i);
             }
         }
+    }
+
+    /// The live slot of the local player's actor (JS resolves `m.local` as an
+    /// object ref, match.js L116 — the Rust port tracks an index, so after a
+    /// `remove_at` shift it must re-resolve). Only meaningful on a
+    /// humans-only stage (where `prune_loading_leavers` / `on_leave` drop
+    /// actors): bots never exist there, so the first owner match is the
+    /// local human.
+    #[must_use]
+    pub fn local_slot(&self, my_id: &str) -> Option<usize> {
+        self.owners.iter().position(|o| o == my_id)
     }
 
     /// Drop actor `i` from the match and every roster-parallel array
