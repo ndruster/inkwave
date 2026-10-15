@@ -60,6 +60,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod matchbuild;
 pub mod playback;
 pub mod replication;
 pub mod session;

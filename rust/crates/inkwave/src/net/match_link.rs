@@ -24,13 +24,12 @@
 //!    sim's determinism contract wants a stable seed).
 
 use bevy::prelude::*;
-use inkwave_sim::actor::{Actor, ActorInput, FIXED_DT, SimWorld};
+use inkwave_sim::actor::{ActorInput, FIXED_DT, SimWorld};
 use inkwave_sim::bot::Bot;
-use inkwave_sim::match_::{Match, MatchEvent, SPAWN_RING_N, SPAWN_RING_PHI, SPAWN_RING_R};
+use inkwave_sim::match_::{Match, MatchEvent};
+use inkwave_sim::net::matchbuild::{build_net_match, fnv1a, local_roster_index};
 use inkwave_sim::net::replication::{Replication, ReplicationEvent};
-use inkwave_sim::net::session::{MatchPhase, RosterEntry, SessionEvent, StartCfg, map_no_bots};
-use inkwave_sim::tuning::{MatchConfig, PlayerTuning};
-use inkwave_sim::weapon::WeaponRunner;
+use inkwave_sim::net::session::{MatchPhase, SessionEvent, StartCfg, map_no_bots};
 
 use crate::ink_render::DemoSim;
 use crate::input::PlayerControls;
@@ -75,77 +74,9 @@ pub struct NetMatchState {
     host_changed: bool,
 }
 
-/// FNV-1a 64-bit over the match id (deviation ⑤).
-fn fnv1a(s: &str) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in s.as_bytes() {
-        h ^= *b as u64;
-        h = h.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    h
-}
-
-/// JS `new Match({roster: cfg.roster, …})` + `setup()` (match.js `_setupRoster`
-/// L107-113, placement L85-91): one actor per roster entry **in roster order**
-/// (the contract that keeps the replication layer's parallel arrays aligned),
-/// each placed on its team pad's spawn ring facing the arena, spawn invuln
-/// cleared (the intro is the protection). The base [`Match::new`] scaffold
-/// (paint grid / projectiles / rng / clock) is reused; its balanced demo
-/// roster is replaced wholesale.
-#[must_use]
-pub fn build_net_match(
-    cfg: &StartCfg,
-    seed: u64,
-    sim: &SimWorld,
-    t: &PlayerTuning,
-    mc: &MatchConfig,
-) -> Match {
-    let mut m = Match::new(cfg.duration.max(1) as f32, seed, sim, t, mc);
-    m.actors = cfg
-        .roster
-        .iter()
-        .map(|r| {
-            let mut a = Actor::new(r.team as usize, r.slot as usize, t);
-            // match_.rs L74-78 pub constants, verbatim `place_on_pad`.
-            let pad = sim.spawn_pads[a.team];
-            let ang = (a.slot as f32 / SPAWN_RING_N) * std::f32::consts::TAU + SPAWN_RING_PHI;
-            let p = glam::vec3(
-                pad.x + ang.cos() * SPAWN_RING_R,
-                pad.y,
-                pad.z + ang.sin() * SPAWN_RING_R,
-            );
-            let yaw = if a.team == 0 {
-                0.0
-            } else {
-                std::f32::consts::PI
-            };
-            a.spawn_at(p, yaw, sim, t);
-            a.invuln = 0.0;
-            a
-        })
-        .collect();
-    m.runners = (0..m.actors.len()).map(|_| WeaponRunner::new()).collect();
-    m
-}
-
-/// JS `startNetMatch`'s local-slot resolution: `match.js` L116 picks
-/// `m.local` over the *final* actor array — `cfg.roster` minus the entries
-/// `prune_loading_leavers` dropped — and that drop is gated on the
-/// humans-only stage (netmatch.js L79). On a bots stage nothing is dropped,
-/// so no owner may be skipped here either (review M-1).
-#[must_use]
-fn local_roster_index(
-    roster: &[RosterEntry],
-    my_id: &str,
-    members: &[String],
-    no_bots: bool,
-) -> usize {
-    roster
-        .iter()
-        .filter(|r| !no_bots || r.owner == my_id || members.contains(&r.owner))
-        .position(|r| !r.bot && r.owner == my_id)
-        .unwrap_or(0)
-}
+// Task 25: the builder trio (`build_net_match` / `local_roster_index` /
+// `fnv1a`) moved verbatim to `inkwave_sim::net::matchbuild` so the
+// test-only net-harness assembles the exact same match from the same code.
 
 /// `Match{Start}` handler — JS `startNetMatch` (main.js L770-807) minus the
 /// render seams (the Rust app keeps the world; the actors swap via
@@ -478,7 +409,7 @@ mod tests {
     use super::*;
     use crate::ui::online::{OnlineFlags, SessionCmd, TeamSel, code_type, project, run_cmd};
     use inkwave_sim::collision::CollisionWorld;
-    use inkwave_sim::match_::Phase;
+    use inkwave_sim::match_::{Phase, SPAWN_RING_R};
     use inkwave_sim::net::session::{NetSession, Profile, RosterEntry, SessionState};
     use inkwave_sim::net::transport::{FakeRelay, FakeTransport};
 

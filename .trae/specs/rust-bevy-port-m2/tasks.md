@@ -258,7 +258,7 @@
   - **修复后全门禁 ✅**：fmt/clippy ✅、`cargo test --workspace` 259 passed（基线只增）✅、wasm32 ✅、`trunk build --release` ✅、headless 120 帧 ✅、`cargo tree` 依赖面不变 ✅、JS 树零改动 ✅。
 
 ## Task 25: 端到端集成——Rust↔Rust 完整对局
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 18, 19, 20, 21, 22, 23
 - **Description**:
@@ -270,7 +270,20 @@
   - `rule` TR-25.2: 集成测试：netlag=40/netjitter=30/netspike=0.01 场景复跑通过 + kink/path-error p95 统计输出（对照 JS net-test 口径写报告）；证据为统计
   - `rule` TR-25.3: 集成测试：对局中 host 掉线迁移与玩家掉线转 bot 两场景打完出结算；证据为测试输出
   - `rule` TR-25.4: 全量门禁；证据为命令输出
-- **Notes**: TR-25.2 的数值门限按 spec Open Question 3：先产出 Rust 统计，独立审查 agent 对照 JS net-test 语义定标。
+- **Completion Evidence**:
+  - **建局器下沉**：`build_net_match`/`local_roster_index`/`fnv1a` 逐字平移至 `inkwave_sim::net::matchbuild`（app crate bin-only 无法被 harness 依赖；一处建局真相，app 与 harness 共用；app `match_link.rs` import 切换、行为不变，sim 依赖面不变）。
+  - **场景驱动器（`net-harness/src/match_e2e.rs`，TR-25.1/2/3）**：`run_match` 组装 FakeRelay + 3×`NetSession` + 3×`Replication` + 3×`Match` 于共享虚拟时钟（tr24 `step2` 范式：首端 `advance(dt)`、余端 `advance(0)`），lockstep 子步循环 drive_bots→`step_masked(remote_mask)`→`rep.update`→drain→dispatch；事件分派逐镜像 app `net_tick` 契约（Host→`set_host`+host_changed；Leave→`on_leave(flag)`+`local_slot` 重解析+inputs.resize；GameMessage→`on_message`；MatchEnd→`end_match`）；1 host + 2 guest + 5 bot 补位至 8；duration 15s 经本地克隆 `StartCfg` 覆盖（≡ net-test.mjs L85 `600/40` 本地覆盖接缝；lobby 路径 JS `Math.max(60,…)` 钳制未动，session.rs L1284-1290）；掉线用 `close()` ≡ net-test `--leave` 的 `DROP=kill`（L118-125）。计划批准口径记录：shim 真实 socket 完整局留给 Task 26（计划文档决策 6），本任务用确定性 FakeRelay 全栈。
+  - TR-25.1 ✅：`tr25_full_match_three_clients` + `tr25_full_match_deterministic`（同 seed 双跑：逐端最终网格 FNV 与 result 精确一致）；CLI `cargo run -p net-harness -- match` overall **CONSISTENT**（1311 帧；覆盖率两两差 <0.5pp：4.97/7.40 vs 4.98/7.41；result==host `res`：wire 权威字段 coverage/winner/elapsed 精确相等 + points 舍入上界 <2.0；全员回 Lobby；无 panic）。
+  - TR-25.2 ✅：`tr25_lag_scenario_stats`（LinkSim{lag 40, jitter 30, spike 0.01}）复跑 CONSISTENT；统计公式逐字移植 `net-test.mjs`：pct（L242）、kink/turn-kink（L244-257，稳帧 6-45ms 过滤、y 权重 0.5、wrapped yaw）、sample（L233-241）、path-error 拟合（L278-291，2s 窗、lag 40-400 步 5、n>20）、teleport（L275，>1.2m）——行号锚点 + 5 个公式单测；**数值门限由独立审查定标**（Open Question 3）并写入断言：kink p95 ≤5cm、turn-kink p95 ≤3°、path-error p95 ≤30cm、teleports ≤2/端且总 ≤5（p99/max 为 netspike 场景输入的既定离群，仅报告不判决 ≡ JS 打印语义）；观测值：kink p95 ≤1.6cm、path p95 ≤11.6cm、teleports 0/0/1、owners' own kink p95 1.8cm。
+  - TR-25.3 ✅：`tr25_host_migration`（5s 时 host `close()`→relay 重选→guest `adopted_host` 接管权威→打完出结算，全员 result 一致）+ `tr25_guest_dropped_to_bot`（5s 时 guest `close()`→host `on_leave` 收养转 bot→结算核验被弃 actor 在 host 端位移 >0.05m，即"继续游玩"）；两场景 checks 全 PASS。
+  - TR-25.4 ✅（审查修复后重跑）：`cargo fmt --all --check` ✅、`clippy --workspace --all-targets -- -D warnings` 0 错 ✅、`cargo test --workspace` **269 passed**（58 inkwave + 189 sim + 5 harness lib + 4 acceptance + 5 e2e_match + 8 relay_shim；基线 259→269）✅、wasm32 check（`-p inkwave -p inkwave_sim` 口径）✅、`trunk build --release` ✅、headless 冒烟（`--headless --frames 120` boot+complete）✅、`cargo tree -p inkwave_sim` 依赖面不变（仅 glam/serde/serde_json）✅、JS 树（src/server/tools/docs）`git status` 零改动 ✅。
+- **Review 修复附录**（独立审查：0 blocker / 0 major / 1 minor / 4 nit，结论"可合入"；全部当场修复后重跑全门禁）:
+  - **A3 ✅（minor，points 容差非数学上界）**：`<1.0`→`<2.0+1e-3`（`wire::round_int` 逐 actor ±0.5 m² × pointsPerM2=1 × 每队 4 actor），注释写明推导；固定 seed 下无 flake 风险。
+  - **A4 ✅（nit）**：dispatch `Host` 臂补 `gone[i]` 守卫，与 Leave/GameMessage 臂对称。
+  - **A5 ✅（nit）**：`drop_track` 注释声明索引一致性前提（bots 舞台 `no_bots=false`、`on_leave` 收养不删员、无左移）。
+  - **A6 ✅（nit）**：模块 docs 补偏差——harness 结算后立即 `end`，跳过 app 的 12s `_netEndT` 结果页倒计时（握手帧一致）。
+  - **A7 ✅（nit）**：CLI 注释声明 `match` 不入 `all` 的耗时取舍。
+  - **审核心验通过项**：建局器平移逐行一致；5 个统计公式守卫/权重/过滤/百分位选取/拟合窗逐字等价；dispatch 与 net_tick 及 session.js L156-163 时序镜像；结算边界（follower 门控不本地判决、elapsed 精确相等、gone 端全程跳过、c0 仅 2 remote 合理）。
 
 ## Task 26: 双端联网冒烟与跨端握手
 - **Status**: `pending`

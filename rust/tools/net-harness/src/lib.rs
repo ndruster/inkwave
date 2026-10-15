@@ -28,6 +28,10 @@
 //! first, spike second) is pinned by a replayed-xorshift unit test in
 //! `transport.rs`.
 
+pub mod match_e2e;
+
+pub use match_e2e::{DropAt, MatchOpts, MatchReport, run_match};
+
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
 

@@ -1,14 +1,23 @@
 //! Task 19 net-harness CLI — prints the consistency report.
 //!
-//! `cargo run -p net-harness [fake|shim|all]`. TEST-ONLY; see `lib.rs` for
-//! what the two modes drive and assert.
+//! `cargo run -p net-harness [fake|shim|match|all]`. TEST-ONLY; see `lib.rs`
+//! for what the modes drive and assert.
 
-use net_harness::{LinkSim, run_fake, run_shim};
+use net_harness::{LinkSim, MatchOpts, run_fake, run_match, run_shim};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mode = args.get(1).map(String::as_str).unwrap_or("all");
     let mut any_fail = false;
+
+    if mode == "match" {
+        // Task 25 TR-25.1: the plain 3-client full match on the virtual clock.
+        // Deliberately *not* part of `all`: a full match is minutes of substeps
+        // (review A7), while `fake`/`shim` stay quick session-layer smokes.
+        let rep = run_match(&MatchOpts::plain(3, 42));
+        rep.print();
+        any_fail |= !rep.ok();
+    }
 
     if mode == "all" || mode == "fake" {
         let rep = run_fake(
