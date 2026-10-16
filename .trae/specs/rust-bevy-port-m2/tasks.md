@@ -286,7 +286,7 @@
   - **审核心验通过项**：建局器平移逐行一致；5 个统计公式守卫/权重/过滤/百分位选取/拟合窗逐字等价；dispatch 与 net_tick 及 session.js L156-163 时序镜像；结算边界（follower 门控不本地判决、elapsed 精确相等、gone 端全程跳过、c0 仅 2 remote 合理）。
 
 ## Task 26: 双端联网冒烟与跨端握手
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: medium
 - **Depends On**: Task 24, Task 25
 - **Description**:
@@ -297,6 +297,25 @@
   - `rule` TR-26.1: 冒烟脚本输出（含渲染错误检测，沿用 M1 B-1 修复后的探针）或降级记录；证据为日志/截图
   - `rule` TR-26.2: 跨端握手日志或"待复核"登记（并入 REVIEW_CHECKLIST）；证据为记录
   - `rule` TR-26.3: 全量门禁；证据为命令输出
+- **Completion Evidence**:
+  - **test-only 接缝（`rust/crates/inkwave/src/nettest.rs`，新）**：query 门控 `net=create`/`netjoin=CODE`/`netready`/`netstart`/`netdur=N`/`autopilot`/`netprobe`；证据行 `[nettest] boot/err/code/lobby/probe` 走 `web_sys::console::log_1`（wasm `println!` 不进 console；native println）。`parse_query` 纯函数 + 4 单测（空/全参/坏码/部分参）；无接缝参数 cfg=None 零行为、native 恒 None。驱动语义逐字对齐 `tools/net-test.mjs` L73/L77/L80/L81-87/L85 与 `ui/mod.rs` L1339-1341（EnterHub）。
+  - **autopilot 接线（`match_link.rs`）**：`start_net_match` 本地槽 `rep.attach_bot(…difficulty.easy…)` ≡ `match.js` L112 `mine && (r.bot || o.autopilot)`；`net_tick` 本地输入覆写块加 `!autopilot` 守卫 ≡ L118 不建 PlayerController。
+  - **冒烟脚本（`rust/tools/verify/net-smoke.mjs`，新）**：raw CDP（Node≥22 全局 WebSocket，零 npm 依赖，复用 wasm-smoke.mjs 探针模式：fresh profile/RENDER_ERR_RE/console.error+exception+Log 收集）；场景 A wasm↔wasm 完整局、场景 B JS(:8490 只读 `__G.net`)↔Rust 跨端握手；`--enable-unsafe-swiftshader`（chromium 154 已弃用自动软件 WebGL，缺省则 wasm 应用启动即退）；shim 端口转发 + 子进程早退 fail-fast；parseProbe 往返自检（加载即校验与 nettest.rs 格式互配，失配 exit 2）；渲染死亡/停滞→DEGRADED（保留证据、exit 0），非渲染类失败→FAIL（exit 1）。
+  - **TR-26.1 ⚠️ DEGRADED（沙箱降级条款，如实记录）**：headless chromium 仅有 SwiftShader 软件渲染，Bevy/wgpu PBR 管线（`pbr_prepass_pipeline` VERTEX）ANGLE 翻译失败 → "Quitting the application due to Internal"；**离线 demo（无任何网络参数）同样崩溃**，证明属环境渲染限制而非本任务代码。且软件渲染长时间占住 wasm 主线程，饿死 transport 的 8s 握手定时器（≡ transport.js L48，端口不可改）。落盘证据：`rust/tools/verify/logs/net-smoke-2026-10-16T09-45-42-683Z.json`（boot/err/render-error 行）、`…T14-15-06-886Z.json`（修复后最终轮判定）。完整局复跑命令已入 REVIEW_CHECKLIST §2。
+  - **TR-26.2 ⚠️ 部分实证 + 降级登记**：JS 客户端经 shim 建房 ✓（`3UZ9X`）；**Rust wasm 客人 join 落地被 JS 大厅实收** ✓（`players=[["Host",0],["Player",0]]`，`logs/net-smoke-2026-10-16T09-55-51-090Z.json`）——跨端 join 方向在真实 WS 上打通；Rust 侧 welcome 证据行与 tick 段因主线程 stall 未达，降级入 REVIEW_CHECKLIST §3（含复跑命令）。
+  - **REVIEW_CHECKLIST.md（新建）**：①Task 24 TR-24.2 双窗口人工试玩 6 步；②TR-26.1 wasm↔wasm 完整局复跑；③TR-26.2 tick 段复跑；④原生↔wasm 同房局（沙箱无 DISPLAY）；⑤net-test.mjs Linux executablePath 提示（JS 树只读不改）。
+  - **TR-26.3 ✅**：`cargo fmt --check` ✅、`clippy --workspace --all-targets -- -D warnings` ✅、`cargo test --workspace` **273 passed**（基线 269→273，nettest 4 单测）✅、wasm32 check（`-p inkwave -p inkwave_sim`）✅、`trunk build --release` ✅（dist 为 gitignore 本地产物）、headless 120 帧 ✅、`cargo tree -p inkwave_sim` 仅 glam/serde/serde_json ✅、JS 树（src/tools/server）`git status` 零改动 ✅。
+- **偏差声明**：①接缝为 test-only query 门控（JS 先例 `__G.net` API + `?skipTitle&autopilot`；Rust 无 JS API 面，Create/Start 为鼠标按钮）；②`netdur` 走既有 `SetDuration` 钳制路径（lobby ≥60 未动，冒烟用 60——修订设计文档"直写覆盖"方案）；③probe 证据语义 = `[nettest]` console 行（wasm println 不可见）；④`--enable-unsafe-swiftshader` 属沙箱 chromium 环境要求，非产品行为。
+- **Review 修复附录**（独立审查：1 blocker / 2 major / 3 minor / 2 nit，结论"需修复后合入"；必修项全部修复）:
+  - **A1 ✅（blocker，PROBE_RE 与 format! 不匹配）**：远端坐标正则改圆括号精确形 `^(\d+):\((-?[\d.]+),…\)$`；修复中发现原 `m[5]` 组索引亦错（rem 为第 4 组）→ 改 `m[4]`；新增加载期往返自检（自检曾在最终轮真实拦截崩溃，证明必要）。
+  - **A2 ✅（major，CHECKLIST §2 证据不实）**：删除未落盘的 `4BNV9` 断言，§2 严格以 logs/*.json 已落盘行为准（join 方向已证、host welcome 行未在任何落盘运行出现如实写明）。
+  - **A3 ✅（major，无 FAIL 路径）**：场景 A 无 `[nettest]` 行→FAIL；场景 B JS 侧失败（rustTab 未建）→FAIL；两 PASS 分支 checks 不过记 FAIL；DEGRADED 仅在渲染死亡或有 boot 行的停滞时成立。
+  - **A4 ✅（minor）**：shim/dist 子进程早退 fail-fast（残留进程占端口不再被静默容忍）；shim 端口经 `--` 转发（原恒绑 8787）。
+  - **A5 ✅（minor）**：PASS 标签与 checks 一致（见 A3）。
+  - **A6 ⏸（minor，err 一次性闩锁）**：有意保留——重复 err 行无额外证据价值，console.error 已被 Tab.errors 全量收集。
+  - **A7 ✅（nit）**：删除多余 `too_many_arguments` allow（6 参低于阈值 7）。
+  - **A8 ⏸（nit，labelSeq 消费模式）**：不改——脚本内全部 tab 均显式设 label，前缀过滤无漏。
+  - **审核心验通过项**：JS 树零改动；锚点行号实核全部正确（match.js L112/L118、transport.js L43/L48、net-test.mjs L73/L77/L80-87/L85/L144、ui/mod.rs L1002/L1339-1341、online.rs L235-236、replication.rs L318-321/L331-333）；native 恒 None；`!autopilot` 守卫为原代码包裹、无接缝时行为不变；host/guest 分支与 JS 驱动等价；借用/let-chain/单测边界 ✅。
 
 ## Task 27: M2 收尾——门禁、台账、文档与总评审
 - **Status**: `pending`

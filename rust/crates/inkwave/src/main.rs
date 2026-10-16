@@ -20,6 +20,7 @@ mod audio;
 mod ink_render;
 mod input;
 mod net;
+mod nettest;
 mod ui;
 mod world;
 
@@ -87,7 +88,10 @@ fn main() {
         // Task 24: resolve the relay base once at boot (`--relay=` > env >
         // localhost probe > PROD on native; `location` + `?relay=` on wasm).
         // WorldPlugin reads it to build the session resource.
+        // Task 26: the test-only net smoke seam (wasm `?net…` query params;
+        // the config is always `None` on native — no CLI seam).
         app.insert_resource(net::default_relay_base(args.relay.as_deref()))
+            .insert_resource(nettest::NetTest::from_location())
             .add_plugins(DefaultPlugins.set(WindowPlugin {
                 primary_window: Some(Window {
                     title: format!("INKWAVE (Rust port M1, sim {})", inkwave_sim::SIM_VERSION),

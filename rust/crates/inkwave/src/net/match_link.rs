@@ -34,6 +34,7 @@ use inkwave_sim::net::session::{MatchPhase, SessionEvent, StartCfg, map_no_bots}
 use crate::ink_render::DemoSim;
 use crate::input::PlayerControls;
 use crate::net::OnlineSession;
+use crate::nettest::NetTest;
 use crate::ui::online::room_gone_toast;
 use crate::ui::{Screen, UiState};
 
@@ -87,6 +88,7 @@ fn start_net_match(
     nms: &mut NetMatchState,
     demo: &mut DemoSim,
     st: &mut UiState,
+    autopilot: bool,
 ) {
     let (Some(cfg), Some(my_id), Some(host_id)) = (
         os.sess.start_cfg().cloned(),
@@ -127,6 +129,19 @@ fn start_net_match(
     // on a bots stage nobody is dropped and no owner may be skipped.
     let no_bots = map_no_bots(&cfg.map);
     nms.local_idx = local_roster_index(&cfg.roster, &my_id, &members, no_bots);
+    // Task 26 test seam: `?autopilot` ≡ JS `match.js` L112
+    // `if (mine && (r.bot || o.autopilot))` — the local human slot gets a
+    // brain too (bots already have one from the loop above; `attach_bot`
+    // no-ops on remote slots, replication.rs L318-321, so a guest's own
+    // owned local slot is the only one this can take).
+    if autopilot {
+        rep.attach_bot(
+            nms.local_idx,
+            &built.actors[nms.local_idx],
+            &demo.tuning.difficulty.easy,
+            seed,
+        );
+    }
     demo.m = built;
     nms.cfg = Some(cfg);
     nms.seed = seed;
@@ -204,7 +219,11 @@ pub fn net_tick(
     mut net_ev: ResMut<NetEvents>,
     mut st: ResMut<UiState>,
     pc: Res<PlayerControls>,
+    nettest: Res<NetTest>,
 ) {
+    // Task 26 test seam: with `?autopilot` the local slot is bot-driven, so
+    // no player controller writes into it (≡ match.js L118 `!o.autopilot`).
+    let autopilot = nettest.cfg.as_ref().is_some_and(|c| c.autopilot);
     let os = &mut *os;
     let nms = &mut *nms;
     let demo = &mut *demo;
@@ -223,7 +242,7 @@ pub fn net_tick(
     for ev in events {
         match ev {
             SessionEvent::Match { phase } => match phase {
-                MatchPhase::Start => start_net_match(os, nms, demo, &mut st),
+                MatchPhase::Start => start_net_match(os, nms, demo, &mut st, autopilot),
                 MatchPhase::Go => {
                     // JS `_launch` → `netMatchGo` (main.js L816-821): every
                     // client starts its match at the host's word. Deviation ③:
@@ -335,16 +354,18 @@ pub fn net_tick(
                 // Local player input into `inputs[local_idx]` (JS
                 // PlayerController; zeroed outside `playing`, match.js
                 // L220-226).
-                if demo.m.phase == inkwave_sim::match_::Phase::Active {
-                    if let Some(inp) = nms.inputs.get_mut(nms.local_idx) {
-                        *inp = pc.intent;
+                if !autopilot {
+                    if demo.m.phase == inkwave_sim::match_::Phase::Active {
+                        if let Some(inp) = nms.inputs.get_mut(nms.local_idx) {
+                            *inp = pc.intent;
+                        }
+                        if let Some(a) = demo.m.actors.get_mut(nms.local_idx) {
+                            a.aim_yaw = pc.yaw;
+                            a.aim_pitch = pc.pitch;
+                        }
+                    } else if let Some(inp) = nms.inputs.get_mut(nms.local_idx) {
+                        *inp = ActorInput::default();
                     }
-                    if let Some(a) = demo.m.actors.get_mut(nms.local_idx) {
-                        a.aim_yaw = pc.yaw;
-                        a.aim_pitch = pc.pitch;
-                    }
-                } else if let Some(inp) = nms.inputs.get_mut(nms.local_idx) {
-                    *inp = ActorInput::default();
                 }
                 demo.m.step_masked(
                     FIXED_DT,

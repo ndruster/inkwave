@@ -1,0 +1,17 @@
+{
+  "startedAt": "2026-10-16T14:13:05.485Z",
+  "scenarios": {
+    "infra": {
+      "status": "SKIPPED",
+      "reason": "relay-shim exited (1): port 8791 held by a stale process"
+    }
+  },
+  "exitOk": true,
+  "tabs": [],
+  "children": [
+    {
+      "cmd": "cargo run -q -p relay-shim",
+      "tail": "relay-shim: bind 127.0.0.1:8787 failed: Address already in use (os error 98)\n"
+    }
+  ]
+}

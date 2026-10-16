@@ -1,0 +1,28 @@
+{
+  "startedAt": "2026-10-15T17:42:30.582Z",
+  "scenarios": {
+    "A": {
+      "status": "FAIL",
+      "reason": "timeout waiting for host room code (180000 ms)"
+    }
+  },
+  "exitOk": false,
+  "children": [
+    {
+      "cmd": "cargo run -q -p relay-shim",
+      "tail": "relay-shim (TEST ONLY) listening on ws://127.0.0.1:8787\n  production hygiene: MSG_MAX=65536 RATE=90 sweep match/lobby = 20s/150s\n"
+    },
+    {
+      "cmd": "python3 -m http.server 8491 --bind 127.0.0.1 --directory dist",
+      "tail": "127.0.0.1 - - [16/Oct/2026 01:42:33] \"GET /index.html HTTP/1.1\" 200 -\n127.0.0.1 - - [16/Oct/2026 01:42:35] \"GET /index.html?relay=ws://127.0.0.1:8787&net=create&netdur=60&netstart&autopilot&netprobe HTTP/1.1\" 200 -\n127.0.0.1 - - [16/Oct/2026 01:42:35] \"GET /inkwave-a90b701390d92c94.js HTTP/1.1\" 200 -\n127.0.0.1 - - [16/Oct/2026 01:42:35] \"GET /inkwave-a90b701390d92c94_bg.wasm HTTP/1.1\" 200 -\n127.0.0.1 - - [16/Oct/2026 01:42:35] code 404, message File not found\n127.0.0.1 - - [16/Oct/2026 01:42:35] \"GET /favicon.ico HTTP/1.1\" 404 -\n"
+    },
+    {
+      "cmd": "rm -rf /tmp/net-smoke-profile-2026-10-15T17-42-30-569Z",
+      "tail": ""
+    },
+    {
+      "cmd": "/usr/bin/chromium-browser --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --user-data-dir=/tmp/net-smoke-profile-2026-10-15T17-42-30-569Z --remote-debugging-port=9222 --window-size=1920,1080 about:blank",
+      "tail": "[3617095:3617095:1016/014233.891087:ERROR:third_party/crashpad/crashpad/util/file/file_io_posix.cc:208] open /root/.config/chromium/Crash Reports/settings.dat: 权限不够 (13)\n[3617095:3617095:1016/014233.893736:ERROR:third_party/crashpad/crashpad/util/file/file_io_posix.cc:208] open /root/.config/chromium/Crash Reports/settings.dat: 权限不够 (13)\n[3617095:3617115:1016/014234.325067:ERROR:third_party/crashpad/crashpad/util/file/file_io_posix.cc:208] open /root/.config/chromium/Crash Reports/settings.dat: 权限不够 (13)\n\nDevTools listening on ws://127.0.0.1:9222/devtools/browser/49b2868a-560e-4249-a9bd-d50d28603a0d\nftruncate() failed: 权限不够\n[3617133:3617133:1016/014238.000744:ERROR:gpu/command_buffer/service/gles2_cmd_decoder_passthrough.cc:1210] []Automatic fallback to software WebGL has been deprecated. Please use the --enable-unsafe-swiftshader flag to opt in to lower security guarantees for trusted content.\n[3617137:3617167:1016/014239.627932:ERROR:net/socket/ssl_client_socket_impl.cc:949] handshake failed; returned -1, SSL error code 1, net_error -101\n[3617137:3617167:1016/014239.629267:ERROR:net/socket/ssl_client_socket_impl.cc:949] handshake failed; returned -1, SSL error code 1, net_error -101\n[3617137:3617167:1016/014239.740868:ERROR:net/socket/ssl_client_socket_impl.cc:949] handshake failed; returned -1, SSL error code 1, net_error -101\nWarning: vkCreateInstance: Found no drivers!\nWarning: vkCreateInstance failed with VK_ERROR_INCOMPATIBLE_DRIVER\n    at CheckVkSuccessImpl (../../third_party/dawn/src/dawn/native/vulkan/VulkanError.cpp:106)\n\n[3617630:3617630:1016/014534.376510:ERROR:services/on_device_model/ml/gpu_blocklist.cc:120] Unable to get gpu adapter\n[3617095:3617095:1016/014534.376949:ERROR:services/on_device_model/public/cpp/service_client.cc:37] Unexpected on_device_model service disconnect; reason: 1, description: Error loading backend.\n"
+    }
+  ]
+}

@@ -555,6 +555,10 @@ impl Plugin for WorldPlugin {
                 crate::actors::sync_actors,
                 crate::ui::ui_update,
                 crate::ui::online_ui_update,
+                // Task 26: the test-only smoke seam runs after the session
+                // pump so every frame sees the settled state (inert without
+                // seam query params; `None` config ⇒ immediate return).
+                crate::nettest::nettest_update,
                 crate::ui::ui_button_style,
                 crate::audio::sfx_gc,
                 toggle_shadows,
