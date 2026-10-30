@@ -834,7 +834,8 @@ mod tests {
             crate::actor::FIXED_DT,
             &gate,
             &mut a,
-            &f.tuning.spritzer,
+            crate::weapon::WeaponKind::Shooter,
+            &f.tuning.weapons,
             &mut proj,
         );
         assert!(wr.firing(), "a shot must open the firing window");
@@ -878,7 +879,7 @@ mod tests {
         let f = fix();
         let sim = f.sim();
         let t = &f.tuning.player;
-        let w = &f.tuning.spritzer;
+        let w = &f.tuning.weapons;
         let mut m = Match::with_roster(180.0, 42, &sim, t, &f.tuning.match_config, 2);
         // Step past the intro (4.2 s) with the trigger held so at least one
         // runner is firing and positions/velocities are non-trivial.

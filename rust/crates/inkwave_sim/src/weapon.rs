@@ -1,46 +1,62 @@
-//! Spritzer weapon runner and projectile flight (sim layer).
+//! Weapon runner (per-actor, kind-dispatched) and the generalized
+//! projectile system (sim layer).
 //!
-//! Faithful port of the **shooter path** of `src/game/weapons.js`: the
-//! per-actor `WeaponRunner` fire loop (`_auto`, spread/bloom, ink gating),
-//! `Projectiles.fireShooter` (muzzle, aim, ballistic correction, spread cone)
-//! and `Projectiles._step` (straight phase → gravity + drag, capsule hit
-//! test, world segment hit, trail drips, impact splat).
+//! Faithful port of `src/game/weapons.js`: the per-actor `WeaponRunner`
+//! (`reset` L37, `busy` L62, `moveSpeed` L63-92, `_spreadDeg` L94-107, the
+//! `update` kind dispatch L108-156, the shared auto-fire ink path `_auto`
+//! L165-182) and the global `Projectiles` (L776: `_step` L1583-1648 —
+//! straight phase → gravity + drag, capsule hit test with the round's own
+//! `size`, world segment hit, trail drips, impact splat — plus the
+//! shooter-family spawn `fireShooter` L1027-1046 generalized through
+//! [`RoundSpec`]).
 //!
 //! Keep in lockstep with upstream on sync:
-//!   - `WeaponRunner._auto` (shooter branch) -> [`WeaponRunner::update`]
-//!   - `WeaponRunner._spreadDeg` (shooter)   -> [`WeaponRunner::spread_deg`]
-//!   - bloom decay in `WeaponRunner.update`  -> [`WeaponRunner::update`]
-//!   - `Projectiles.fireShooter`             -> [`ProjectileSim::fire_shooter`]
+//!   - `WeaponRunner.update` common decay (L110-116) -> [`WeaponRunner::update`]
+//!   - `WeaponRunner.update` kind dispatch (L117-129) -> [`WeaponRunner::update`]
+//!   - `WeaponRunner._auto` (ink spend + empty-click lockout)
+//!     -> [`WeaponRunner::auto_fire`]
+//!   - `WeaponRunner._spreadDeg` (L94-107)          -> [`WeaponRunner::spread_deg`]
+//!   - `WeaponRunner.moveSpeed` (L63-92)            -> [`WeaponRunner::move_speed`]
+//!   - `WeaponRunner.busy` (L62)                    -> [`WeaponRunner::busy`]
+//!   - `Projectiles.fireShooter` / `_fireRound`     -> [`ProjectileSim::fire_round`]
+//!     (the per-round physics fields: `projSpeed` / `grav` / `drag` /
+//!     `straightTime` / `size` / `impactRadius` / `trail*` / `life`)
 //!   - `Projectiles._muzzle` (rig fallback)  -> [`ProjectileSim::muzzle`]
 //!   - `Projectiles._aimFrom`                -> [`ProjectileSim::aim_from`]
 //!   - `Projectiles._spread`                 -> [`Rng::spread`]
 //!   - `Projectiles._ballistic`              -> [`ballistic`]
 //!   - `Projectiles._step` (shot type)       -> [`ProjectileSim::step_one`]
 //!   - `Projectiles._impact` (non-slosh)     -> inlined in [`ProjectileSim::step_one`]
+//!   - `MAX_BLOBS` (L630)                    -> [`MAX_ROUNDS`]
 //!   - `Physics.pointCapsuleDist` / `segmentCapsuleDist`
 //!     -> [`point_capsule_dist`] / [`segment_capsule_dist`]
 //!   - `hitBase(e)` (visual feet)            -> [`ProjectileSim::step_one`]
 //!   - `applyHit` (local route only)         -> [`apply_hit`]
 //!
-//! Scope (M1): only the Spritzer (`kind: 'shooter'`) is wired. The other
-//! weapon kinds (roller/charger/blaster/…), sub weapons, specials, boss and
-//! online plumbing are out of scope for Task 7; the runner keeps the same
-//! state shape so later tasks extend it in place.
+//! Scope (Task 29): the runner dispatches over all 12 roster kinds
+//! ([`WeaponKind::ALL`]); only `Shooter` fires for real. The other kinds'
+//! update branches land in Tasks 30-33 on top of this scaffold — the shared
+//! state fields ([`WeaponRunner`] charge / roll / flick / burst / turret /
+//! lock / dodge timers) and the full `moveSpeed` / `_spreadDeg` tables are
+//! ported now so no weapon repeats the scaffolding. Sub weapons
+//! (JS `update` L130-155), specials, boss and kit dispatch are out of scope.
 //!
 //! Intentional deviations from JS (recorded for review):
 //!   - `Math.random()` is replaced by the explicit [`Rng`] stream (sim-layer
-//!     determinism rule). The draw *sequence* per shot matches JS (spread
-//!     cone `sqrt(u1)`/`u2`, then `seed`, then the impact-radius jitter at
-//!     hit time), but the values differ from a JS run.
+//!     determinism rule). The order of the draws the sim actually performs
+//!     matches JS (spread cone `sqrt(u1)`/`u2`, then `seed`, then the
+//!     impact-radius jitter at hit time), but the values differ from a JS
+//!     run. JS also draws one presentation-only `vis` random per shot
+//!     (weapons.js L1035); the sim drops that field and does not consume it.
 //!   - `range` is enforced as a flight-time cap (`life = range / projSpeed`,
 //!     the same formula JS uses for the blaster blast at weapons.js L1178)
 //!     plus the ballistic solver's `maxDist` gate. JS shooter rounds live for
 //!     a fixed 1.2 s and only drop under the sea at `waterY − 1.8`; the spec
 //!     TR-7.3 requires the 12.5 m cut-off, so the sim expires the round at
 //!     `range / projSpeed` instead. The sea-drop rule is kept as well.
-//!   - `p.size` (the teardrop's visual radius, 0.15 in `fireShooter`) is a
-//!     hardcoded constant here; the GPU look fields (`vis/tail0/tailK/wob/
-//!     wobF/nose/sats`) are presentation-only and dropped.
+//!   - `p.size` rides the round as a per-spec field ([`RoundSpec::size`]);
+//!     the GPU look fields (`vis/tail0/tailK/wob/wobF/nose/sats`) are
+//!     presentation-only and dropped.
 //!   - The character rig's muzzle (`character.getMuzzle` / `aimReady`) does
 //!     not exist in the sim: [`ProjectileSim::muzzle`] uses JS's own fallback
 //!     branch (eye position + a short push along the aim direction), with the
@@ -56,7 +72,7 @@ use glam::{Vec3, vec3};
 use crate::actor::{Actor, FireGate, Form};
 use crate::collision::CollisionWorld;
 use crate::paint::{PaintGrid, SplatOpts};
-use crate::tuning::{PlayerTuning, Spritzer};
+use crate::tuning::{PlayerTuning, Spritzer, WeaponSet};
 
 /// Upstream projectile gravity for shooter-family rounds (weapons.js
 /// `fireShooter`: `grav: 28`), distinct from the player's `gravity: 25`.
@@ -97,6 +113,145 @@ pub const HITBOX_R_MUL: f32 = 0.95;
 const DEG: f32 = std::f32::consts::PI / 180.0;
 /// Reference integrator step for the ballistic solver (JS `SIM_DT = 1/60`).
 const SIM_DT: f32 = 1.0 / 60.0;
+/// JS `Projectiles` instanced-draw cap `MAX_BLOBS = 700` (weapons.js L630).
+/// Upstream never culls the sim list — only `_draw` stops emitting past the
+/// cap (L1880) — so the sim keeps every round alive; this constant is the
+/// presentation budget and the count guard for the tests.
+pub const MAX_ROUNDS: usize = 700;
+
+/// JS `lerp` (ctx.js): linear interpolation.
+fn lerp(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t
+}
+
+/// JS `smoothstep` (ctx.js).
+fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
+    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// The 12 roster weapon kinds — the `kind` field of the `WEAPON_ORDER`
+/// (config.js L303) weapons. JS dispatches the runner on `w.kind`
+/// (weapons.js L117-129); the retired defs (`dualies` / `slosher` /
+/// `splatling`, config.js L266-299) and the kit-weapon fallback (JS L128
+/// `MAIN_KITS[w.kind]`) are deliberately absent — `Brolly` / `Bow` /
+/// `Blade` / `Mitts` are the JS kit kinds whose behaviour lands in
+/// Tasks 30-33.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WeaponKind {
+    /// `shooter` — Spritzer stream rounds (wired, M1).
+    Shooter,
+    /// `blaster` — ammo-segment blast (Task 30).
+    Blaster,
+    /// `charger` — charge → beam + drops (Task 31).
+    Charger,
+    /// `roller` — drum roll + flick drops (Task 32).
+    Roller,
+    /// `bucket` — arcing blob volleys (Task 31).
+    Bucket,
+    /// `spinner` — spin-up stream (Task 31).
+    Spinner,
+    /// `twins` — alternating-hand pistols + dodge roll (Task 30).
+    Twins,
+    /// `brush` — drag stroke + swipe (Task 32).
+    Brush,
+    /// `brolly` — open/close canopy (Task 30).
+    Brolly,
+    /// `bow` — charged arrow (Task 33).
+    Bow,
+    /// `blade` — dash slash (Task 32).
+    Blade,
+    /// `mitts` — fists + guard + leap (Task 33).
+    Mitts,
+}
+
+impl WeaponKind {
+    /// The 12 kinds in `WEAPON_ORDER` order (config.js L303).
+    pub const ALL: [Self; 12] = [
+        Self::Shooter,
+        Self::Twins,
+        Self::Brolly,
+        Self::Blaster,
+        Self::Spinner,
+        Self::Charger,
+        Self::Bow,
+        Self::Roller,
+        Self::Brush,
+        Self::Blade,
+        Self::Mitts,
+        Self::Bucket,
+    ];
+
+    /// JS `w.kind` string → enum. `None` for retired / unknown kinds
+    /// (the retired defs never enter the tuning artifact — TR-28.2).
+    #[must_use]
+    pub fn from_kind_str(s: &str) -> Option<Self> {
+        Some(match s {
+            "shooter" => Self::Shooter,
+            "blaster" => Self::Blaster,
+            "charger" => Self::Charger,
+            "roller" => Self::Roller,
+            "bucket" => Self::Bucket,
+            "spinner" => Self::Spinner,
+            "twins" => Self::Twins,
+            "brush" => Self::Brush,
+            "brolly" => Self::Brolly,
+            "bow" => Self::Bow,
+            "blade" => Self::Blade,
+            "mitts" => Self::Mitts,
+            _ => return None,
+        })
+    }
+
+    /// Whether this kind's update branch is wired (Task 29: only `Shooter`;
+    /// Tasks 30-33 flip the rest).
+    #[must_use]
+    pub fn is_wired(self) -> bool {
+        matches!(self, Self::Shooter)
+    }
+}
+
+/// Per-round launch parameters for the generalized shooter-family spawn
+/// (JS `fireShooter` L1027-1046 / `_fireRound` L1068-1082: the same
+/// `Object.assign` field set, values from the weapon def). `grav` / `drag`
+/// / `size` / `life` are the hardcoded upstream shot constants
+/// (weapons.js L1034: `28, 0.8, size 0.15, life 1.2`); later kinds pass
+/// their own (e.g. brolly pellets use `pelletGrav` / `pelletSize`).
+#[derive(Debug, Clone, Copy)]
+pub struct RoundSpec {
+    pub proj_speed: f32,
+    pub straight_time: f32,
+    pub range: f32,
+    pub grav: f32,
+    pub drag: f32,
+    pub size: f32,
+    pub life: f32,
+    pub impact_radius: f32,
+    pub damage: f32,
+    pub trail_every: f32,
+    pub trail_radius: f32,
+}
+
+impl RoundSpec {
+    /// JS `fireShooter(a, w, spreadDeg)` — the Spritzer round (config.js
+    /// L95-105 `WEAPONS.shooter` + the L1034 shot constants).
+    #[must_use]
+    pub fn shooter(w: &Spritzer) -> Self {
+        Self {
+            proj_speed: w.proj_speed,
+            straight_time: w.straight_time,
+            range: w.range,
+            grav: PROJ_GRAV,
+            drag: PROJ_DRAG,
+            size: PROJ_SIZE,
+            life: SHOT_LIFE,
+            impact_radius: w.impact_radius,
+            damage: w.damage,
+            trail_every: w.trail_every,
+            trail_radius: w.trail_radius,
+        }
+    }
+}
 
 /// Seedable xorshift32 RNG (sim-layer determinism: no `Math.random`).
 /// One stream per [`ProjectileSim`]; every actor's shots draw from it in
@@ -173,6 +328,9 @@ pub struct Projectile {
     pub straight: f32,
     /// Paint radius before the impact-time jitter (JS `radius: w.impactRadius`).
     pub radius: f32,
+    /// Round hit radius (JS `p.size` — the blob's own radius added to the
+    /// generous hitbox, `_step` L1598; `0.15` for shooter-family rounds).
+    pub size: f32,
     pub damage: f32,
     pub grav: f32,
     pub drag: f32,
@@ -258,8 +416,11 @@ pub enum SimEvent {
     LowInk { owner_slot: usize },
 }
 
-/// Per-actor Spritzer state machine (JS `WeaponRunner`, shooter branch).
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+/// Per-actor weapon state machine (JS `WeaponRunner` L32): the common
+/// timers + the per-kind state fields the `moveSpeed` / `_spreadDeg` /
+/// `busy` tables read. Task 29 wires the `Shooter` branch; the other kinds'
+/// update branches (Tasks 30-33) set these fields in place.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WeaponRunner {
     cooldown: f32,
     empty_cd: f32,
@@ -267,6 +428,50 @@ pub struct WeaponRunner {
     bloom: f32,
     /// Current shot cone half-angle, degrees (JS `this.spread`).
     pub spread: f32,
+    // ---- Task 29 scaffold: JS `reset()` L37-61 fields, written by the
+    // per-kind update branches landing in Tasks 30-33.
+    /// JS `charging` — a charge weapon is holding the trigger.
+    charging: bool,
+    /// JS `charge` — charge fraction `0..1`.
+    charge: f32,
+    /// JS `rolling` — roller drum / brush stroke in progress.
+    rolling: bool,
+    /// JS `rollT` — seconds the roll/stroke has been held.
+    roll_t: f32,
+    /// JS `flick` — flick wind-up timer, `-1` = idle (JS L39 sentinel).
+    flick: f32,
+    /// JS `flickRecover` — post-flick recovery timer.
+    flick_recover: f32,
+    /// JS `burstT` — spinner release stream left.
+    burst_t: f32,
+    /// JS `turret` — twins planted stance.
+    turret: bool,
+    /// JS `lockT` — post-roll lockout timer.
+    lock_t: f32,
+    /// JS `dodgeT` — dodge-roll timer.
+    dodge_t: f32,
+}
+
+impl Default for WeaponRunner {
+    fn default() -> Self {
+        Self {
+            cooldown: 0.0,
+            empty_cd: 0.0,
+            firing_t: 0.0,
+            bloom: 0.0,
+            spread: 0.0,
+            charging: false,
+            charge: 0.0,
+            rolling: false,
+            roll_t: 0.0,
+            flick: -1.0,
+            flick_recover: 0.0,
+            burst_t: 0.0,
+            turret: false,
+            lock_t: 0.0,
+            dodge_t: 0.0,
+        }
+    }
 }
 
 impl WeaponRunner {
@@ -275,17 +480,21 @@ impl WeaponRunner {
         Self::default()
     }
 
-    /// JS `reset()` (shooter-relevant fields).
+    /// JS `reset()` (L37-61).
     pub fn reset(&mut self) {
         *self = Self::default();
     }
 
-    /// JS `busy()` for the shooter: nothing blocks the actor (no charge/
-    /// flick/dodge states in this kind). Kept for the actor's squid-gate hook
-    /// (Task 8) so the call site stays stable.
+    /// JS `busy()` (L62): any state that blocks the actor. The retired-kind
+    /// terms (`slosh` / `streaming` / `dodge`) and the kit-weapon hook
+    /// (`MAIN_KITS[kind].busy`) are absent until their tasks land.
     #[must_use]
     pub fn busy(&self) -> bool {
-        false
+        self.charging
+            || self.flick >= 0.0
+            || self.burst_t > 0.0
+            || self.dodge_t > 0.0
+            || self.lock_t > 0.0
     }
 
     /// Whether the muzzle-flash window is open (JS `wr.firingT > 0`, the
@@ -296,55 +505,253 @@ impl WeaponRunner {
         self.firing_t > 0.0
     }
 
-    /// JS `moveSpeed()` for the shooter: `firingT > 0 ? w.moveSpeedFiring :
-    /// PLAYER.runSpeed`.
+    /// JS `moveSpeed()` (weapons.js L63-92) — the full per-kind table.
+    /// The four JS `switch` cases (L67-78: brush/bucket/spinner/twins) and
+    /// the general tail (L79-91) are ported 1:1 for the wired + scaffolded
+    /// kinds; the retired branches (`lockT` dualies / `streaming` splatling
+    /// / splatling `charging` / `slosh`) are unreachable for the 12 roster
+    /// kinds. The JS kit kinds (brolly/bow/blade/mitts, L64
+    /// `MAIN_KITS[kind].moveSpeed`) fall back to `runSpeed` until
+    /// Tasks 30/32/33 wire their kit branches.
     #[must_use]
-    pub fn move_speed(&self, t: &PlayerTuning, w: &Spritzer) -> f32 {
-        if self.firing_t > 0.0 {
-            w.move_speed_firing
-        } else {
-            t.run_speed
+    pub fn move_speed(&self, kind: WeaponKind, t: &PlayerTuning, w: &WeaponSet) -> f32 {
+        let run = t.run_speed;
+        match kind {
+            // JS L67-69: brushing is faster than running; swipes barely slow you.
+            WeaponKind::Brush => {
+                if self.rolling {
+                    lerp(
+                        w.brush.move_speed_firing,
+                        w.brush.brush_speed,
+                        smoothstep(0.0, 0.35, self.roll_t),
+                    )
+                } else if self.firing_t > 0.0 {
+                    w.brush.move_speed_firing
+                } else {
+                    run
+                }
+            }
+            // JS L70-72.
+            WeaponKind::Bucket => {
+                if self.flick >= 0.0 {
+                    w.bucket.move_speed_firing * 0.7
+                } else if self.firing_t > 0.0 {
+                    w.bucket.move_speed_firing
+                } else {
+                    run
+                }
+            }
+            // JS L73-76.
+            WeaponKind::Spinner => {
+                if self.burst_t > 0.0 {
+                    w.spinner.move_speed_firing
+                } else if self.charging {
+                    lerp(
+                        run * 0.75,
+                        w.spinner.move_speed_charging,
+                        (self.charge * 2.0).min(1.0),
+                    )
+                } else {
+                    run
+                }
+            }
+            // JS L77-78.
+            WeaponKind::Twins => {
+                if self.firing_t > 0.0 {
+                    w.twins.move_speed_firing
+                } else {
+                    run
+                }
+            }
+            // JS L79-91 general tail. `rolling` / `flick` / `flickRecover`
+            // are only ever set by the roller branch (brush/bucket return
+            // above), so the roller fields read there.
+            WeaponKind::Roller => {
+                if self.rolling {
+                    lerp(
+                        w.roller.roll_speed * 0.5,
+                        w.roller.roll_speed,
+                        smoothstep(0.0, 0.45, self.roll_t),
+                    )
+                } else if self.flick >= 0.0 {
+                    lerp(
+                        w.roller.move_speed_firing,
+                        w.roller.move_speed_firing * 0.45,
+                        clamp_f(self.flick / w.roller.flick_windup, 0.0, 1.0),
+                    )
+                } else if self.flick_recover > 0.0 {
+                    lerp(
+                        run,
+                        w.roller.move_speed_firing * 0.6,
+                        self.flick_recover / 0.18,
+                    )
+                } else if self.charging {
+                    lerp(
+                        run * 0.7,
+                        w.roller.move_speed_firing,
+                        (self.charge * 3.0).min(1.0),
+                    )
+                } else if self.firing_t > 0.0 {
+                    w.roller.move_speed_firing
+                } else {
+                    run
+                }
+            }
+            WeaponKind::Charger => {
+                if self.charging {
+                    lerp(
+                        run * 0.7,
+                        w.charger.move_speed_firing,
+                        (self.charge * 3.0).min(1.0),
+                    )
+                } else if self.firing_t > 0.0 {
+                    w.charger.move_speed_firing
+                } else {
+                    run
+                }
+            }
+            WeaponKind::Shooter => {
+                if self.firing_t > 0.0 {
+                    w.shooter.move_speed_firing
+                } else {
+                    run
+                }
+            }
+            WeaponKind::Blaster => {
+                if self.firing_t > 0.0 {
+                    w.blaster.move_speed_firing
+                } else {
+                    run
+                }
+            }
+            // JS L64: the kit weapons own their move-speed curve (kits/*.js).
+            // Without a kit `moveSpeed` JS falls through to the tail chain
+            // (L89-90: `firingT > 0 ? moveSpeedFiring : runSpeed`); the kits
+            // are unwired until Tasks 30/32/33, so the sim returns `runSpeed`.
+            WeaponKind::Brolly | WeaponKind::Bow | WeaponKind::Blade | WeaponKind::Mitts => run,
         }
     }
 
-    /// JS `WeaponRunner._spreadDeg` (shooter): ground/air base cone scaled by
-    /// the bloom factor (`lerp(spreadFirst, 1, bloom)`).
+    /// JS `WeaponRunner._spreadDeg` (weapons.js L94-107) for the roster
+    /// kinds. Shooter-family bloom cone (L97-100), blaster ground/air
+    /// (L102 — the def sets neither `spread` nor `spreadAir`, config.js
+    /// L126-135, so the JS `?? 1.2` / `?? 4` defaults hold), twins
+    /// turret/bloom (L103), spinner ground/air (L104). Everything else
+    /// returns `0` (JS L105).
     #[must_use]
-    pub fn spread_deg(&self, grounded: bool, w: &Spritzer) -> f32 {
-        let base = if grounded {
-            w.spread_ground
-        } else {
-            w.spread_air
-        };
-        base * (SPREAD_FIRST + (1.0 - SPREAD_FIRST) * self.bloom)
+    pub fn spread_deg(&self, grounded: bool, kind: WeaponKind, w: &WeaponSet) -> f32 {
+        match kind {
+            WeaponKind::Shooter => {
+                let base = if grounded {
+                    w.shooter.spread_ground
+                } else {
+                    w.shooter.spread_air
+                };
+                base * lerp(SPREAD_FIRST, 1.0, self.bloom)
+            }
+            WeaponKind::Blaster => {
+                if grounded {
+                    1.2
+                } else {
+                    4.0
+                }
+            }
+            WeaponKind::Twins => {
+                if self.turret {
+                    w.twins.turret_spread
+                } else {
+                    let base = if grounded {
+                        w.twins.spread_ground
+                    } else {
+                        w.twins.spread_air
+                    };
+                    base * lerp(0.5, 1.0, self.bloom)
+                }
+            }
+            WeaponKind::Spinner => {
+                if grounded {
+                    w.spinner.spread_ground
+                } else {
+                    w.spinner.spread_air
+                }
+            }
+            _ => 0.0,
+        }
     }
 
-    /// JS `WeaponRunner.update(dt, inp)` shooter branch + `_auto`. JS's `inp`
-    /// is the gated `winp` (actor.js L370-373), which [`Actor::fire_gate`]
-    /// already resolves (emerge delay + fire buffer) — hence the `gate`
-    /// parameter alone; `gate.pressed` is unused by the auto-fire shooter and
-    /// kept for the semi-auto kinds (Task 8+).
+    /// JS `WeaponRunner.update(dt, inp)` (L108-156): the common timer decay
+    /// (L110-116) + the kind dispatch (L117-129). JS's `inp` is the gated
+    /// `winp` (actor.js L370-373), which [`Actor::fire_gate`] already
+    /// resolves (emerge delay + fire buffer) — hence the `gate` parameter
+    /// alone; `gate.pressed` is kept for the semi-auto kinds (Task 30+).
+    /// The sub-weapon block (JS L130-155) is Task 34.
     pub fn update(
         &mut self,
         dt: f32,
         gate: &FireGate,
         actor: &mut Actor,
-        w: &Spritzer,
+        kind: WeaponKind,
+        w: &WeaponSet,
         projectiles: &mut ProjectileSim,
     ) {
+        // ---- JS L110-116 common decay. JS `inp` here is the *gated* `winp`
+        // (actor.js L370-373: `fire = intent.fire || buffered`, suppressed
+        // during emerge), so the bloom decay follows `gate.fire`, not the
+        // raw intent.
         self.cooldown -= dt;
         self.empty_cd -= dt;
         self.firing_t = (self.firing_t - dt).max(0.0);
-        // JS: bloom recovers when the trigger is released. JS `inp` here is
-        // the *gated* `winp` (actor.js L370-373: `fire = intent.fire ||
-        // buffered`, suppressed during emerge), so the decay follows
-        // `gate.fire`, not the raw intent.
+        self.flick_recover = (self.flick_recover - dt).max(0.0);
         if !gate.fire {
             self.bloom = (self.bloom - dt / BLOOM_RECOVER).max(0.0);
         }
-        self.spread = self.spread_deg(actor.grounded, w);
+        self.spread = self.spread_deg(actor.grounded, kind, w);
 
-        // ---- _auto (shooter): hold-to-fire stream, ink-gated.
+        // ---- JS L117-129 kind dispatch. Only `shooter` fires for real
+        // (Task 29); the other arms are the JS structure kept 1:1 so the
+        // common path above is never skipped per kind:
+        //   L118 `shooter`/`blaster` → `_auto`; blaster's `fireBlaster`
+        //     muzzle call lands in Task 30 (its ink path would spend ink
+        //     for an unported blast, so the whole arm waits).
+        //   L119-124 `charger`/`roller`/`bucket`/`spinner`/`twins`/`brush`
+        //     → Tasks 31/32/31/31/30/32.
+        //   L128 `default` → `MAIN_KITS` (brolly/bow/blade/mitts,
+        //     Tasks 30/33/32/33).
+        match kind {
+            WeaponKind::Shooter => self.auto_fire(gate, actor, kind, w, projectiles),
+            WeaponKind::Blaster
+            | WeaponKind::Charger
+            | WeaponKind::Roller
+            | WeaponKind::Bucket
+            | WeaponKind::Spinner
+            | WeaponKind::Twins
+            | WeaponKind::Brush
+            | WeaponKind::Brolly
+            | WeaponKind::Bow
+            | WeaponKind::Blade
+            | WeaponKind::Mitts => {}
+        }
+    }
+
+    /// JS `_auto` (weapons.js L165-182) — the shared auto-fire path every
+    /// stream kind runs through: trigger gate, `firingT` pose window, the
+    /// up-to-3-shots-per-frame catch-up loop, ink gating with the
+    /// empty-click lockout (`_empty`, L158-163), the per-shot spread
+    /// recompute + bloom step, and the cooldown advance. `spawn_shot` is the
+    /// kind's muzzle call (JS L176-177).
+    fn auto_fire(
+        &mut self,
+        gate: &FireGate,
+        actor: &mut Actor,
+        kind: WeaponKind,
+        w: &WeaponSet,
+        projectiles: &mut ProjectileSim,
+    ) {
+        let (fire_interval, ink_per_shot) = match kind {
+            WeaponKind::Shooter => (w.shooter.fire_interval, w.shooter.ink_per_shot),
+            // Task 30: blaster joins with its own def fields.
+            _ => return,
+        };
         if !gate.fire {
             if self.cooldown < 0.0 {
                 self.cooldown = 0.0;
@@ -356,7 +763,7 @@ impl WeaponRunner {
         let mut guard = 0usize;
         while self.cooldown <= 0.0 && guard < 3 {
             guard += 1;
-            if actor.ink < w.ink_per_shot {
+            if actor.ink < ink_per_shot {
                 // JS `_empty()` + `cooldown += fireInterval; break`.
                 if self.empty_cd <= 0.0 {
                     self.empty_cd = EMPTY_CD;
@@ -364,18 +771,37 @@ impl WeaponRunner {
                         owner_slot: actor.slot,
                     });
                 }
-                self.cooldown += w.fire_interval;
+                self.cooldown += fire_interval;
                 break;
             }
             // JS order: ink -= cost; lastFire = 0; spread = _spreadDeg; fire.
-            actor.ink -= w.ink_per_shot;
+            actor.ink -= ink_per_shot;
             actor.note_fired();
-            self.spread = self.spread_deg(actor.grounded, w);
-            projectiles.fire_shooter(actor, w, self.spread, None);
+            self.spread = self.spread_deg(actor.grounded, kind, w);
+            self.fire_kind_round(actor, kind, w, projectiles);
             self.bloom = (self.bloom + BLOOM_PER_SHOT).min(1.0);
-            self.cooldown += w.fire_interval;
+            self.cooldown += fire_interval;
         }
     }
+
+    /// JS `_auto` L176-177: the per-kind muzzle call. Only the shooter
+    /// stream round is ported (Task 29); `fireBlaster` lands in Task 30.
+    fn fire_kind_round(
+        &self,
+        actor: &Actor,
+        kind: WeaponKind,
+        w: &WeaponSet,
+        projectiles: &mut ProjectileSim,
+    ) {
+        if kind == WeaponKind::Shooter {
+            projectiles.fire_shooter(actor, &w.shooter, self.spread, None);
+        }
+    }
+}
+
+/// JS `clamp` (ctx.js).
+fn clamp_f(v: f32, a: f32, b: f32) -> f32 {
+    v.max(a).min(b)
 }
 
 /// Global projectile system (JS `Projectiles`): owns the live rounds, the
@@ -438,13 +864,29 @@ impl ProjectileSim {
         a.aim_dir()
     }
 
-    /// JS `Projectiles.fireShooter` (minus audio/FX/rumble/netcode). The ink
-    /// cost and `lastFire` reset happen in the caller (`_auto`), keeping the
-    /// fire loop and the shot emission atomic.
+    /// JS `Projectiles.fireShooter` (minus audio/FX/rumble/netcode) — the
+    /// Spritzer convenience over [`Self::fire_round`].
     pub fn fire_shooter(
         &mut self,
         a: &Actor,
         w: &Spritzer,
+        spread_deg: f32,
+        aim_point: Option<Vec3>,
+    ) {
+        self.fire_round(a, &RoundSpec::shooter(w), spread_deg, aim_point);
+    }
+
+    /// JS `Projectiles.fireShooter` / `_fireRound` (weapons.js L1027-1046 /
+    /// L1068-1082): the generalized shooter-family spawn — muzzle, aim,
+    /// ballistic correction with the spec's `projSpeed` / `straightTime` /
+    /// `grav` / `drag` / `range`, spread cone, then the round with its own
+    /// `straight` / `radius` / `damage` / `size` / `trail*` / `life`. The ink
+    /// cost and `lastFire` reset happen in the caller (`_auto`), keeping the
+    /// fire loop and the shot emission atomic.
+    pub fn fire_round(
+        &mut self,
+        a: &Actor,
+        spec: &RoundSpec,
         spread_deg: f32,
         aim_point: Option<Vec3>,
     ) {
@@ -459,11 +901,11 @@ impl ProjectileSim {
                 m,
                 dir0,
                 aim,
-                w.proj_speed,
-                w.straight_time,
-                PROJ_GRAV,
-                PROJ_DRAG,
-                w.range,
+                spec.proj_speed,
+                spec.straight_time,
+                spec.grav,
+                spec.drag,
+                spec.range,
             ),
             None => dir0,
         };
@@ -473,20 +915,21 @@ impl ProjectileSim {
             pos: m,
             prev: m,
             start: m,
-            vel: dir * w.proj_speed,
+            vel: dir * spec.proj_speed,
             team: a.team,
             owner_slot: a.slot,
             age: 0.0,
             // Deviation: range-enforced life (see module docs). JS: 1.2 s.
-            life: (w.range / w.proj_speed).min(SHOT_LIFE),
-            straight: w.straight_time,
-            radius: w.impact_radius,
-            damage: w.damage,
-            grav: PROJ_GRAV,
-            drag: PROJ_DRAG,
-            trail: -(TRAIL_START_BACK - w.trail_every),
-            trail_every: w.trail_every,
-            trail_radius: w.trail_radius,
+            life: (spec.range / spec.proj_speed).min(spec.life),
+            straight: spec.straight_time,
+            radius: spec.impact_radius,
+            size: spec.size,
+            damage: spec.damage,
+            grav: spec.grav,
+            drag: spec.drag,
+            trail: -(TRAIL_START_BACK - spec.trail_every),
+            trail_every: spec.trail_every,
+            trail_radius: spec.trail_radius,
             seed,
             ghost: false,
         });
@@ -496,6 +939,14 @@ impl ProjectileSim {
             muzzle: m,
             dir,
         });
+    }
+
+    /// Live round count against the JS `MAX_BLOBS` presentation cap
+    /// (weapons.js L630). The sim never culls (JS `_draw` L1880 is the only
+    /// place the cap bites); this is the guard the tests / presentation use.
+    #[must_use]
+    pub fn round_count(&self) -> usize {
+        self.list.len()
     }
 
     /// JS `Projectiles.update(dt)` loop over `this.list` (shots only).
@@ -594,7 +1045,7 @@ impl ProjectileSim {
             }
             let base = vec3(e.pos.x, e.visual_y(), e.pos.z);
             let res = segment_capsule_dist(p.prev, p.pos, base, hr, h);
-            if res.dist < hr * HITBOX_R_MUL + PROJ_SIZE {
+            if res.dist < hr * HITBOX_R_MUL + p.size {
                 let at = p.prev.lerp(p.pos, res.t);
                 let n = -p.vel.normalize_or_zero();
                 body_hit = Some((si, at, n, p.radius * 0.5));

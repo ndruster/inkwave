@@ -8,8 +8,8 @@
 //   weaponRange() evaluated per weapon, SUBS (15, per SUB_ORDER),
 //   SPECIALS (19, per SPECIAL_ORDER), ZONES, MATCH, TEAM_PALETTES,
 //   DIFFICULTY (easy/normal/hard).
-// `spritzer` is kept as the M1 alias of WEAPONS.shooter until the Task 29
-// runner refactor migrates its consumers.
+// The retired M1 `spritzer` top-level alias was removed in Task 29 — the
+// consumers read `weapons.shooter` directly.
 //
 // Output goes through stableStringify (sorted keys, no timestamps) so a re-run
 // against the same upstream commit is byte-identical.
@@ -56,7 +56,6 @@ const tuning = {
   schema: 'inkwave.tuning.v2',
   source: { commit, path: 'src/config.js' },
   player: PLAYER,
-  spritzer: WEAPONS.shooter, // M1 alias of weapons.shooter (removed in Task 29)
   weaponOrder: WEAPON_ORDER,
   weapons: pick(WEAPONS, WEAPON_ORDER, 'WEAPON_ORDER'),
   weaponRange: ranges,

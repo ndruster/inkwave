@@ -138,7 +138,7 @@
   },
   "schema": "inkwave.tuning.v2",
   "source": {
-    "commit": "d578eec5c8aa8a19d110b786a904707d53ce7393",
+    "commit": "74e523aa4f9a7d2ebf1c7ea761727e2f6d474cd4",
     "path": "src/config.js"
   },
   "specialOrder": [
@@ -414,35 +414,6 @@
       "range": 44,
       "speed": 34
     }
-  },
-  "spritzer": {
-    "blurb": "Rapid-fire all-rounder. Sprays a steady stream of ink blobs.",
-    "class": "Shooter",
-    "damage": 36,
-    "fireInterval": 0.1,
-    "id": "shooter",
-    "impactRadius": 0.85,
-    "inkPerShot": 0.95,
-    "kind": "shooter",
-    "moveSpeedFiring": 4.6,
-    "name": "Spritzer",
-    "projSpeed": 34,
-    "range": 12.5,
-    "special": "zooka",
-    "specialCost": 190,
-    "spreadAir": 11,
-    "spreadGround": 5.5,
-    "stats": {
-      "damage": 0.45,
-      "mobility": 0.7,
-      "paint": 0.6,
-      "range": 0.5,
-      "rate": 0.85
-    },
-    "straightTime": 0.13,
-    "sub": "bomb",
-    "trailEvery": 1.05,
-    "trailRadius": 0.44
   },
   "subOrder": [
     "bomb",

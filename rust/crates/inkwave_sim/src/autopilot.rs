@@ -128,7 +128,7 @@ pub fn run(
                         paint: &m.paint,
                         world: &sim,
                         t: &tuning.player,
-                        w: &tuning.spritzer,
+                        w: &tuning.weapons.shooter,
                         mate_goals: &mate_goals,
                     };
                     inputs[i] = bots[i].step(FIXED_DT, &mut m.actors[i], &ctx);
@@ -145,7 +145,7 @@ pub fn run(
                 *inp = ActorInput::default();
             }
         }
-        m.step(FIXED_DT, &inputs, &sim, &tuning.player, &tuning.spritzer);
+        m.step(FIXED_DT, &inputs, &sim, &tuning.player, &tuning.weapons);
 
         #[cfg(not(target_arch = "wasm32"))]
         ft_samples.push(t0.elapsed().as_secs_f64() * 1e3);

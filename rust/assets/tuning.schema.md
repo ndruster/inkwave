@@ -5,8 +5,8 @@
 HP/墨量为点（PLAYER.hp=100，PLAYER.inkMax=100）。坐标系 Y-up；Alpha 出生于 -Z，Bravo 出生于 +Z。
 确定性输出：同一上游 commit 重跑逐字节一致（TR-3.4）。
 v1→v2（Task 28 / FR-M3-1）：新增 `weaponOrder` `weapons` `weaponRange` `subOrder` `subs`
-`specialOrder` `specials` `zones`，`difficulty` 由仅 easy 扩为三档；`spritzer` 保留为
-`weapons.shooter` 的 M1 别名（Task 29 迁移消费端后移除）。
+`specialOrder` `specials` `zones`，`difficulty` 由仅 easy 扩为三档；`spritzer` 别名已于
+Task 29 移除（消费端改读 `weapons.shooter`）。
 权威数值以本 JSON 为准（本文档只描述字段与语义，逐值锚定见 `inkwave_sim` 单测）。
 
 ## 顶层
@@ -16,7 +16,6 @@ v1→v2（Task 28 / FR-M3-1）：新增 `weaponOrder` `weapons` `weaponRange` `s
 | `schema` | 模式标识 `inkwave.tuning.v2`，Rust 侧由单测 `schema_and_provenance` 精确断言 |
 | `source.commit` / `source.path` | 数据出处（git commit 与 JS 文件），用于上游同步审查 |
 | `player` | `PLAYER`（config.js L21-90）：角色物理/手感全部常量，见下 |
-| `spritzer` | `WEAPONS.shooter` 的 M1 别名（Task 29 移除；等值断言见测试） |
 | `weaponOrder` | `WEAPON_ORDER`（L303）：12 武器出场顺序 |
 | `weapons` | `WEAPONS`（L94-300）按 `weaponOrder` 投影出的 12 把武器；退役定义不输出（TR-28.2） |
 | `weaponRange` | `weaponRange()`（L307-315）对每把武器的预计算有效射程（m），见下 |
@@ -59,9 +58,10 @@ respawnTime=5.5`。分组：
 搭配；`anim`（仅部分武器）= 角色动画姿态族（kind 之外），存在于 bucket/spinner/twins/brush/
 brolly/bow/blade/mitts。以下逐把列模拟字段（含义详见 config.js 行内注释）。
 
-- **shooter**（L95-105，= `spritzer` 别名源）：`fireInterval` `damage` `inkPerShot` `projSpeed`
+- **shooter**（L95-105）：`fireInterval` `damage` `inkPerShot` `projSpeed`
   `straightTime` `range` `spreadGround/spreadAir`（度）`impactRadius` `trailRadius/trailEvery`
-  `moveSpeedFiring`。弹丸重力使用 `player.gravity`。
+  `moveSpeedFiring`。弹丸重力/阻力/尺寸/寿命为 JS `fireShooter` 硬编码常量（weapons.js L1034：
+  grav 28、drag 0.8、size 0.15、life 1.2），**不是** `player.gravity`。
 - **twins**（L158-168，anim shooter）：shooter 同族字段（`fireInterval/damage/inkPerShot/projSpeed/
   straightTime/range/spreadGround/spreadAir/impactRadius/trailRadius/trailEvery/moveSpeedFiring`）
   + 翻滚：`rollDist/rollTime/rollInk/rollCharges/rollLockout/rollReset`

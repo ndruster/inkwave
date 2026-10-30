@@ -31,7 +31,7 @@
 - 修复复验：fmt/clippy/test 重跑全绿（300 passed），追加至同一门禁日志。
 
 ## Task 29: 武器 runner 架构——kind 分发与弹丸系统泛化
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 28
 - **Description**:
@@ -41,6 +41,22 @@
   - `rule` TR-29.1: Spritzer 行为回归（M1 既有武器测试逐条不破）。
   - `rule` TR-29.2: 弹丸系统单测：直射/抛物/散布/拖尾喷墨各路径固定种子断言。
 - **Notes**: 架构先行，避免每把武器重复脚手架；kind 枚举含全部 12 类占位。
+
+### Task 29 Completion Evidence（2026-10-30）
+- **TR-29.1 ✅**：M1 既有武器测试逐条不破——消费端迁移后 `cargo test -p inkwave_sim` 回归 215 passed 全绿（TR-7.1~7.4 等 Spritzer 行为断言原样保留，仅签名/字段访问迁移）；最终 workspace **303 passed**（基线 300：+4 TR-29.2 新测试，−1 `spritzer_alias_matches_weapons_shooter`——该测试断言的别名本体已按本任务要求删除，属自然移除，总数仍净增）。全量门禁日志 `rust/tools/verify/logs/task29-gates-20261030T103218Z.log`（fmt/clippy/test/wasm32/cargo tree/trunk release/headless 600 帧/JS 树零改动，全 exit 0）。
+- **TR-29.2 ✅**：`weapon/tests.rs` 尾部四组固定种子单测全绿——① `fire_round` 直射段→重力+阻力抛物段（自定义 RoundSpec speed 20/straight 0.15/range 10.4/grav 20，逐帧对参考积分器 max_err<1e-2，life 截止 `gone_at=31`：life=(10.4/20).min(1.0)=0.52，32×DT=0.533>0.52>31×DT，无 trail 时 coverage=0）；② 散布锥（seed 42 发 8 弹 6°：全部锥内、max 半角>0.5°、同 seed 逐值复现、异 seed 不同）；③ 拖尾喷墨（seed 777 平射：首滴 2.5 m 后每 0.8 m raycast 滴落，drips≥5、turf≥3、z 严格递增、radius∈[0.24,0.36]、同 seed 序列相等）；④ kind 表与分发骨架（12 kinds 对齐 `WEAPON_ORDER` L303、retired→None、`move_speed`/`spread_deg` 全分支、`busy()`、MAX_ROUNDS=700、blaster 30 帧 no-op 不耗墨不发射）。
+- **架构落地**：`WeaponKind` 12 类枚举 + `update` 按 kind 分发（JS L108-156）；`move_speed` 全表（L63-92 含 brush/bucket/spinner/twins switch、roller 尾链 lerp、kit 分支）与 `spread_deg`（L94-107，blaster `?? 1.2`/`?? 4` 默认）；`auto_fire` 墨耗通用路径（`_auto` L165-182 含空墨 lockout）；`ProjectileSim::fire_round` 经 `RoundSpec` 泛化（弹速/grav/drag/straightTime/size/impactRadius/trail*/life），shooter 为薄包装（JS L1034 硬编码 grav 28/drag 0.8/size 0.15/life 1.2）；`step_one` 平移 `_step` L1583-1648（积分→身体胶囊→世界段→trail drip→life/海水 expiry→impact splat）。仅 Shooter 接线实弹，其余 11 kind update 臂为刻意骨架（Task 30-33 填充）。
+- **别名移除与消费端迁移**：`tuning.rs` `spritzer` 字段、`extract-tuning.mjs` spritzer 提取、`tuning.schema.md` 别名表述全部移除（顶层 `spritzer` 键 0 命中，重提取连跑两次逐字节一致）；18 文件消费端改读 `weapons.shooter`/`weapons`（`Replication::update` 签名 `&Spritzer`→`&WeaponSet`，为 Task 30 per-actor loadout 铺路；`drive_bots`/`record_fire` 保持 `&Spritzer`）。顺带修复 replication ghost `Projectile` 缺 `size` 字段（JS ghostProjectile L868 从 record e[15] 解构，wire 已编解码，直接透传）。`PORT_MAP.md` weapons.js 行更新为 M1/Task 29 状态。
+
+### Task 29 Review 附录（独立评审：1 P0 / 0 P1 / 5 P2 → P0+4 P2 当场修复，1 P2 为 Task 30 前瞻注记 → 门禁复验全绿）
+- 评审员实核通过：move_speed/spread_deg 全表逐字对齐（含 0.75/0.7/0.5/0.45/0.6/0.18 各系数与 lerp 边界）；fireShooter L1034 常量与 trail `-(2.5−trailEvery)` ✓；`_step` 顺序、drag 仅 straight 后生效（L1588）、drip `0.8+rand·0.4`/impact `0.85+rand·0.3` ✓；MAX_BLOBS=700 仅 `_draw` L1880 截断、sim 不 cull（决策成立）；gone_at=31 与锥角上界算术复核成立；消费端 spritzer 残留 grep 0；ghost size 对齐 L868 e[15]；JS 树零改动、sim 依赖仅 glam/serde/serde_json、tuning.json 无顶层 spritzer。
+- **P0 ✅** `weapon.rs:791` `fire_kind_round` 的 `match kind { Shooter=>…, _=>{} }` 触发 `clippy::single_match`（首轮门禁 CLIPPY_EXIT=101，日志 `task29-gates-20261030T101331Z.log` 留痕）→ 改 `if kind == WeaponKind::Shooter`。
+- **P2-1 ✅** `weapon.rs` spread_deg 文档锚点整体偏 1 行：blaster L101→L102、twins L102→L103、spinner L103→L104、return 0 L104→L105（实读 JS L102-105 复核）。
+- **P2-2 ✅** `weapon/tests.rs` roller flick 注释 JS L82→L86（L82 是 splatling charging）。
+- **P2-3 ✅** `weapon.rs` switch cases 锚点 L67-77→L67-78；kit kinds 注记补齐 JS 尾链真实语义（无 kit `moveSpeed` 时落 L89-90 `firingT>0 ? moveSpeedFiring : runSpeed`，Task 30+/32/33 接线时注意）。
+- **P2-4 ✅** 模块头「draw sequence matches JS」措辞修正：JS fireShooter 每发另有一次呈现专用 `vis` 抽取（L1035），sim 删该字段不消耗，改为「所列各次抽取顺序一致」。
+- **P2-5（注记，不改）** blaster 1.2/4.0 为硬编码默认（JS `??` 语义）；若 Task 30 tuning 出现 `spread`/`spreadAir` 字段需改读 Option。
+- 修复复验：全量门禁矩阵重跑全绿（303 passed），日志 `task29-gates-20261030T103218Z.log`。
 
 ## Task 30: 主武器批一——射击类（twins/blaster/brolly）
 - **Status**: `pending`

@@ -437,7 +437,7 @@ pub fn audio_sfx(
         && a.alive
         && demo.m.phase == Phase::Active
         && pc.intent.fire
-        && a.ink < demo.tuning.spritzer.ink_per_shot
+        && a.ink < demo.tuning.weapons.shooter.ink_per_shot
         && snd.empty_cd <= 0.0;
     if empty {
         snd.empty_cd = inkwave_sim::weapon::EMPTY_CD;

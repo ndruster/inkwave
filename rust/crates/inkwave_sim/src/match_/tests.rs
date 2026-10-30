@@ -70,7 +70,7 @@ fn tr8_1_full_run_settles_with_result_and_restart_zeroes() {
     let f = fix();
     let sim = f.sim();
     let t = &f.tuning.player;
-    let w = &f.tuning.spritzer;
+    let w = &f.tuning.weapons;
     let mut m = Match::new(6.0, 0xABCD_1234, &sim, t, &f.tuning.match_config);
     let mut inputs = vec![ActorInput::default(); 8];
     let max_steps = ((INTRO_TIME + 6.0 + FINISH_TIME) * 60.0) as usize + 120;
@@ -152,7 +152,7 @@ fn clock_emits_final_countdown_and_skips_one_minute() {
     let f = fix();
     let sim = f.sim();
     let t = &f.tuning.player;
-    let w = &f.tuning.spritzer;
+    let w = &f.tuning.weapons;
     let mut m = Match::new(8.0, 3, &sim, t, &f.tuning.match_config);
     let idle = [];
     let mut counts = Vec::new();
@@ -181,7 +181,7 @@ fn tr8_2_intro_barrier_holds_until_active() {
     let f = fix();
     let sim = f.sim();
     let t = &f.tuning.player;
-    let w = &f.tuning.spritzer;
+    let w = &f.tuning.weapons;
     let mut m = Match::new(6.0, 11, &sim, t, &f.tuning.match_config);
     let idle = [];
     assert_eq!(m.phase, Phase::Intro);
@@ -225,7 +225,7 @@ fn respawn_is_gated_outside_play() {
     let f = fix();
     let sim = f.sim();
     let t = &f.tuning.player;
-    let w = &f.tuning.spritzer;
+    let w = &f.tuning.weapons;
     let mut m = Match::new(6.0, 12, &sim, t, &f.tuning.match_config);
     let idle = [];
     // A dead actor with an expired timer must NOT respawn during the intro.
@@ -263,7 +263,7 @@ fn kill_routes_splash_credit_splat_count_and_bus() {
     let f = fix();
     let sim = f.sim();
     let t = &f.tuning.player;
-    let w = &f.tuning.spritzer;
+    let w = &f.tuning.weapons;
     let mut m = Match::new(30.0, 0x5EED, &sim, t, &f.tuning.match_config);
     let mut inputs = vec![ActorInput::default(); 8];
 
@@ -337,7 +337,7 @@ fn dead_actor_fires_nothing() {
     let f = fix();
     let sim = f.sim();
     let t = &f.tuning.player;
-    let w = &f.tuning.spritzer;
+    let w = &f.tuning.weapons;
     let mut m = Match::new(30.0, 0xBAD, &sim, t, &f.tuning.match_config);
     let mut inputs = vec![ActorInput::default(); 8];
     for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
@@ -405,7 +405,7 @@ fn water_death_inherits_recent_attacker() {
     let f = fix();
     let sim = f.sim();
     let t = &f.tuning.player;
-    let w = &f.tuning.spritzer;
+    let w = &f.tuning.weapons;
     let mut m = Match::new(30.0, 0xA11E, &sim, t, &f.tuning.match_config);
     let idle = [];
     for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
@@ -442,7 +442,7 @@ fn soft_push_separates_overlapping_bodies() {
     let f = fix();
     let sim = f.sim();
     let t = &f.tuning.player;
-    let w = &f.tuning.spritzer;
+    let w = &f.tuning.weapons;
     let mut m = Match::new(6.0, 13, &sim, t, &f.tuning.match_config);
     for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
         m.step(DT, &[], &sim, t, w);
@@ -466,7 +466,7 @@ fn soft_push_mask_weights_follow_js_ternary() {
     let f = fix();
     let sim = f.sim();
     let t = &f.tuning.player;
-    let w = &f.tuning.spritzer;
+    let w = &f.tuning.weapons;
     let mut m = Match::new(6.0, 13, &sim, t, &f.tuning.match_config);
     for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
         m.step(DT, &[], &sim, t, w);
@@ -508,7 +508,7 @@ fn tr8_3_gameplay_state_serde_roundtrips() {
     let f = fix();
     let sim = f.sim();
     let t = &f.tuning.player;
-    let w = &f.tuning.spritzer;
+    let w = &f.tuning.weapons;
     let mut m = Match::new(6.0, 0x00C0_FFEE, &sim, t, &f.tuning.match_config);
     let mut inputs = vec![ActorInput::default(); 8];
     // Run into mid-play with live projectiles, paint and bus events.

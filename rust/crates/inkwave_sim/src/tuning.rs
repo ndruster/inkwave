@@ -19,8 +19,6 @@ pub struct Tuning {
     pub schema: String,
     pub source: Source,
     pub player: PlayerTuning,
-    /// M1 alias of `weapons.shooter`; consumers migrate in Task 29.
-    pub spritzer: Spritzer,
     /// `WEAPON_ORDER` (config.js L303) — the 12 roster ids.
     #[serde(rename = "weaponOrder")]
     pub weapon_order: Vec<String>,
@@ -174,7 +172,9 @@ pub struct WeaponStats {
     pub paint: f32,
 }
 
-/// Upstream `WEAPONS.shooter` ("Spritzer") — the M1 weapon.
+/// Upstream `WEAPONS.shooter` ("Spritzer") — the M1 weapon; the type of
+/// [`WeaponSet::shooter`] (the retired top-level `spritzer` alias was
+/// removed in Task 29 once the consumers migrated).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Spritzer {
@@ -1379,7 +1379,7 @@ mod tests {
     // TR-3.2: the gameplay-critical Spritzer numbers are locked to upstream.
     #[test]
     fn spritzer_key_values() {
-        let w = &tuning().spritzer;
+        let w = &tuning().weapons.shooter;
         assert_eq!(w.id, "shooter");
         assert_eq!(w.name, "Spritzer");
         assert_eq!(w.fire_interval, 0.1);
@@ -1474,20 +1474,6 @@ mod tests {
                 "{retired} leaked into tuning.json"
             );
         }
-    }
-
-    // The M1 `spritzer` alias must stay equal to `weapons.shooter` until the
-    // Task 29 runner refactor migrates its consumers.
-    #[test]
-    fn spritzer_alias_matches_weapons_shooter() {
-        let t = tuning();
-        let (a, b) = (&t.spritzer, &t.weapons.shooter);
-        assert_eq!(a.id, b.id);
-        assert_eq!(a.fire_interval, b.fire_interval);
-        assert_eq!(a.damage, b.damage);
-        assert_eq!(a.ink_per_shot, b.ink_per_shot);
-        assert_eq!(a.proj_speed, b.proj_speed);
-        assert_eq!(a.special_cost, b.special_cost);
     }
 
     // weaponRange() (config.js L307-315) evaluated per weapon at extraction:

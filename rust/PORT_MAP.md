@@ -39,7 +39,7 @@ M1 渲染为**固定简化档**，唯一运行时可调项：
 | `src/game/physics.js` | `inkwave_sim::physics` | M1 | 地面探测/胶囊 sweep/推出 |
 | `src/game/actor.js` | `inkwave_sim::actor` | M1 | 角色状态机；移动常量逐一对齐 PLAYER |
 | `src/game/player.js` | `inkwave` crate 输入映射 + actor 驱动 | M1 | 键盘鼠标；手柄 M2+ |
-| `src/game/weapons.js`（Spritzer 分支） | `inkwave_sim::weapon::shooter` | M1 | 其他 11 把武器 M2+ |
+| `src/game/weapons.js`（WeaponRunner 分发 + Spritzer 分支） | `inkwave_sim::weapon` | M1/Task 29 | kind 枚举/分发骨架与弹丸泛化已落地（Task 29），仅 shooter 接线；其余 11 把 Task 30–33 |
 | `src/game/match.js` | `inkwave_sim::match` | M1 | intro/active/end；涂地计分；zones M2+ |
 | `src/game/zones.js` | `inkwave_sim::match::zones` | M2+ | Zone Control 规则 |
 | `src/game/bots.js`（easy 参数） | `inkwave_sim::bot` | M1 | 仅 easy；normal/hard M2+ |

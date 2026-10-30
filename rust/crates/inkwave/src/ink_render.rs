@@ -270,7 +270,7 @@ impl DemoSim {
                     paint: &self.m.paint,
                     world: &sim,
                     t: &t.player,
-                    w: &t.spritzer,
+                    w: &t.weapons.shooter,
                     mate_goals: &self.mate_goals,
                 };
                 self.inputs[i] = self.bots[i].step(FIXED_DT, &mut self.m.actors[i], &ctx);
@@ -281,7 +281,7 @@ impl DemoSim {
             }
         }
         self.m
-            .step(FIXED_DT, &self.inputs, &sim, &t.player, &t.spritzer);
+            .step(FIXED_DT, &self.inputs, &sim, &t.player, &t.weapons);
         // Task 13: no auto-restart — the UI shows the results screen when the
         // match reaches `Phase::End` and replays on demand (`replay`).
     }

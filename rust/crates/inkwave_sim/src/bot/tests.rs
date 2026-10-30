@@ -118,7 +118,7 @@ fn ctx_of<'a>(
         paint,
         world: sim,
         t: &f.tuning.player,
-        w: &f.tuning.spritzer,
+        w: &f.tuning.weapons.shooter,
         mate_goals,
     }
 }

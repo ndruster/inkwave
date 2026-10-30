@@ -54,7 +54,7 @@ fn main() {
                     paint: &m.paint,
                     world: &sim,
                     t: &tuning.player,
-                    w: &tuning.spritzer,
+                    w: &tuning.weapons.shooter,
                     mate_goals: &mate_goals,
                 };
                 inputs[i] = bots[i].step(FIXED_DT, &mut m.actors[i], &ctx);
@@ -64,7 +64,7 @@ fn main() {
                 inputs[i] = bots[i].hold(&m.actors[i]);
             }
         }
-        m.step(FIXED_DT, &inputs, &sim, &tuning.player, &tuning.spritzer);
+        m.step(FIXED_DT, &inputs, &sim, &tuning.player, &tuning.weapons);
         steps += 1;
 
         for s in m.paint.drain_ink() {

@@ -62,8 +62,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::actor::{Actor, ActorEvent, ActorInput, FireGate, SimWorld, SplatCause};
 use crate::paint::{PaintGrid, SplatOpts};
-use crate::tuning::{MatchConfig, PlayerTuning, Spritzer};
-use crate::weapon::{ProjectileSim, Rng, SimEvent, WeaponRunner};
+use crate::tuning::{MatchConfig, PlayerTuning, WeaponSet};
+use crate::weapon::{ProjectileSim, Rng, SimEvent, WeaponKind, WeaponRunner};
 use glam::{Vec3, vec3};
 
 /// JS intro length (match.js L193: `stateT > 4.2`).
@@ -374,7 +374,7 @@ impl Match {
         inputs: &[ActorInput],
         world: &SimWorld,
         t: &PlayerTuning,
-        w: &Spritzer,
+        w: &WeaponSet,
     ) {
         self.step_masked(dt, inputs, None, world, t, w);
     }
@@ -392,7 +392,7 @@ impl Match {
         remote: Option<&[bool]>,
         world: &SimWorld,
         t: &PlayerTuning,
-        w: &Spritzer,
+        w: &WeaponSet,
     ) {
         // JS runs the whole match once per 60 Hz frame; variable dt would
         // desync the clock, timers and the fixed-step contract.
@@ -497,7 +497,9 @@ impl Match {
                 continue;
             }
             let gate = a.fire_gate;
-            r.update(dt, &gate, a, w, &mut self.projectiles);
+            // M1/M3 roster: every actor carries the Spritzer until the
+            // per-actor loadout lands (Tasks 30+); the dispatch is by kind.
+            r.update(dt, &gate, a, WeaponKind::Shooter, w, &mut self.projectiles);
         }
 
         // ---- soft push between actors (JS match.js L231-244; offline every
@@ -715,7 +717,7 @@ impl Match {
         inputs: &[ActorInput],
         world: &SimWorld,
         t: &PlayerTuning,
-        w: &Spritzer,
+        w: &WeaponSet,
     ) {
         while !self.paused && self.elapsed() < target && self.phase != Phase::End {
             self.step(crate::actor::FIXED_DT, inputs, world, t, w);

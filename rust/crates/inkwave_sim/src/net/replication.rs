@@ -139,7 +139,7 @@ use crate::net::{
     SessionId, SplatRecord, Tick, TickEvent, TimedEvent, TrigData, TriggerRecord,
 };
 use crate::paint::{SplatKind, SplatOpts};
-use crate::tuning::{Difficulty, PlayerTuning, Spritzer};
+use crate::tuning::{Difficulty, PlayerTuning, Spritzer, WeaponSet};
 use crate::weapon::{PROJ_DRAG, PROJ_GRAV, PROJ_SIZE, SHOT_LIFE};
 use glam::{Vec3, vec3};
 
@@ -391,7 +391,7 @@ impl Replication {
         m: &mut Match,
         sim: &SimWorld,
         t: &PlayerTuning,
-        w: &Spritzer,
+        w: &WeaponSet,
         tr: &mut impl Transport,
     ) -> Vec<MatchEvent> {
         self.now += dt as f64;
@@ -465,7 +465,7 @@ impl Replication {
                     // `_push` → netmatch L116) → `emit('weapon:fire')` →
                     // `_onLocalEvent` (L139) → `character.trigger('shoot')`
                     // (L179, after `fireShooter` returns).
-                    self.record_fire(m, w, owner, muzzle, dir);
+                    self.record_fire(m, &w.shooter, owner, muzzle, dir);
                 }
                 MatchEvent::Respawn { team, slot } => {
                     // JS `respawn()` (actor.js L172-175): `trigger('spawn')`
@@ -772,6 +772,9 @@ impl Replication {
                             life: p.life,
                             straight: p.straight,
                             radius: p.radius,
+                            // JS L868/L870: `size` comes from the record
+                            // (e[15]) — the ghost's own hit/paint scale.
+                            size: p.size,
                             // JS `ghostProjectile` L870: `damage: 0` — the
                             // ghost never hurts; its motion comes from the
                             // record's own `grav` / `drag`.
@@ -1459,7 +1462,7 @@ mod tests {
         let f = fix();
         let sim = f.sim();
         let t = &f.tuning.player;
-        let w = &f.tuning.spritzer;
+        let w = &f.tuning.weapons;
         let (h, g) = ("HOST", "GUEST");
         let cfg = cfg(roster111(h, g), "tidewater", h);
 
@@ -1562,7 +1565,7 @@ mod tests {
         let f = fix();
         let sim = f.sim();
         let t = &f.tuning.player;
-        let w = &f.tuning.spritzer;
+        let w = &f.tuning.weapons;
         // Real relay ids — `send_to` routes by them (FakeRelay.route).
         let relay = FakeRelay::new();
         let (mut trh, mut trg) = pair(&relay);
@@ -1709,7 +1712,7 @@ mod tests {
         let f = fix();
         let sim = f.sim();
         let t = &f.tuning.player;
-        let w = &f.tuning.spritzer;
+        let w = &f.tuning.weapons;
         let (h, g) = ("HOST", "GUEST");
         let cfg = cfg(roster111(h, g), "tidewater", h);
         let mut mh = match111(&f, 5, 120.0);
@@ -1721,7 +1724,7 @@ mod tests {
         let nav = f.nav();
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
             let mut inputs = vec![ActorInput::default(); 3];
-            rh.drive_bots(&mut mh, &nav, &sim, t, w, &mut inputs);
+            rh.drive_bots(&mut mh, &nav, &sim, t, &w.shooter, &mut inputs);
             mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w);
         }
         // The leave: the host stays host, so `host_changed = false`.
@@ -1738,7 +1741,7 @@ mod tests {
         let before = mh.actors[1].pos;
         for _ in 0..120 {
             let mut inputs = vec![ActorInput::default(); 3];
-            rh.drive_bots(&mut mh, &nav, &sim, t, w, &mut inputs);
+            rh.drive_bots(&mut mh, &nav, &sim, t, &w.shooter, &mut inputs);
             mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w);
         }
         assert_ne!(mh.actors[1].pos, before, "the adopted bot lives again");
@@ -1749,7 +1752,7 @@ mod tests {
         let f = fix();
         let sim = f.sim();
         let t = &f.tuning.player;
-        let w = &f.tuning.spritzer;
+        let w = &f.tuning.weapons;
         let relay = FakeRelay::new();
         let (mut trh, mut trg) = pair(&relay);
         let mut obs = ep(&relay, 3);
@@ -1779,7 +1782,7 @@ mod tests {
         // Intro out on both.
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
             let mut ih = vec![ActorInput::default(); 3];
-            rh.drive_bots(&mut mh, &nav, &sim, t, w, &mut ih);
+            rh.drive_bots(&mut mh, &nav, &sim, t, &w.shooter, &mut ih);
             mh.step_masked(FIXED_DT, &ih, Some(rh.remote_mask()), &sim, t, w);
             let mut ig = vec![ActorInput::default(); 3];
             ig[1].move_dir = vec3(0.0, 0.0, -1.0);
@@ -1833,7 +1836,7 @@ mod tests {
         let max = ((dur + FINISH_TIME) * 60.0) as usize + 120;
         for _ in 0..max {
             let mut ig = vec![ActorInput::default(); 3];
-            rg.drive_bots(&mut mg, &nav, &sim, t, w, &mut ig);
+            rg.drive_bots(&mut mg, &nav, &sim, t, &w.shooter, &mut ig);
             mg.step_masked(FIXED_DT, &ig, Some(rg.remote_mask()), &sim, t, w);
             let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
             drain_msgs(&mut trg);
@@ -1900,7 +1903,7 @@ mod tests {
         let f = fix();
         let sim = f.sim();
         let t = &f.tuning.player;
-        let w = &f.tuning.spritzer;
+        let w = &f.tuning.weapons;
         let (h, g) = ("HOST", "GUEST");
         // Cargo Terminal: humans-only (config.js L524).
         let cfg = cfg(roster111(h, g), "cargo", h);
@@ -1918,7 +1921,7 @@ mod tests {
         let nav = f.nav();
         let mut inputs = vec![ActorInput::default(); 2];
         for _ in 0..60 {
-            rh.drive_bots(&mut mh, &nav, &sim, t, w, &mut inputs);
+            rh.drive_bots(&mut mh, &nav, &sim, t, &w.shooter, &mut inputs);
             mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w);
         }
         assert_eq!(mh.actors.len(), 2);
@@ -1929,7 +1932,7 @@ mod tests {
         let f = fix();
         let sim = f.sim();
         let t = &f.tuning.player;
-        let w = &f.tuning.spritzer;
+        let w = &f.tuning.weapons;
         let mut mg = match111(&f, 3, 120.0);
         let cfg = cfg(roster111("HOST", "GUEST"), "tidewater", "HOST");
         let mut rg = Replication::new(&cfg, "GUEST", "HOST");
@@ -2008,7 +2011,7 @@ mod tests {
         let f = fix();
         let sim = f.sim();
         let t = &f.tuning.player;
-        let w = &f.tuning.spritzer;
+        let w = &f.tuning.weapons;
         let cfg = cfg(roster111("H", "G"), "tidewater", "H");
         let mut m = match111(&f, 1, 30.0);
         let mut r = Replication::new(&cfg, "H", "H");
@@ -2147,7 +2150,7 @@ mod tests {
             let f = fix();
             let sim = f.sim();
             let t = &f.tuning.player;
-            let w = &f.tuning.spritzer;
+            let w = &f.tuning.weapons;
             let (h, g) = ("HOST", "GUEST");
             let cfg = cfg(roster111(h, g), "tidewater", h);
             let mut mh = match111(&f, 11, 30.0);
@@ -2177,7 +2180,7 @@ mod tests {
             for frame in 0..FRAMES {
                 let t0 = Instant::now();
                 let mut ih = vec![ActorInput::default(); 3];
-                rh.drive_bots(&mut mh, &nav, &sim, t, w, &mut ih);
+                rh.drive_bots(&mut mh, &nav, &sim, t, &w.shooter, &mut ih);
                 mh.step_masked(FIXED_DT, &ih, Some(rh.remote_mask()), &sim, t, w);
                 let ig = vec![ActorInput::default(); 3];
                 mg.step_masked(FIXED_DT, &ig, Some(rg.remote_mask()), &sim, t, w);
@@ -2325,7 +2328,7 @@ mod tests {
         let f = fix();
         let sim = f.sim();
         let t = &f.tuning.player;
-        let w = &f.tuning.spritzer;
+        let w = &f.tuning.weapons;
         let relay = FakeRelay::new();
         let (mut trh, mut trg) = pair(&relay);
         let (h, g) = (trh.id(), trg.id());
@@ -2420,7 +2423,7 @@ mod tests {
         let f = fix();
         let sim = f.sim();
         let t = &f.tuning.player;
-        let w = &f.tuning.spritzer;
+        let w = &f.tuning.weapons;
         let relay = FakeRelay::new();
         let (mut trh, mut trg) = pair(&relay);
         let (h, g) = (trh.id(), trg.id());
@@ -2543,7 +2546,7 @@ mod tests {
         let f = fix();
         let sim = f.sim();
         let t = &f.tuning.player;
-        let w = &f.tuning.spritzer;
+        let w = &f.tuning.weapons;
         let relay = FakeRelay::new();
         let (mut trh, mut trg) = pair(&relay);
         let (h, g) = (trh.id(), trg.id());
@@ -2639,7 +2642,7 @@ mod tests {
         let f = fix();
         let sim = f.sim();
         let t = &f.tuning.player;
-        let w = &f.tuning.spritzer;
+        let w = &f.tuning.weapons;
         let relay = FakeRelay::new();
         let (mut trh, mut trg) = pair(&relay);
         let (h, g) = (trh.id(), trg.id());

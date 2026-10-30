@@ -519,7 +519,8 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
     let n = opts.clients;
     let tuning = embedded_tuning();
     let tp = &tuning.player;
-    let sp = &tuning.spritzer;
+    let ws = &tuning.weapons;
+    let sp = &ws.shooter;
     let layout = embedded_tidewater();
     let world = CollisionWorld::from_layout(&layout);
     let sim = SimWorld::new(&world, &layout);
@@ -698,14 +699,14 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
                 Some(rep[i].remote_mask()),
                 &sim,
                 tp,
-                sp,
+                ws,
             );
             let rest = rep[i].update(
                 FIXED_DT,
                 &mut m[i],
                 &sim,
                 tp,
-                sp,
+                ws,
                 sess[i].transport_mut().expect("live transport"),
             );
             m[i].events.extend(rest);
