@@ -243,11 +243,20 @@ impl ActorSample {
             2 => f |= flags::GT2,
             _ => {}
         }
-        // Spritzer runner: no charging/rolling/streaming/dodge/subAim/sj/
-        // flick/slosh states (weapon.rs `WeaponRunner` M1 branch) — only
-        // `firingT > 0` (JS L737) maps to a live flag.
+        // `firingT > 0` (JS L737) maps to a live flag. Task 31: the
+        // charger/spinner spin-up window sets JS `wr.charging` (weapons.js
+        // L189/L466) → `F.charging` (netmatch.js L732), and the bucket
+        // wind-up sets `wr.flick >= 0` (weapons.js L444) → `F.flick`
+        // (netmatch.js L740). Rolling/streaming/dodge/subAim/sj/slosh
+        // states stay 0 for the wired kinds.
         if wr.firing() {
             f |= flags::FIRING;
+        }
+        if wr.charging_flag() {
+            f |= flags::CHARGING;
+        }
+        if wr.flick_flag() {
+            f |= flags::FLICK;
         }
         if a.invuln > 0.0 {
             f |= flags::INVULN;
@@ -270,8 +279,10 @@ impl ActorSample {
             hp: a.hp,
             ink: a.ink,
             sp: 0.0,
-            // JS L748 `wr.streaming ? wr.burstFrac : wr.charge` — every wired
-            // weapon is non-streaming until Task 31.
+            // JS L748 `wr.streaming ? wr.burstFrac : wr.charge` — `streaming`
+            // is set only by the retired splatling (weapons.js L381-426), so
+            // every wired kind (charger/spinner/bucket included) ships
+            // `wr.charge` here.
             ch: if wr.streaming() {
                 wr.burst_frac()
             } else {

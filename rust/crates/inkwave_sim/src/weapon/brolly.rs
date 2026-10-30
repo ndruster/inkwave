@@ -575,6 +575,8 @@ fn fire_blast(r: &mut WeaponRunner, a: &mut Actor, bw: &Brolly, ps: &mut Project
         team: a.team,
         muzzle: m,
         dir: dir0,
+        charge: None,
+        len: None,
     });
     r.cooldown = bw.fire_interval; // JS L116
     true

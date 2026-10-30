@@ -320,6 +320,9 @@ fn tr30_1_held_canopy_blocks_breaks_regrows() {
         blast: false,
         pellet: None,
         ghost: false,
+        below_falloff: 0.0,
+        below_falloff_max: 0.0,
+        volley: None,
     });
     let mut launched: Vec<LaunchedCanopy> = Vec::new();
     let mut owner = ShieldOwner {

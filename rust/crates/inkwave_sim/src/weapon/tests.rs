@@ -780,7 +780,16 @@ fn tr29_2_kind_table_and_dispatch_skeleton() {
     assert!(WeaponKind::Blaster.is_wired());
     assert!(WeaponKind::Twins.is_wired());
     assert!(WeaponKind::Brolly.is_wired());
-    assert!(!WeaponKind::Charger.is_wired());
+    // Task 31 batch two: charger / spinner / bucket joined the wired set.
+    assert!(WeaponKind::Charger.is_wired());
+    assert!(WeaponKind::Spinner.is_wired());
+    assert!(WeaponKind::Bucket.is_wired());
+    // The remaining kinds are the Task 32/33 batches.
+    assert!(!WeaponKind::Roller.is_wired());
+    assert!(!WeaponKind::Brush.is_wired());
+    assert!(!WeaponKind::Bow.is_wired());
+    assert!(!WeaponKind::Blade.is_wired());
+    assert!(!WeaponKind::Mitts.is_wired());
 
     // Move-speed table (weapons.js L63-92): idle is always the run speed,
     // the firing states read the def, the kit kinds stay at run speed.
@@ -1394,4 +1403,643 @@ fn tr30_1_blaster_burst_paints_the_deck() {
     }
     assert!(painted > 0.0, "the under-burst splat claimed turf");
     assert!(pg.coverage()[0] > 0.0, "team ink on the deck");
+}
+
+// ---- Task 31: charger / spinner / bucket (TR-31.1 / TR-31.2) ----
+
+/// Drive one runner frame with the trigger held.
+fn hold(
+    r: &mut WeaponRunner,
+    a: &mut Actor,
+    k: WeaponKind,
+    f: &Fix,
+    ps: &mut ProjectileSim,
+    n: usize,
+) {
+    for _ in 0..n {
+        r.update(
+            DT,
+            &FireGate {
+                fire: true,
+                ..Default::default()
+            },
+            a,
+            k,
+            &f.w,
+            Vec3::ZERO,
+            &f.world,
+            ps,
+        );
+    }
+}
+
+/// Drive one runner frame with the trigger released.
+fn release(r: &mut WeaponRunner, a: &mut Actor, k: WeaponKind, f: &Fix, ps: &mut ProjectileSim) {
+    r.update(
+        DT,
+        &FireGate::default(),
+        a,
+        k,
+        &f.w,
+        Vec3::ZERO,
+        &f.world,
+        ps,
+    );
+}
+
+#[test]
+fn tr31_1_charger_charge_curve_and_release_timing() {
+    let f = fix();
+    let cw = &f.w.charger;
+    assert_eq!(cw.charge_time, 1.0, "JS config: chargeTime 1.0");
+    assert_eq!(cw.ink_full, 18.0, "JS config: inkFull 18");
+
+    // S-curve (weapons.js L192-196): `t < 0.2 ? t·1.25 : 0.25 + (t−0.2)·0.9375`
+    // on the `dt / chargeTime` clock — every frame value checked.
+    let mut a = Actor::new(0, 0, &f.t);
+    a.spawn_at(vec3(0.0, 0.05, 0.0), 0.0, &f.sim(), &f.t);
+    let mut ps = ProjectileSim::new(11);
+    let mut r = WeaponRunner::new();
+    for n in 1..=60 {
+        hold(&mut r, &mut a, WeaponKind::Charger, &f, &mut ps, 1);
+        let t = n as f32 * DT;
+        let want = if t < 0.2 {
+            t * 1.25
+        } else {
+            0.25 + (t - 0.2) * 0.9375
+        };
+        assert!(
+            (r.charge - want).abs() < MM,
+            "frame {n}: charge {} want {want}",
+            r.charge
+        );
+    }
+    assert!(r.charge >= 1.0 - MM, "full charge at t = chargeTime");
+    assert!(r.charge_dinged, "the full-charge latch fired");
+
+    // Release (JS L204-215): `c = max(0.12, charge)`, ink −= inkFull·c,
+    // cooldown 0.28, the hitscan deferred to the match drain (D-T31-1).
+    release(&mut r, &mut a, WeaponKind::Charger, &f, &mut ps);
+    assert_eq!(r.charger_release, Some(1.0));
+    assert!(
+        (a.ink - (f.t.ink_max - 18.0)).abs() < MM,
+        "full charge costs inkFull"
+    );
+    assert_eq!(r.cooldown, 0.28);
+    assert_eq!(r.firing_t, FIRING_T);
+    assert_eq!(r.charge, 0.0);
+    assert!(!r.charging);
+
+    // A one-frame tap still shoots: the 0.12 floor (JS L205).
+    let mut a2 = Actor::new(0, 0, &f.t);
+    a2.spawn_at(vec3(0.0, 0.05, 0.0), 0.0, &f.sim(), &f.t);
+    let mut ps2 = ProjectileSim::new(11);
+    let mut r2 = WeaponRunner::new();
+    hold(&mut r2, &mut a2, WeaponKind::Charger, &f, &mut ps2, 1);
+    assert!(
+        (r2.charge - DT * 1.25).abs() < MM,
+        "tap charge on the steep leg"
+    );
+    release(&mut r2, &mut a2, WeaponKind::Charger, &f, &mut ps2);
+    assert_eq!(r2.charger_release, Some(0.12), "tap floors at 0.12");
+    assert!((a2.ink - (f.t.ink_max - 18.0 * 0.12)).abs() < MM);
+
+    // Half charge: t = 0.5 → 0.25 + 0.3·0.9375 = 0.53125.
+    let mut a3 = Actor::new(0, 0, &f.t);
+    a3.spawn_at(vec3(0.0, 0.05, 0.0), 0.0, &f.sim(), &f.t);
+    let mut ps3 = ProjectileSim::new(11);
+    let mut r3 = WeaponRunner::new();
+    hold(&mut r3, &mut a3, WeaponKind::Charger, &f, &mut ps3, 30);
+    assert!((r3.charge - 0.53125).abs() < MM);
+    release(&mut r3, &mut a3, WeaponKind::Charger, &f, &mut ps3);
+    assert!((r3.charger_release.unwrap() - 0.53125).abs() < MM);
+    assert!((a3.ink - (f.t.ink_max - 18.0 * 0.53125)).abs() < MM);
+
+    // Below 20 % of inkFull a charge cannot start (JS L188): empty-click
+    // lockout + LowInk, no charging state.
+    let mut a4 = Actor::new(0, 0, &f.t);
+    a4.spawn_at(vec3(0.0, 0.05, 0.0), 0.0, &f.sim(), &f.t);
+    a4.ink = 3.0; // < 18·0.2 = 3.6
+    let mut ps4 = ProjectileSim::new(11);
+    let mut r4 = WeaponRunner::new();
+    hold(&mut r4, &mut a4, WeaponKind::Charger, &f, &mut ps4, 1);
+    assert!(!r4.charging, "the 20 % gate blocks the spin");
+    assert_eq!(r4.empty_cd, EMPTY_CD);
+    assert!(
+        ps4.drain_events()
+            .iter()
+            .any(|e| matches!(e, SimEvent::LowInk { .. })),
+        "empty click emits LowInk"
+    );
+}
+
+#[test]
+fn tr31_1_charger_hitscan_damage_and_events() {
+    let f = fix();
+    let cw = &f.w.charger;
+    let mk = || {
+        let mut s = Actor::new(0, 0, &f.t);
+        s.spawn_at(vec3(0.0, 0.05, 0.0), 0.0, &f.sim(), &f.t);
+        let mut v = Actor::new(1, 1, &f.t);
+        v.spawn_at(vec3(0.0, 0.05, 6.0), 0.0, &f.sim(), &f.t);
+        v.set_invuln(0.0);
+        (s, v)
+    };
+
+    // Half charge: dmg = lerp(40, 160·0.62, 0.5) = 69.6, range 19; the beam
+    // stops on the victim (muzzle z = 0.3 → len ≈ 5.7).
+    let (s, v) = mk();
+    let mut actors = vec![s, v];
+    let mut pg = PaintGrid::new(&f.world);
+    let mut ps = ProjectileSim::new(5);
+    let m = ProjectileSim::muzzle(&actors[0]);
+    ps.fire_charger(
+        0,
+        0,
+        m,
+        vec3(0.0, 0.0, 1.0),
+        0.5,
+        cw,
+        &f.world,
+        &mut actors,
+        &mut pg,
+        &f.t,
+        None,
+    );
+    let evs = ps.drain_events();
+    let hit = evs
+        .iter()
+        .find_map(|e| match e {
+            SimEvent::Hit { damage, killed, .. } => Some((*damage, *killed)),
+            _ => None,
+        })
+        .expect("the beam hurts the victim");
+    assert!((hit.0 - 69.6).abs() < MM, "half-charge damage");
+    assert!(!hit.1);
+    assert!(
+        (actors[1].hp - (f.t.hp - 69.6)).abs() < MM,
+        "hp after the beam"
+    );
+    let fire = evs
+        .iter()
+        .find_map(|e| match e {
+            SimEvent::Fire { charge, len, .. } => Some((*charge, *len)),
+            _ => None,
+        })
+        .expect("charger fire event");
+    assert_eq!(fire.0, Some(0.5), "JS L1281: charge rides the payload");
+    let len = fire.1.expect("len rides the payload");
+    // The beam stops at the segment/capsule closest-approach point. The
+    // solver (JS `segmentCapsuleDist`: 6 samples + 8 golden-section steps
+    // over the full 19 m segment) converges to the true minimum (5.7 m)
+    // with a ~0.03 m residual — same numbers a JS run produces.
+    assert!((len - 5.7).abs() < 0.05, "beam stops on the capsule: {len}");
+    let imp = evs
+        .iter()
+        .find_map(|e| match e {
+            SimEvent::Impact {
+                radius,
+                victim_slot,
+                ..
+            } => Some((*radius, *victim_slot)),
+            _ => None,
+        })
+        .expect("charger impact");
+    assert!(
+        (imp.0 - 1.2 * (0.6 + 0.4 * 0.5)).abs() < MM,
+        "terminal radius"
+    );
+    assert_eq!(imp.1, Some(1), "the victim is credited to the impact");
+
+    // Full charge: damageMax 160 splats through 100 hp (JS L1243-1244).
+    let (s, v) = mk();
+    let mut actors = vec![s, v];
+    let mut ps = ProjectileSim::new(5);
+    let m = ProjectileSim::muzzle(&actors[0]);
+    ps.fire_charger(
+        0,
+        0,
+        m,
+        vec3(0.0, 0.0, 1.0),
+        1.0,
+        cw,
+        &f.world,
+        &mut actors,
+        &mut pg,
+        &f.t,
+        None,
+    );
+    let killed = ps
+        .drain_events()
+        .iter()
+        .any(|e| matches!(e, SimEvent::Hit { killed: true, .. }));
+    assert!(killed, "full charge splats");
+
+    // No victim, no world hit: the beam runs the full lerp(rangeMin,
+    // rangeMax, 0.5) = 19 m and the line splats paint the deck.
+    let (s, _) = mk();
+    let mut actors = vec![s];
+    let mut pg2 = PaintGrid::new(&f.world);
+    let mut ps = ProjectileSim::new(5);
+    let m = ProjectileSim::muzzle(&actors[0]);
+    ps.fire_charger(
+        0,
+        0,
+        m,
+        vec3(0.0, 0.0, 1.0),
+        0.5,
+        cw,
+        &f.world,
+        &mut actors,
+        &mut pg2,
+        &f.t,
+        None,
+    );
+    let len = ps
+        .drain_events()
+        .iter()
+        .find_map(|e| match e {
+            SimEvent::Fire { len, .. } => *len,
+            _ => None,
+        })
+        .expect("fire event");
+    assert!((len - 19.0).abs() < MM, "empty beam runs the charged range");
+    assert!(pg2.coverage()[0] > 0.0, "the line splats ink the deck");
+}
+
+#[test]
+fn tr31_1_spinner_linear_charge_and_burst_stream() {
+    let f = fix();
+    let sp = &f.w.spinner;
+    assert_eq!(sp.ink_full, 24.0, "JS config: inkFull 24");
+    assert_eq!(sp.fire_interval, 0.05, "JS config: fireInterval 0.05");
+
+    let mut a = Actor::new(0, 0, &f.t);
+    a.spawn_at(vec3(0.0, 0.05, 0.0), 0.0, &f.sim(), &f.t);
+    let mut ps = ProjectileSim::new(13);
+    let mut r = WeaponRunner::new();
+
+    // Linear charge (JS L469-470): `charge = min(ink/inkFull, t)`, no S-curve.
+    for n in 1..=30 {
+        hold(&mut r, &mut a, WeaponKind::Spinner, &f, &mut ps, 1);
+        assert!((r.charge - n as f32 * DT).abs() < MM, "frame {n}");
+    }
+    assert!(
+        !r.streaming(),
+        "streaming is the retired splatling's (L381-426)"
+    );
+
+    // Release (JS L478-485): c = max(0.15, 0.5), ink −= 24·c, burstT =
+    // lerp(0.35, 1.8, c) = 1.075, streamCd = 0.
+    release(&mut r, &mut a, WeaponKind::Spinner, &f, &mut ps);
+    assert!(
+        (r.burst_t - 1.075).abs() < MM,
+        "burst length follows the charge"
+    );
+    assert!((r.burst_power - 0.5).abs() < MM);
+    assert!((a.ink - (f.t.ink_max - 12.0)).abs() < MM);
+    assert_eq!(r.stream_cd, 0.0);
+    assert_eq!(r.charge, 0.0, "the ch slot ships 0 during the burst");
+
+    // Stream cadence (JS L452-461): one round per `fireInterval`, burst ends
+    // at burstT ≤ 0 → K = ceil(1.075/DT) = 65 frames, shots =
+    // floor(K·DT/0.05) + 1 = 22.
+    let mut shots = 0usize;
+    let mut per_frame_max = 0usize;
+    let mut frames = 0usize;
+    while r.burst_t > 0.0 && frames < 200 {
+        let before = ps.list.len();
+        release(&mut r, &mut a, WeaponKind::Spinner, &f, &mut ps);
+        let made = ps.list.len() - before;
+        per_frame_max = per_frame_max.max(made);
+        shots += ps
+            .drain_events()
+            .iter()
+            .filter(|e| matches!(e, SimEvent::Fire { .. }))
+            .count();
+        frames += 1;
+    }
+    assert_eq!(frames, 65, "burstT 1.075 spans ceil(1.075/DT) frames");
+    assert_eq!(shots, 22, "floor(65·DT/0.05) + 1 rounds");
+    assert_eq!(
+        per_frame_max, 1,
+        "interval > DT: never more than one per frame"
+    );
+    assert_eq!(r.cooldown, 0.2, "burst tail cooldown (JS L458)");
+    assert_eq!(ps.list.len(), 22, "no round stepped out");
+
+    // Round fields (fireStream L1338-1342): power 0.5 lerps speed/straight/
+    // range between the min/max, size 0.12, life 1.3 capped by range/speed.
+    let p = &ps.list[0];
+    assert!((p.vel.length() - 32.5).abs() < MM, "lerp(25, 40, 0.5)");
+    assert!((p.straight - 0.165).abs() < MM);
+    assert_eq!(p.size, 0.12);
+    assert!(
+        (p.life - (15.5f32 / 32.5).min(1.3)).abs() < MM,
+        "range/speed cap"
+    );
+    assert_eq!(p.grav, PROJ_GRAV);
+    assert_eq!(p.drag, PROJ_DRAG);
+    assert_eq!(p.trail_every, sp.trail_every);
+    assert_eq!(p.trail, -(2.2 - sp.trail_every));
+}
+
+#[test]
+fn tr31_2_bucket_windup_and_blob_taper() {
+    let f = fix();
+    let bw = &f.w.bucket;
+    assert_eq!(bw.windup, 0.12, "JS config: windup 0.12");
+    assert_eq!(bw.blobs, 5, "JS config: blobs 5");
+
+    let mut a = Actor::new(0, 0, &f.t);
+    a.spawn_at(vec3(0.0, 0.05, 0.0), 0.0, &f.sim(), &f.t);
+    let mut ps = ProjectileSim::new(17);
+    let mut r = WeaponRunner::new();
+
+    // A tap starts the throw (JS L441 `inp.fire || inp.firePressed`); the
+    // flick winds up for `windup` and the volley leaves (L434-438).
+    r.update(
+        DT,
+        &FireGate {
+            pressed: true,
+            ..Default::default()
+        },
+        &mut a,
+        WeaponKind::Bucket,
+        &f.w,
+        Vec3::ZERO,
+        &f.world,
+        &mut ps,
+    );
+    assert_eq!(r.flick, 0.0, "the throw wound up on the tap");
+    assert!((a.ink - (f.t.ink_max - bw.ink_per_shot)).abs() < MM);
+    for _ in 2..9 {
+        release(&mut r, &mut a, WeaponKind::Bucket, &f, &mut ps);
+    }
+    assert!(ps.list.is_empty(), "nothing leaves before the windup ends");
+    release(&mut r, &mut a, WeaponKind::Bucket, &f, &mut ps); // frame 9: 8·DT ≥ 0.12
+    assert_eq!(r.flick, -1.0, "the windup completed");
+    assert_eq!(ps.list.len(), 5, "five blobs per throw (JS L1317)");
+    assert_eq!(r.cooldown, bw.fire_interval - bw.windup, "JS L438");
+    assert_eq!(r.firing_t, FIRING_T);
+    let fires = ps
+        .drain_events()
+        .iter()
+        .filter(|e| matches!(e, SimEvent::Fire { .. }))
+        .count();
+    assert_eq!(fires, 1, "one weapon:fire per throw (JS L1330)");
+
+    // Per-blob taper (L1318-1324): speed 1−i·0.075, size 0.22−i·0.02,
+    // radius 1−i·0.08, start pulled back i·0.12 along the throw dir.
+    let m = ProjectileSim::muzzle(&a);
+    for (i, p) in ps.list.iter().enumerate() {
+        let fi = i as f32;
+        assert!(
+            (p.vel.length() - bw.throw_speed * (1.0 - fi * 0.075)).abs() < MM,
+            "blob {i} speed"
+        );
+        assert_eq!(p.size, 0.22 - fi * 0.02);
+        assert!((p.radius - bw.impact_radius * (1.0 - fi * 0.08)).abs() < MM);
+        assert_eq!(p.volley, Some(0), "one throw group");
+        assert_eq!(p.below_falloff, bw.below_falloff);
+        assert_eq!(p.below_falloff_max, bw.below_falloff_max);
+        assert_eq!(p.life, 2.2);
+        assert_eq!(p.straight, 0.0);
+        assert_eq!(p.grav, bw.gravity);
+        assert_eq!(p.drag, bw.drag);
+        assert_eq!(p.trail_every, 1.6);
+        assert_eq!(p.trail, 0.0);
+        assert!(
+            (m.distance(p.start) - fi * 0.12).abs() < MM,
+            "blob {i} start offset"
+        );
+    }
+
+    // Horizontal aim + lob 0.3 (L1312-1313): every blob leaves at pitch
+    // 0.3 ± the 0.04/2 jitter, heading ± 0.05/2.
+    for p in &ps.list {
+        let pitch = p.vel.y.atan2(p.vel.x.hypot(p.vel.z));
+        assert!(
+            (0.28 - MM..0.32 + MM).contains(&pitch),
+            "pitch {pitch} outside 0.3 ± 0.02"
+        );
+        let yaw = p.vel.x.atan2(p.vel.z);
+        assert!(yaw.abs() <= 0.025 + MM, "yaw {yaw} outside ± 0.025");
+    }
+
+    // Fixed seed ⇒ identical volley; a different seed diverges (3 draws ×
+    // 5 blobs: side → pitch → seed).
+    let mut a2 = Actor::new(0, 0, &f.t);
+    a2.spawn_at(vec3(0.0, 0.05, 0.0), 0.0, &f.sim(), &f.t);
+    let mut ps2 = ProjectileSim::new(17);
+    ps2.fire_slosh(&a2, bw, None);
+    let same = ps
+        .list
+        .iter()
+        .zip(ps2.list.iter())
+        .all(|(x, y)| x.vel == y.vel && x.seed == y.seed);
+    assert!(same, "the same seed replays the same spread");
+    let mut ps3 = ProjectileSim::new(18);
+    ps3.fire_slosh(&a2, bw, None);
+    assert!(
+        ps3.list[0].vel != ps.list[0].vel || ps3.list[4].vel != ps.list[4].vel,
+        "a different seed spreads differently"
+    );
+}
+
+#[test]
+fn tr31_2_lob_aim_solves_the_arc() {
+    let f = fix();
+    let bw = &f.w.bucket;
+    let from = vec3(0.0, 1.5, 0.0);
+    let target = vec3(0.0, 0.0, 6.0);
+
+    // In reach (hd = 6 ∈ [1, 9.5]): the solved pitch lands the arc on the
+    // target — replay the integrator and check the crossing height.
+    let mut dir = vec3(0.0, 0.0, 1.0);
+    assert!(ProjectileSim::lob_aim(
+        from,
+        &mut dir,
+        target,
+        bw.throw_speed,
+        bw.gravity,
+        bw.drag,
+        bw.reach
+    ));
+    let mut vh = dir.x.hypot(dir.z) * bw.throw_speed;
+    let mut vy = dir.y * bw.throw_speed;
+    let (mut x, mut y) = (0.0f32, 0.0f32);
+    let mut land_y = f32::NAN;
+    for _ in 0..600 {
+        let (px, py) = (x, y);
+        vy -= bw.gravity * SIM_DT;
+        let k = 1.0 - bw.drag * SIM_DT;
+        vh *= k;
+        vy *= k;
+        x += vh * SIM_DT;
+        y += vy * SIM_DT;
+        if x >= 6.0 {
+            // Same crossing interpolation as the solver's objective fn.
+            land_y = py + (y - py) * ((6.0 - px) / (x - px).max(1e-6));
+            break;
+        }
+    }
+    assert!(x >= 6.0, "the solved arc reaches the crosshair");
+    assert!(
+        (from.y + land_y - target.y).abs() < 0.05,
+        "the arc lands on the target: y = {}",
+        from.y + land_y
+    );
+    assert!(
+        dir.x.abs() < MM && dir.z > 0.9,
+        "the heading survives the solve"
+    );
+
+    // Out of reach / too close: no solve, dir untouched (JS L998).
+    let mut d2 = vec3(0.0, 0.0, 1.0);
+    assert!(
+        !ProjectileSim::lob_aim(
+            from,
+            &mut d2,
+            vec3(0.0, 0.0, 12.0),
+            bw.throw_speed,
+            bw.gravity,
+            bw.drag,
+            bw.reach
+        ),
+        "hd 12 > reach 9.5"
+    );
+    assert_eq!(d2, vec3(0.0, 0.0, 1.0), "the default dir survives");
+    assert!(
+        !ProjectileSim::lob_aim(
+            from,
+            &mut d2,
+            vec3(0.0, 0.0, 0.5),
+            bw.throw_speed,
+            bw.gravity,
+            bw.drag,
+            bw.reach
+        ),
+        "hd 0.5 < 1"
+    );
+}
+
+#[test]
+fn tr31_2_volley_passthrough_and_below_falloff() {
+    let f = fix();
+    let bw = &f.w.bucket;
+    let mk_blob = |i: usize, start_y: f32| Projectile {
+        pos: vec3(0.0, 1.0, 2.5 + i as f32 * 0.1),
+        prev: vec3(0.0, 1.0, 2.5 + i as f32 * 0.1),
+        start: vec3(0.0, start_y, 0.0),
+        vel: vec3(0.0, 0.0, 60.0),
+        team: 0,
+        owner_slot: 0,
+        age: 0.0,
+        life: 2.2,
+        straight: 0.0,
+        radius: bw.impact_radius,
+        size: 0.15,
+        damage: bw.damage,
+        grav: bw.gravity,
+        drag: bw.drag,
+        trail: 0.0,
+        trail_every: 0.0,
+        trail_radius: 0.42,
+        seed: 0.5,
+        blast: false,
+        pellet: None,
+        ghost: false,
+        below_falloff: bw.below_falloff,
+        below_falloff_max: bw.below_falloff_max,
+        volley: Some(0),
+    };
+
+    // Two blobs of one throw across the same victim: the first hurts, the
+    // second passes through (JS L1599) and stays alive.
+    let mut victim = Actor::new(1, 1, &f.t);
+    victim.spawn_at(vec3(0.0, 0.05, 3.0), 0.0, &f.sim(), &f.t);
+    let mut pg = PaintGrid::new(&f.world);
+    let mut ps = ProjectileSim::new(3);
+    ps.list.push(mk_blob(0, 1.0));
+    ps.list.push(mk_blob(1, 1.0));
+    ps.volley_alive.insert(0, 2);
+    let mut owner = ShieldOwner {
+        runners: &mut [],
+        launched: &mut [],
+    };
+    ps.step_masked(
+        DT,
+        &f.world,
+        &mut [victim.clone()],
+        &mut pg,
+        &f.t,
+        &f.w,
+        None,
+        &[],
+        &mut owner,
+    );
+    let hits: Vec<f32> = ps
+        .drain_events()
+        .iter()
+        .filter_map(|e| match e {
+            SimEvent::Hit { damage, .. } => Some(*damage),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(hits.len(), 1, "one hit per throw per victim");
+    assert!((hits[0] - 55.0).abs() < MM, "level target takes full 55");
+    assert_eq!(ps.list.len(), 1, "the second blob sailed through");
+    assert!(ps.volley_hits.contains_key(&(0, 0)), "the group remembers");
+
+    // The group's record dies with its last blob (JS shares the Set object).
+    for _ in 0..200 {
+        ps.step_masked(
+            DT,
+            &f.world,
+            &mut [],
+            &mut pg,
+            &f.t,
+            &f.w,
+            None,
+            &[],
+            &mut owner,
+        );
+        let _ = ps.drain_events();
+        if ps.list.is_empty() {
+            break;
+        }
+    }
+    assert!(ps.list.is_empty(), "the survivor expires on life");
+    assert!(
+        ps.volley_hits.is_empty() && ps.volley_alive.is_empty(),
+        "the group was cleaned"
+    );
+
+    // Below-falloff (JS L1605): target 1.7 m under the throw start →
+    // 55·(1 − clamp(1.7·0.12, 0, 0.35)) = 55·0.796 = 43.78.
+    let mut victim2 = Actor::new(1, 1, &f.t);
+    victim2.spawn_at(vec3(0.0, 0.05, 3.0), 0.0, &f.sim(), &f.t);
+    let mut ps2 = ProjectileSim::new(3);
+    ps2.list.push(mk_blob(0, 3.0));
+    ps2.step_masked(
+        DT,
+        &f.world,
+        &mut [victim2.clone()],
+        &mut pg,
+        &f.t,
+        &f.w,
+        None,
+        &[],
+        &mut owner,
+    );
+    let dmg = ps2
+        .drain_events()
+        .into_iter()
+        .find_map(|e| match e {
+            SimEvent::Hit { damage, .. } => Some(damage),
+            _ => None,
+        })
+        .expect("the raised blob still connects");
+    assert!((dmg - 43.78).abs() < MM, "downward throw loses 20.4 %");
 }

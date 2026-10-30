@@ -461,12 +461,18 @@ impl Replication {
                 } => {
                     self.send_hit(m, t, tr, attacker, victim, damage);
                 }
-                MatchEvent::Fire { owner, muzzle, dir } => {
+                MatchEvent::Fire {
+                    owner,
+                    muzzle,
+                    dir,
+                    charge,
+                    len,
+                } => {
                     // JS order inside one shot: `recProj` (weapons.js
                     // `_push` → netmatch L116) → `emit('weapon:fire')` →
                     // `_onLocalEvent` (L139) → `character.trigger('shoot')`
                     // (L179, after `fireShooter` returns).
-                    self.record_fire(m, &w.shooter, owner, muzzle, dir);
+                    self.record_fire(m, &w.shooter, owner, muzzle, dir, charge, len);
                 }
                 MatchEvent::Respawn { team, slot } => {
                     // JS `respawn()` (actor.js L172-175): `trigger('spawn')`
@@ -593,6 +599,12 @@ impl Replication {
     /// the M1 Spritzer round is fully determined by it (`ptype: 'shot'`, no
     /// `wid`, no `delay`, `life = min(range/speed, 1.2)` like the local
     /// `fire_shooter`).
+    /// Task 31: a charger release (`charge: Some`) is pure hitscan — JS
+    /// `fireCharger` never calls `_push`, so no `['p']` record is made; the
+    /// `charge`/`len` numbers ride the `['ev'] payload (JS L1281,
+    /// `packEvent` keeps numbers via `r3`) and the remote draws the ghost
+    /// beam from them.
+    #[allow(clippy::too_many_arguments)]
     fn record_fire(
         &mut self,
         m: &Match,
@@ -600,6 +612,8 @@ impl Replication {
         owner: (usize, usize),
         muzzle: Vec3,
         dir: Vec3,
+        charge: Option<f32>,
+        len: Option<f32>,
     ) {
         let Some(i) = find_actor(&m.actors, owner.0, owner.1) else {
             return;
@@ -608,38 +622,47 @@ impl Replication {
             return; // JS `recProj`: `if (!o || o.remote …) return`
         }
         let nid = self.nids[i];
-        let speed = w.proj_speed;
-        self.rec(TickEvent::Proj(ProjectileRecord {
-            nid,
-            ptype: "shot".to_string(),
-            wid: None,
-            pos: [muzzle.x, muzzle.y, muzzle.z],
-            vel: [dir.x * speed, dir.y * speed, dir.z * speed],
-            delay: 0.0,
-            life: (w.range / w.proj_speed).min(SHOT_LIFE),
-            straight: w.straight_time,
-            radius: w.impact_radius,
-            size: PROJ_SIZE,
-            grav: PROJ_GRAV,
-            drag: PROJ_DRAG,
-            trail_every: w.trail_every,
-            head: false,
-            vis: 0.1,
-            tail0: 0.8,
-            tail_k: 1.3,
-            wob: 0.035,
-            wob_f: 26.0,
-            nose: 0.3,
-            sats: 3.0,
-        }));
+        if charge.is_none() {
+            let speed = w.proj_speed;
+            self.rec(TickEvent::Proj(ProjectileRecord {
+                nid,
+                ptype: "shot".to_string(),
+                wid: None,
+                pos: [muzzle.x, muzzle.y, muzzle.z],
+                vel: [dir.x * speed, dir.y * speed, dir.z * speed],
+                delay: 0.0,
+                life: (w.range / w.proj_speed).min(SHOT_LIFE),
+                straight: w.straight_time,
+                radius: w.impact_radius,
+                size: PROJ_SIZE,
+                grav: PROJ_GRAV,
+                drag: PROJ_DRAG,
+                trail_every: w.trail_every,
+                head: false,
+                vis: 0.1,
+                tail0: 0.8,
+                tail_k: 1.3,
+                wob: 0.035,
+                wob_f: 26.0,
+                nose: 0.3,
+                sats: 3.0,
+            }));
+        }
         // `packEvent({actor, weapon, muzzle, dir})` (L803-813): actor →
         // `{n}`, weapon id string passes through, Vector3 → `[r2 ×3]`.
-        let payload = JVal::Obj(vec![
+        // The id is the *shooter's own* weapon (`m.kinds[i]`, JS
+        // `emit('weapon:fire', { weapon: w.id })`), not the Spritzer
+        // default — the remote dispatches `WEAPONS[e.weapon]` and only the
+        // charger branch consumes `charge`/`len`.
+        let mut payload = vec![
             (
                 "actor".to_string(),
                 JVal::Obj(vec![("n".to_string(), JVal::Num(f64::from(nid)))]),
             ),
-            ("weapon".to_string(), JVal::Str(w.id.clone())),
+            (
+                "weapon".to_string(),
+                JVal::Str(m.kinds[i].id_str().to_string()),
+            ),
             (
                 "muzzle".to_string(),
                 JVal::Arr(vec![
@@ -656,10 +679,19 @@ impl Replication {
                     JVal::Num(wire::r2(f64::from(dir.z))),
                 ]),
             ),
-        ]);
+        ];
+        // JS L1281: `fireCharger` appends `charge`/`len` after `dir` (the
+        // object-literal insertion order `packEvent` preserves); every other
+        // weapon's payload stops at `dir`.
+        if let Some(c) = charge {
+            payload.push(("charge".to_string(), JVal::Num(wire::r3(f64::from(c)))));
+        }
+        if let Some(l) = len {
+            payload.push(("len".to_string(), JVal::Num(wire::r3(f64::from(l)))));
+        }
         self.rec(TickEvent::Event(EventRecord {
             name: ForwardEvent::WeaponFire,
-            payload,
+            payload: JVal::Obj(payload),
         }));
         self.rec(TickEvent::Trigger(TriggerRecord {
             nid,
@@ -822,6 +854,13 @@ impl Replication {
                             // ghosts; the sim-side ghost stays a plain round.
                             blast: false,
                             pellet: None,
+                            // JS `ghostProjectile` (netmatch.js L868-871)
+                            // carries neither `belowFalloff` nor `volley` —
+                            // the `['p']` record has no such fields and the
+                            // ghost never hurts (`damage: 0`).
+                            below_falloff: 0.0,
+                            below_falloff_max: 0.0,
+                            volley: None,
                         });
                     }
                     TickEvent::Trigger(_) => {

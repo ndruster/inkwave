@@ -197,3 +197,39 @@
 - 全量九段矩阵（`rust/tools/verify/logs/task30-gates-<UTC>.log`）；`cargo tree` 依赖面不变；JS 树/`server/` 零改动；测试总数 > 303。
 - `tasks.md` Task 30 段：Status completed + Completion Evidence + Review 附录；`PORT_MAP.md` 行更新；ndruster 身份提交（不 push）。
 
+# Task 31 实施设计（决策完备，2026-10-31）
+
+> 锚点：weapons.js `_charger` L184-216 / `fireCharger` L1238-1303 / `_spinner` L450-486 / `fireStream` L1335-1353 / `_bucket` L434-447 / `fireSlosh` L1307-1332 / `_lobAim` L997-1025 / `_step` L1592-1614（volley/belowFalloff）/ `_impact` L1667-1687；config.js charger L117-125、bucket L137-147、spinner L148-157。数值全走 `tuning.rs`（Task 28 已提取 `Charger`/`Spinner`/`Bucket`）。
+
+## 1. charger = 纯 hitscan（无弹丸实体）
+- `ProjectileSim::fire_charger(a, w, charge, world, actors, paint, t, remote)` 平移 JS L1238-1303：muzzle/aim 同 `fire_round` 前段；`range = lerp(rangeMin, rangeMax, charge)`；`dmg = charge>=0.999 ? damageMax : lerp(damageMin, damageMax*0.62, charge)`。
+- 世界段：`world.raycast(m, dir, range, true)`；敌人胶囊扫描：`segment_capsule_dist(m, m+dir·len, hit_base, PLAYER.radius+0.12, h)`，阈值 `PLAYER.radius+0.14`，`d = t·len` 取最近 victim。伤害路由与 `step_one` body-hit 完全同构（local `apply_hit`+`Hit` / proxy `HitSend`）。
+- 沿线喷墨：`s = 1.2; s < len−0.3; s += lineSplatEvery`，每步 down-raycast 3.5、`splat(point+normal·0.1, lineRadius·(0.8+0.4·charge), stretch=dir, stretchAmt=1.2)`，seed 逐次新抽；终点 splat 仅当世界命中且无 victim：`impactRadius·(0.6+0.4·charge)`、`stretchAmt=0.6`。
+- RNG 消耗序：line seeds（逐 splat）→ 终点 splat seed。beam `uSeed`（L1293）纯呈现不抽（同 Task 29 `vis` 删法）。`subs.blockRay`/`specials.rayHit` 截断（L1245-1246）为 Task 34/36。
+- runner `_charger` 1:1：起蓄门槛 `ink ≥ inkFull·0.2` 否则 `_empty`；S 曲线 `t<0.2 ? t·1.25 : 0.25+(t−0.2)·0.9375`，`charge = min(clamp(ink/inkFull,0,1), curve)`；释放帧 `c = max(0.12, charge)`、`ink −= inkFull·c`、`lastFire=0`、`firingT=0.35`、`cooldown=0.28`、`charge/chargeT` 清零。新增字段 `charge_t`（JS `chargeT`）。**f32 偏差**：JS double 的 `chargeT` 累加在满充帧溢出后钳到恰 1.0（ding 触发、释放 c=1.0）；f32 累加落在 ~0.9999997，故时钟在 `>1−1e-6` 时吸附 1.0（每帧增量 ≥0.014，无误触；spinner 线性时钟同法）。
+
+## 2. SimEvent::Fire 携带 charger 的 charge/len
+- JS L1281 `weapon:fire` 仅 charger 带 `charge`/`len`（远端 `_ghostBeam` L898 消费）。`SimEvent::Fire` 增 `charge: Option<f32>`、`len: Option<f32>`（serde default，其余 kind `None`）；`MatchEvent::Fire` 透传。`['ev']` payload 的 `weapon` id 取 `m.kinds[i].id_str()`（JS `packEvent` 透传真实 `w.id`，远端 `WEAPONS[e.weapon]` 分发；此前恒记 Spritzer 为 Task 30 遗留，Task 31 修正）。wire 逐字节 fixture 对照留 Task 36。
+- **D-T31-1（有意偏差）**：charger 释放不在 runner 内联执行 hitscan（runner 无 actor 列表做 victim 扫描），而是 runner 置 `charger_release: Option<f32>`、match 层同迭代 drain 调 `fire_charger`。帧位与 JS 内联一致（actor 姿态/aim 与 RNG 序不变）。残余：JS 为逐 actor「移动+武器」串行（match.js L228），actor i 放束时 victim j>i 尚未移动；sim 两遍循环全体先移动，近失束 victim 扫描位差最多一帧（~0.13m@8m/s）。
+
+## 3. spinner：蓄力→流（burst，非 streaming）
+- runner `_spinner` 1:1（L450-486）：起蓄门槛 `inkFull·0.15`；`charge = min(clamp(ink/inkFull), chargeT)`（线性，无 S 曲线）；释放 `c = max(0.15, charge)`、`ink −= inkFull·c`、`burstPower=c`、`burstT = lerp(burstMin, burstMax, c)`、`burstDur=burstT`、`streamCd=0`。burst 期：每帧 `burstT−=dt`、`streamCd−=dt`、`firingT=0.2`、`fireFacing=0.5`、`lastFire=0`，`while streamCd<=0 && guard<4` 发流并 `streamCd += fireInterval`；burst 结束 `cooldown=0.2`。新增字段 `charge_t/burst_power/stream_cd/burst_dur`。
+- **不置 `streaming`/`burstFrac`**：JS 仅 retired splatling 置（L381-426）；spinner 的 `ch` 槽 = `charge`（burst 期为 0）、`F.charging` 仅蓄力期为 1。
+- `fire_stream(a, w, power, spread_deg, aim_point)` = `fire_round` 包装：`speed=lerp(speedMin,speedMax,p)`、`straight=lerp(straightMin,straightMax,p)`、`range=lerp(rangeMin,rangeMax,p)`、`grav=28`、`drag=0.8`、`size=0.12`、`life=1.3`、`trail_start=−(2.2−trailEvery)`、trail/impact/damage 走 tuning。RNG 序：spread(2) → seed(1)。range→life 上限沿用 Task 29 偏差。
+
+## 4. bucket：flick windup + 抛洒弧 volley
+- runner `_bucket` 1:1（L434-447）：`flick≥0` 期间 `flick+=dt`、`fireFacing=0.45`，`flick≥windup` → `fireSlosh`、`cooldown=fireInterval−windup`、`firingT=0.35`；起手可 `firePressed`（JS L441 `inp.fire || inp.firePressed`）；墨门槛 `inkPerShot`。
+- `fire_slosh`（L1307-1332）：默认仰角 `atan2(dir.y,hypot)+lob` 重设 dir；`_lobAim`（L997-1025）原样平移（无 RNG、步长 SIM_DT=1/60（weapon.rs 既有常量）、`hd<1 || hd>reach` 直接放弃），仅 `aim_point=Some` 时启用。逐 blob（i=0..blobs）：`sp=throwSpeed·(1−i·0.075)`、`side=(rng−0.5)·0.05`、`pi=pitch+(rng−0.5)·0.04`、`size=0.22−i·0.02`、`radius=impactRadius·(1−i·0.08)`、`pos=m−dir·i·0.12`、`life=2.2`、`straight=0`、`grav/drag` 走 tuning、`trailEvery=1.6`、`trailRadius=0.42`。RNG 序：每 blob side→pi→seed，共 3×blobs。
+- `Projectile` 新字段（serde default 向后兼容）：`below_falloff`/`below_falloff_max`（命中时 `dmg ·= 1 − clamp((start.y−(e.pos.y+0.8)−0.5)·bf, 0, bfMax)`，JS L1605）、`volley: Option<u32>`（同抛组）。`ProjectileSim` 记账：`volley_next` 计数 + `volley_hits: BTreeMap<(u32,usize),()>` + `volley_alive: BTreeMap<u32,usize>`（despawn 时递减、归零清组）。`step_one` body-hit：已命中同组 → `continue` 扫下一 actor（JS L1599），否则记录。bucket 为 type 'slosh' 无 `vol/head`：`_impact` 走普通弹道喷墨分支（JS L1671 注释 "our bucket's blobs paint as before"），无需新分支。
+
+## 5. net 接线与其余
+- `from_actor` 置 `F.CHARGING`（JS L732；net.rs 常量已在位）——新访问器 `WeaponRunner::charging_flag()`；bucket windup 置 `F.FLICK`（JS L740 `wr.flick >= 0`）——新访问器 `flick_flag()`；`ch` 槽经既有 `charge()` 自动生效。播放侧 remote proxy 不驾驶 runner，flag/ch 存 tick 样本即可（fixture Task 36）。
+- **延后偏差（Task 36 fixture 前记录）**：spinner/bucket 的 `['p']` Proj 记录仍按 Spritzer 规格重建（`record_fire` 的 Proj 块取 `w.shooter` 字段），JS `recProj` 对 stream 逐弹记 spinner 规格、对 slosh 记 3 条抛体（速度/尺寸/life 各不同）。ghost 仅表现层，不影响 sim 权威态；真实 per-kind `['p']` 规格随 Task 36 wire fixture 一并修。
+- `is_wired += Charger|Spinner|Bucket`；update 分发臂从 no-op 骨架改为调 `_charger`/`_spinner`/`_bucket`。`move_speed`/`spread_deg` 三 kind 臂 Task 29 已平移，不动。
+- Task 30 P2-5 的 `net-harness/match_e2e.rs` bot-kinds shim：bow/roller/brush/blade/mitts 仍未接线（Task 32/33），seed 77 仍可抽到未 wired kind → **保留 shim**，注释改「Task 33 后移除」。
+
+## 6. 测试与门禁
+- TR-31.1（固定种子逐值）：charger 蓄力曲线逐帧（S 段 1.25/0.9375 系数、maxCharge 钳制、ink 不足门槛）、释放时序（c≥0.12 下限、ink 扣减、cooldown 0.28、半充 damage=lerp(40,99.2,0.5)=69.6、range=19）、满充 160/27、line splat 计数与终点 splat 半径；spinner 线性充、burst 时长 lerp(0.35,1.8,c)、流节奏 0.05（guard<4 补发）、流弹 speed/straight/range lerp、同 seed 复现；bucket windup 0.12→fireSlosh、cooldown 0.48。
+- TR-31.2（bucket 弧采样口径）：5 blob 的 radius/size/sp 逐值、pos 回推 −i·0.12、side/pi 抖动界（±0.025 rad / ±0.02 rad）、同 seed 弹道逐值复现、异 seed 不同；`_lobAim` 在 reach 内命中目标（数值收敛）、超 reach 保持默认弧；volley 同组第二丸穿已命中 victim、belowFalloff 下打减伤（0.12/m、上限 0.35）。
+- 门禁：`/tmp/task30-gates.sh` → `/tmp/task31-gates.sh`，日志 `task31-gates-<UTC>.log` 九段全 exit 0；workspace 测试 > 321；JS 树零改动。
+

@@ -82,11 +82,11 @@
 - **P2-2（注记，不改）** `blockActors` 在 step_masked 后 vs JS 核心弹步前：被推玩家该帧受弹用推前位置，1 帧差。
 - **P2-3（批准）** `jump_edge` 精确按下帧 vs JS jumpBuffer 窗口——spec §3 明文批准且代码注释自报。
 - **P2-4（注记，不改）** `seg_shield` 多 `a==0.0` 分支：弹恰在旧帧盾面时 JS 挡/Rust 穿（浮点相等概率极低）。
-- **P2-5（Task 31 后移除）** `net-harness/match_e2e.rs` test-only shim 强制 bot kinds 回 Shooter（seed 77 抽到未实现武器致 e2e 零喷墨）——与 D-2「bot 驾驶仍 Spritzer、Task 39 接档位武器」一致，不掩盖生产 bug（生产 matchbuild 对未 wired kind 保留 kind、update 臂 no-op）。
+- **P2-5（Task 33 后移除）** `net-harness/match_e2e.rs` test-only shim 强制 bot kinds 回 Shooter（seed 77 抽到未实现武器致 e2e 零喷墨）——与 D-2「bot 驾驶仍 Spritzer、Task 39 接档位武器」一致，不掩盖生产 bug（生产 matchbuild 对未 wired kind 保留 kind、update 臂 no-op）。Task 31 后余 roller/brush/bow/blade/mitts 五把未接线，shim 保留、注释已改「Task 33 后移除」。
 - **P2-6（注记，不改）** `CANOPY_MUL` drop/slosh 弹种未建模（本任务无此弹种，代码注释已标）。
 
 ## Task 31: 主武器批二——蓄力与流类（charger/spinner/bucket）
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 29
 - **Description**:
@@ -96,6 +96,22 @@
   - `rule` TR-31.1: 蓄力/释放时序固定种子逐值断言（chargeTime/burst 区间）。
   - `rule` TR-31.2: bucket 泼洒弧采样与 JS 口径对照（落点数/半径）。
 - **Notes**: charger 激光为 hitscan 段 + 弹段混合，注意与 Hermite 播放层无冲突（激光是本地判定）。
+
+### Task 31 Completion Evidence（2026-10-31）
+- **TR-31.1 ✅**：3 个固定种子逐值测试全绿（`weapon/tests.rs`）。charger：60 帧 S 曲线逐帧断言（1.25/0.9375 系数）、满充 ding、释放 `c=max(0.12,charge)`/ink−=18·c/cooldown 0.28、tap 0.12 地板、半充 0.53125、20% 墨门槛 LowInk；hitscan 半充 dmg=lerp(40,99.2,0.5)=69.6、len≈5.7（求解器残差 ±0.05）、Impact radius 0.96、victim_slot、满充 160 击杀、空束 len=19+沿线 coverage>0。spinner：逐帧线性充、`burstT=lerp(0.35,1.8,c)`、65 帧 22 发（`while streamCd≤0 && guard<4`、每帧 ≤1 发）、尾 cooldown 0.2、流弹 speed 32.5/straight 0.165/size 0.12/life cap/trail `−(2.2−1.25)`。workspace **327 passed**（321→327：+6 TR-31 测试；tr29_2 骨架断言同步更新为 wired 集合）。
+- **TR-31.2 ✅**：3 个测试全绿。bucket windup 帧 9 出 5 blob、逐 blob 速度 `15.5·(1−i·0.075)`/size `0.22−i·0.02`/radius `1−i·0.08`/start 回推 `−i·0.12`/volley 组号/belowFalloff/life 2.2/grav 20/drag 0.25/trail 1.6 逐值；pitch∈[0.28,0.32]、yaw≤0.025 抖动界；同 seed 逐值复现+异 seed 分歧。`lob_aim`：hd=6 收敛、重放积分（同款交点插值）落点 ±0.05、超程/过近返回 false 且 dir 不变。volley：双 blob 同 victim 单 `Hit` 55、第二丸穿组、200 帧后组记账清理、belowFalloff 抬高 start 后 dmg=55·(1−1.7·0.12)=43.78。
+- **架构落地（spec §1–§5）**：`weapon.rs`——`_charger`/`_spinner`/`_bucket` runner 臂（S 曲线/线性充/flick windup，D-T31-1 `charger_release` 延迟一拍）、`fire_charger` hitscan（raycast+`segment_capsule_dist` 最近 victim+沿线 splat+终点 splat+`['ev']` charge/len）、`fire_stream`、`fire_slosh`+`lob_aim`（步长 SIM_DT、sweep+二分）、`Projectile` 新字段 `below_falloff/below_falloff_max/volley`（serde default）、`volley_next/volley_hits/volley_alive` 记账与 despawn 递减清组、`step_one` volley continue+belowFalloff 减伤、`is_wired += Charger|Spinner|Bucket`、`charging_flag()/flick_flag()/id_str()`。`match_.rs`——`MatchEvent::Fire` 透传 charge/len、charger drain。`net.rs`——`F.CHARGING`/`F.FLICK` 实值化。`net/replication.rs`——`record_fire` charger 跳过 `['p']`、payload 追加 charge/len（r3、键序 actor→weapon→muzzle→dir→charge→len）、`['ev']` weapon id 改真实 kind id（修 Task 30 遗留恒记 spritzer）。**f32 偏差**：蓄力时钟 `>1−1e-6` 吸附 1.0（对齐 JS double 溢出钳位，charger/spinner 同法）。
+- **门禁**：全量九段矩阵全 exit 0，日志 `rust/tools/verify/logs/task31-gates-20261030T184700Z.log`（fmt/clippy/test/wasm32/cargo tree/trunk release/headless 600 帧/JS 树零改动；workspace 327 > 321 单调递增）。
+
+### Task 31 Review 附录（独立评审：2 P0 / 3 P1 / 2 P2 → P0+P1 当场修复，P2 注记 → 门禁复验全绿）
+- 评审员实核通过：数值全走 tuning（S 曲线/burst lerp/blob taper/belowFalloff/伤害公式逐字对齐 JS）；RNG 消耗序（slosh side→pitch→seed ×5、stream spread→seed、charger line→terminal seeds、uSeed 呈现删法已记录）；charge/len 仅 `['ev']` r3、charger 无 `['p']` 守卫、serde default 旧回放兼容；volley 记账无泄漏、continue 语义对 L1599；spinner 不置 streaming、ch 槽=charge；6 测试锁 JS 逐值、MM=1e-3；JS 树零改动。
+- **P0-1 ✅** `['ev']` payload weapon id 恒记 Spritzer 规格（Task 30 遗留、Task 31 charger ghost beam 链路直接依赖）→ `record_fire` 改 `m.kinds[i].id_str()`（config.js id==kind 字符串），远端 `WEAPONS[e.weapon]` 分发恢复正确。
+- **P0-2 ✅** 首轮门禁 FMT/CLIPPY 未绿（vec3 换行、collapsible_if、manual_range_contains）→ 修复后复验九段全 exit 0。
+- **P1-3 ✅** bucket windup 未置 `F.flick`（JS netmatch.js L740）→ 新增 `flick_flag()`、net.rs 置 `flags::FLICK`。
+- **P1-4 ✅** D-T31-1 等价性声明过宽 → 注释/spec 补记残余：JS 逐 actor 移动+武器串行，sim 两遍循环全体先移动，近失束 victim 扫描位差最多一帧（~0.13m@8m/s）。
+- **P1-5 ✅** spinner/bucket `['p']` 按 Spritzer 规格重建的延后偏差 → 落盘 spec §5 偏差清单（ghost 仅表现层，随 Task 36 wire fixture 修）。
+- **P2-1（注记，不改）** f32 蓄力时钟吸附：注释+spec §1 已记录；更干净的 f64 累加方案留后续。
+- **P2-2（注记，不改）** `lob_aim` 当前 sim 内不可达（aim_point 恒 None，spec §4 已注明「仅 Some 时启用」，Task 36 播放侧/瞄准点接入后生效）。
 
 ## Task 32: 主武器批三——近战扫类（roller/brush/blade）
 - **Status**: `pending`

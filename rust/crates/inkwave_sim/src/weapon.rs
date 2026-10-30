@@ -76,7 +76,7 @@ use glam::{Vec3, vec3};
 use crate::actor::{Actor, FireGate, Form};
 use crate::collision::CollisionWorld;
 use crate::paint::{PaintGrid, SplatOpts};
-use crate::tuning::{Blaster, PlayerTuning, Spritzer, Twins, WeaponSet};
+use crate::tuning::{Blaster, Bucket, Charger, PlayerTuning, Spinner, Spritzer, Twins, WeaponSet};
 use crate::weapon::brolly::{BrollyKit, CanopyState, LaunchedCanopy};
 
 /// Upstream projectile gravity for shooter-family rounds (weapons.js
@@ -209,13 +209,43 @@ impl WeaponKind {
         })
     }
 
+    /// The content `id` string (config.js L96-240; id == kind for all 12
+    /// roster weapons). JS `packEvent` (netmatch.js L803-813) passes
+    /// `w.id` through to the `['ev']` payload, and the remote dispatches
+    /// `WEAPONS[e.weapon]` — so the wire id must be the real weapon's,
+    /// never the Spritzer default.
+    #[must_use]
+    pub fn id_str(self) -> &'static str {
+        match self {
+            Self::Shooter => "shooter",
+            Self::Blaster => "blaster",
+            Self::Charger => "charger",
+            Self::Roller => "roller",
+            Self::Bucket => "bucket",
+            Self::Spinner => "spinner",
+            Self::Twins => "twins",
+            Self::Brush => "brush",
+            Self::Brolly => "brolly",
+            Self::Bow => "bow",
+            Self::Blade => "blade",
+            Self::Mitts => "mitts",
+        }
+    }
+
     /// Whether this kind's update branch is wired (Task 29: `Shooter`;
-    /// Task 30: `Twins` / `Blaster` / `Brolly`; Tasks 31-33 flip the rest).
+    /// Task 30: `Twins` / `Blaster` / `Brolly`; Task 31: `Charger` /
+    /// `Spinner` / `Bucket`; Tasks 32-33 flip the rest).
     #[must_use]
     pub fn is_wired(self) -> bool {
         matches!(
             self,
-            Self::Shooter | Self::Twins | Self::Blaster | Self::Brolly
+            Self::Shooter
+                | Self::Twins
+                | Self::Blaster
+                | Self::Brolly
+                | Self::Charger
+                | Self::Spinner
+                | Self::Bucket
         )
     }
 }
@@ -406,6 +436,22 @@ pub struct Projectile {
     /// core pass never applies it, JS L1608 `if (dmg > 0)`).
     #[serde(default)]
     pub pellet: Option<PelletMark>,
+    /// Bucket below-falloff rate per metre (JS `p.belowFalloff`, weapons.js
+    /// L1322 / config.js L144): a body hit takes
+    /// `1 − clamp((start.y − (victim.y + 0.8) − 0.5) · rate, 0, max)` of the
+    /// damage when the victim stands below the throw (`_step` L1605).
+    /// `0` = no falloff (every non-bucket round).
+    #[serde(default)]
+    pub below_falloff: f32,
+    /// Below-falloff cap (JS `p.belowFalloffMax`, L1322 / config.js L144).
+    #[serde(default)]
+    pub below_falloff_max: f32,
+    /// Bucket volley group id (JS `p.volley`, L1316/L1322): blobs of one
+    /// throw share it; the first blob to reach a victim hurts it, the rest
+    /// pass through and still paint (`_step` L1599). Bookkeeping lives on
+    /// [`ProjectileSim`] (`volley_hits` / `volley_alive`).
+    #[serde(default)]
+    pub volley: Option<u32>,
 }
 
 /// Gameplay events produced by the weapon layer (JS `emit(...)`). The match
@@ -420,6 +466,13 @@ pub enum SimEvent {
         team: usize,
         muzzle: Vec3,
         dir: Vec3,
+        /// Charger-only fields (JS L1281 `charge` / `len`, consumed by the
+        /// remote `_ghostBeam` presentation, weapons.js L898); `None` for
+        /// every other kind (Task 31 §2).
+        #[serde(default)]
+        charge: Option<f32>,
+        #[serde(default)]
+        len: Option<f32>,
     },
     /// A round hit the world or a body (JS `weapon:impact`). `victim_slot` is
     /// `Some` only for body hits, where the splat radius is halved. `area` is
@@ -515,6 +568,25 @@ pub struct WeaponRunner {
     flick_recover: f32,
     /// JS `burstT` — spinner release stream left.
     burst_t: f32,
+    // ---- Task 31: charger / spinner charge clocks (JS `reset()` L40/L55).
+    /// JS `chargeT` — charge clock seconds (charger / spinner / bow, L40).
+    charge_t: f32,
+    /// JS `chargeDinged` — full-charge feedback latch (audio/rumble only in
+    /// JS; kept so the release path mirrors the state writes).
+    charge_dinged: bool,
+    /// JS `burstPower` — the spinner stream's charge at release (L45).
+    burst_power: f32,
+    /// JS `burstDur` — the spinner stream's full length (`ch` slot math for
+    /// the retired splatling; kept for state parity, L55).
+    burst_dur: f32,
+    /// JS `streamCd` — spinner stream shot clock (L45).
+    stream_cd: f32,
+    /// A charger beam released this frame (JS `fireCharger` L210, called
+    /// inline). The sim defers the hitscan to the match layer — the runner
+    /// has no access to the actor list / paint grid — so the beam's RNG
+    /// draws land after the whole runner pass instead of inline (deviation
+    /// D-T31-1, spec §1; determinism holds, the order is fixed).
+    pub(crate) charger_release: Option<f32>,
     /// JS `turret` — twins planted stance.
     turret: bool,
     /// JS `lockT` — post-roll lockout timer.
@@ -566,6 +638,12 @@ impl Default for WeaponRunner {
             flick: -1.0,
             flick_recover: 0.0,
             burst_t: 0.0,
+            charge_t: 0.0,
+            charge_dinged: false,
+            burst_power: 0.0,
+            burst_dur: 0.0,
+            stream_cd: 0.0,
+            charger_release: None,
             turret: false,
             lock_t: 0.0,
             dodge_t: 0.0,
@@ -849,9 +927,10 @@ impl WeaponRunner {
 
         // ---- JS L117-129 kind dispatch. Task 30 wires `shooter`/`blaster`
         // (`_auto`), `twins` (`_twins`) and `brolly` (`MAIN_KITS.brolly.
-        // update`); the remaining arms land in Tasks 31-33:
-        //   L119-124 `charger`/`roller`/`bucket`/`spinner`/`brush`
-        //     → Tasks 31/32/31/31/32.
+        // update`); Task 31 wires `charger` (`_charger`), `bucket`
+        // (`_bucket`) and `spinner` (`_spinner`). Remaining arms land in
+        // Tasks 32-33:
+        //   L120 `roller` / L124 `brush` → Task 32.
         //   L128 `default` → `MAIN_KITS` (bow/blade/mitts, Tasks 33/32/33).
         match kind {
             WeaponKind::Shooter | WeaponKind::Blaster => {
@@ -859,14 +938,12 @@ impl WeaponRunner {
             }
             WeaponKind::Twins => self.twins(gate, actor, w, dt, move_dir, world, projectiles),
             WeaponKind::Brolly => brolly::update(self, dt, gate, actor, w, world, projectiles),
-            WeaponKind::Charger
-            | WeaponKind::Roller
-            | WeaponKind::Bucket
-            | WeaponKind::Spinner
-            | WeaponKind::Brush
-            | WeaponKind::Bow
-            | WeaponKind::Blade
-            | WeaponKind::Mitts => {}
+            // Task 31: JS L119 `charger` / L121 `bucket` / L122 `spinner`.
+            WeaponKind::Charger => self.charger(dt, gate, actor, w, projectiles),
+            WeaponKind::Spinner => self.spinner(dt, gate, actor, w, projectiles),
+            WeaponKind::Bucket => self.bucket(dt, gate, actor, w, projectiles),
+            WeaponKind::Roller | WeaponKind::Brush => {}
+            WeaponKind::Bow | WeaponKind::Blade | WeaponKind::Mitts => {}
         }
     }
 
@@ -1023,6 +1100,180 @@ impl WeaponRunner {
         }
     }
 
+    /// JS `_charger` (weapons.js L184-216): hold to charge on the S-curve
+    /// (quick first 20 %, committed middle, crisp top-off, L195), release to
+    /// fire the hitscan beam. The beam itself is deferred to the match layer
+    /// ([`Self::charger_release`], deviation D-T31-1): the runner has no
+    /// actor list / paint grid for the hitscan + damage routing.
+    fn charger(
+        &mut self,
+        dt: f32,
+        gate: &FireGate,
+        a: &mut Actor,
+        w: &WeaponSet,
+        ps: &mut ProjectileSim,
+    ) {
+        let cw = &w.charger;
+        if gate.fire && self.cooldown <= 0.0 {
+            if !self.charging {
+                // JS L188: a charge needs at least 20 % of `inkFull`.
+                if a.ink < cw.ink_full * 0.2 {
+                    if self.empty_cd <= 0.0 {
+                        self.empty_cd = EMPTY_CD;
+                        ps.push_event(SimEvent::LowInk { owner_slot: a.slot });
+                    }
+                    return;
+                }
+                self.charging = true;
+                self.charge = 0.0;
+                self.charge_t = 0.0;
+                self.charge_dinged = false;
+            }
+            // JS L192-196: charge builds on the S-curve, capped by the ink.
+            let max_charge = clamp_f(a.ink / cw.ink_full, 0.0, 1.0);
+            // JS's double sum of `dt/chargeTime` overshoots 1.0 on the final
+            // frame and clamps exactly there; an f32 sum lands ~3e-7 low, so
+            // the clock snaps to 1.0 within an ULP-scale tolerance to keep
+            // the full-charge latch and the release value JS-observable.
+            let next = self.charge_t + dt / cw.charge_time;
+            self.charge_t = if next > 1.0 - 1e-6 { 1.0 } else { next };
+            let t = self.charge_t;
+            let curve = if t < 0.2 {
+                t * 1.25
+            } else {
+                0.25 + (t - 0.2) * 0.9375
+            };
+            self.charge = max_charge.min(curve);
+            // JS L199-203: the full-charge ding is audio/rumble only; the
+            // latch mirrors the state write.
+            if self.charge >= 1.0 && !self.charge_dinged {
+                self.charge_dinged = true;
+            }
+        } else if self.charging {
+            // JS L204-215: release. `c` floors at 0.12 so a tap still fires.
+            self.charging = false;
+            let c = self.charge.max(0.12);
+            a.ink = (a.ink - cw.ink_full * c).max(0.0);
+            a.note_fired();
+            self.charger_release = Some(c);
+            self.charge = 0.0;
+            self.charge_t = 0.0;
+            self.firing_t = FIRING_T;
+            self.cooldown = 0.28; // JS L214
+        }
+    }
+
+    /// JS `_spinner` (weapons.js L450-486): hold to spin up (linear charge,
+    /// no S-curve), release to fire a stream whose length, speed and reach
+    /// follow the charge. The stream is a burst of `fireStream` rounds
+    /// driven by `burstT`/`streamCd` — *not* the retired splatling's
+    /// `streaming`/`burstFrac` state (JS L381-426), so the `ch` tick slot
+    /// stays `charge` (0 during the burst) and `F.charging` covers the
+    /// spin-up only (spec §3).
+    fn spinner(
+        &mut self,
+        dt: f32,
+        gate: &FireGate,
+        a: &mut Actor,
+        w: &WeaponSet,
+        ps: &mut ProjectileSim,
+    ) {
+        let sp = &w.spinner;
+        if self.burst_t > 0.0 {
+            // JS L452-461: stream phase.
+            self.burst_t -= dt;
+            self.stream_cd -= dt;
+            self.firing_t = 0.2; // JS L453
+            a.note_fired();
+            let mut guard = 0;
+            while self.stream_cd <= 0.0 && guard < 4 {
+                guard += 1;
+                let sd = self.spread_deg(a.grounded, WeaponKind::Spinner, w);
+                ps.fire_stream(a, sp, self.burst_power, sd, None);
+                self.stream_cd += sp.fire_interval;
+            }
+            if self.burst_t <= 0.0 {
+                self.burst_t = 0.0;
+                self.cooldown = 0.2; // JS L458
+            }
+            return;
+        }
+        if gate.fire && self.cooldown <= 0.0 {
+            if !self.charging {
+                // JS L465: a spin needs at least 15 % of `inkFull`.
+                if a.ink < sp.ink_full * 0.15 {
+                    if self.empty_cd <= 0.0 {
+                        self.empty_cd = EMPTY_CD;
+                        ps.push_event(SimEvent::LowInk { owner_slot: a.slot });
+                    }
+                    return;
+                }
+                self.charging = true;
+                self.charge = 0.0;
+                self.charge_t = 0.0;
+                self.charge_dinged = false;
+            }
+            // JS L469-470: linear charge clock, ink-capped (same f32 snap
+            // as the charger clock above).
+            let next = self.charge_t + dt / sp.charge_time;
+            self.charge_t = if next > 1.0 - 1e-6 { 1.0 } else { next };
+            self.charge = clamp_f(a.ink / sp.ink_full, 0.0, 1.0).min(self.charge_t);
+            if self.charge >= 1.0 && !self.charge_dinged {
+                self.charge_dinged = true;
+            }
+        } else if self.charging {
+            // JS L478-485: release into the burst.
+            self.charging = false;
+            let c = self.charge.max(0.15);
+            a.ink = (a.ink - sp.ink_full * c).max(0.0);
+            self.burst_power = c;
+            self.burst_t = lerp(sp.burst_min, sp.burst_max, c);
+            self.burst_dur = self.burst_t;
+            self.stream_cd = 0.0;
+            self.charge = 0.0;
+            self.charge_t = 0.0;
+        }
+    }
+
+    /// JS `_bucket` (weapons.js L434-447): a short wind-up swing (`flick`),
+    /// then the arc volley leaves (`fireSlosh`); holding fire keeps hurling
+    /// once the cooldown clears. A fresh throw may start from a tap
+    /// (`pressed`), not only a held trigger (JS L441 `inp.fire ||
+    /// inp.firePressed`).
+    fn bucket(
+        &mut self,
+        dt: f32,
+        gate: &FireGate,
+        a: &mut Actor,
+        w: &WeaponSet,
+        ps: &mut ProjectileSim,
+    ) {
+        let bw = &w.bucket;
+        if self.flick >= 0.0 {
+            self.flick += dt;
+            if self.flick >= bw.windup {
+                self.flick = -1.0;
+                ps.fire_slosh(a, bw, None);
+                self.cooldown = bw.fire_interval - bw.windup; // JS L438
+                self.firing_t = FIRING_T;
+            }
+            return;
+        }
+        if !(gate.fire || gate.pressed) || self.cooldown > 0.0 {
+            return;
+        }
+        if a.ink < bw.ink_per_shot {
+            if self.empty_cd <= 0.0 {
+                self.empty_cd = EMPTY_CD;
+                ps.push_event(SimEvent::LowInk { owner_slot: a.slot });
+            }
+            return;
+        }
+        a.ink -= bw.ink_per_shot;
+        a.note_fired();
+        self.flick = 0.0; // JS L444
+    }
+
     /// JS `_twinDodge` (weapons.js L529-548): jump tapped while firing and
     /// moving → a dodge roll instead. Returns true when a roll started (or
     /// was queued), which the caller uses to swallow the jump press.
@@ -1116,6 +1367,21 @@ impl WeaponRunner {
     #[must_use]
     pub fn burst_frac(&self) -> f32 {
         self.burst_frac
+    }
+
+    /// JS `this.charging` (the `F.charging` flag, netmatch.js L732; the
+    /// charger / spinner spin-up window, Task 31).
+    #[must_use]
+    pub fn charging_flag(&self) -> bool {
+        self.charging
+    }
+
+    /// JS `wr.flick >= 0` (the `F.flick` flag, netmatch.js L740; the
+    /// bucket wind-up window, Task 31 — `flick` counts 0..windup while a
+    /// throw is winding up and −1 otherwise).
+    #[must_use]
+    pub fn flick_flag(&self) -> bool {
+        self.flick >= 0.0
     }
 
     /// The brolly kit, created lazily like JS `kitOf` (brolly.js L48-61).
@@ -1257,6 +1523,18 @@ pub struct ProjectileSim {
     /// `BTreeMap` for deterministic snapshot serialisation).
     #[serde(default)]
     pending: BTreeMap<u64, PendingHit>,
+    /// Bucket volley group counter (JS `volley = { hit: new Set() }` per
+    /// `fireSlosh` throw, weapons.js L1316; the sim ids the group instead).
+    #[serde(default)]
+    volley_next: u32,
+    /// `(group, victim_actor_index)` already hurt by a volley blob (JS
+    /// `p.volley.hit` — the per-throw Set, L1599).
+    #[serde(default)]
+    volley_hits: BTreeMap<(u32, usize), ()>,
+    /// Live blob count per volley group: the group's hit Set is dropped when
+    /// its last blob despawns (JS lets the Set go with the blobs).
+    #[serde(default)]
+    volley_alive: BTreeMap<u32, usize>,
 }
 
 impl ProjectileSim {
@@ -1269,6 +1547,9 @@ impl ProjectileSim {
             time: 0.0,
             blast_seq: 0,
             pending: BTreeMap::new(),
+            volley_next: 0,
+            volley_hits: BTreeMap::new(),
+            volley_alive: BTreeMap::new(),
         }
     }
 
@@ -1469,6 +1750,329 @@ impl ProjectileSim {
         self.push_round(a, &spec, m, dir, life, false, None, true);
     }
 
+    /// JS `Projectiles.fireStream` (weapons.js L1335-1353): the spinner's
+    /// stream shot — a shooter-family round whose speed / straight phase /
+    /// range follow the burst power (L1338), fired through
+    /// [`Self::fire_round`] so the RNG order matches JS (`_spread` draws,
+    /// then the blob seed).
+    pub fn fire_stream(
+        &mut self,
+        a: &Actor,
+        w: &Spinner,
+        power: f32,
+        spread_deg: f32,
+        aim_point: Option<Vec3>,
+    ) {
+        let speed = lerp(w.speed_min, w.speed_max, power);
+        let straight = lerp(w.straight_min, w.straight_max, power);
+        let range = lerp(w.range_min, w.range_max, power);
+        let spec = RoundSpec {
+            proj_speed: speed,
+            straight_time: straight,
+            range,
+            grav: PROJ_GRAV, // JS L1339/1342 `28`
+            drag: PROJ_DRAG, // JS L1339/1342 `0.8`
+            size: 0.12,      // JS L1342
+            life: 1.3,       // JS L1342
+            impact_radius: w.impact_radius,
+            damage: w.damage,
+            trail_every: w.trail_every,
+            trail_radius: w.trail_radius,
+            trail_start: -(2.2 - w.trail_every), // JS L1342
+        };
+        self.fire_round(a, &spec, spread_deg, aim_point);
+    }
+
+    /// JS `Projectiles._lobAim` (weapons.js L997-1025): the lowest launch
+    /// pitch whose arc passes through `target`, swept with the integrator
+    /// `update()` uses (gravity + drag from launch) and bisected at the
+    /// first crossing. Keeps `dir`'s heading; leaves it alone (returns
+    /// false) when the target is out of reach. No RNG draws (deterministic
+    /// solver), `SIM_DT` steps like the ballistic solver.
+    fn lob_aim(
+        from: Vec3,
+        dir: &mut Vec3,
+        target: Vec3,
+        speed: f32,
+        grav: f32,
+        drag: f32,
+        max_dist: f32,
+    ) -> bool {
+        let hd = ((target.x - from.x).powi(2) + (target.z - from.z).powi(2)).sqrt();
+        if hd < 1.0 || hd > max_dist {
+            return false;
+        }
+        let dy = target.y - from.y;
+        let f = |pitch: f32| -> f32 {
+            let mut vh = pitch.cos() * speed;
+            let mut vy = pitch.sin() * speed;
+            let (mut x, mut y) = (0.0f32, 0.0f32);
+            for _ in 0..180 {
+                let (px, py) = (x, y);
+                vy -= grav * SIM_DT;
+                let k = 1.0 - drag * SIM_DT;
+                vh *= k;
+                vy *= k;
+                x += vh * SIM_DT;
+                y += vy * SIM_DT;
+                if x >= hd {
+                    return py + (y - py) * ((hd - px) / (x - px).max(1e-6)) - dy;
+                }
+                if y < dy - 8.0 {
+                    break;
+                }
+            }
+            -1e3
+        };
+        let mut fp = f(-0.6);
+        let mut p = -0.58f32;
+        while p <= 1.2 {
+            let fv = f(p);
+            if fp < 0.0 && fv >= 0.0 {
+                let mut lo = p - 0.02;
+                let mut hi = p;
+                for _ in 0..10 {
+                    let mid = (lo + hi) / 2.0;
+                    if f(mid) >= 0.0 {
+                        hi = mid;
+                    } else {
+                        lo = mid;
+                    }
+                }
+                let h = dir.x.hypot(dir.z);
+                let hdir = if h == 0.0 { 1.0 } else { h }; // JS `|| 1`
+                let cp = hi.cos();
+                *dir = vec3(dir.x / hdir * cp, hi.sin(), dir.z / hdir * cp);
+                return true;
+            }
+            fp = fv;
+            p += 0.02;
+        }
+        false
+    }
+
+    /// JS `Projectiles.fireSlosh` (weapons.js L1307-1332): the bucket's
+    /// volley — `blobs` heavy blobs thrown along the aim, the default arc
+    /// lifted by `lob` (sails over cover) and bent onto the crosshair by
+    /// [`Self::lob_aim`] when it is in reach. The lead blob is fastest and
+    /// fattest; each later blob tapers speed (`1 − i·0.075`), size
+    /// (`0.22 − i·0.02`) and paint radius (`1 − i·0.08`), and starts
+    /// `0.12 m` further back along the throw direction. RNG order per blob:
+    /// side jitter → pitch jitter → blob seed (3 draws × blobs); one
+    /// `weapon:fire` per throw (JS L1330).
+    pub fn fire_slosh(&mut self, a: &Actor, w: &Bucket, aim_point: Option<Vec3>) {
+        let m = Self::muzzle(a);
+        let mut dir = Self::aim_from(a, m, aim_point);
+        // JS L1312-1313: lift the aim by the lob, keeping the heading.
+        let h0 = dir.x.hypot(dir.z);
+        let hd0 = if h0 == 0.0 { 1.0 } else { h0 }; // JS `|| 1`
+        let p0 = dir.y.atan2(hd0) + w.lob;
+        dir = vec3(dir.x / hd0 * p0.cos(), p0.sin(), dir.z / hd0 * p0.cos());
+        // JS L1314: bend the arc onto the crosshair when it's in reach.
+        if let Some(aim) = aim_point {
+            Self::lob_aim(m, &mut dir, aim, w.throw_speed, w.gravity, w.drag, w.reach);
+        }
+        let hd = dir.x.hypot(dir.z);
+        let pitch = dir.y.atan2(if hd == 0.0 { 1.0 } else { hd }); // JS L1315
+        let group = self.volley_next;
+        self.volley_next += 1;
+        let blobs = w.blobs as usize;
+        self.volley_alive.insert(group, blobs);
+        let yaw0 = dir.x.atan2(dir.z);
+        for i in 0..blobs {
+            let fi = i as f32;
+            // JS L1318: per-blob speed taper + side/pitch jitter.
+            let sp = w.throw_speed * (1.0 - fi * 0.075);
+            let side = (self.rng.next_f32() - 0.5) * 0.05;
+            let pi = pitch + (self.rng.next_f32() - 0.5) * 0.04;
+            let size = 0.22 - fi * 0.02; // JS L1321
+            let radius = w.impact_radius * (1.0 - fi * 0.08); // JS L1322
+            let yaw = yaw0 + side;
+            let cp = pi.cos();
+            let vdir = vec3(yaw.sin() * cp, pi.sin(), yaw.cos() * cp);
+            let pos = m - dir * (fi * 0.12); // JS L1324
+            let spec = RoundSpec {
+                proj_speed: sp,
+                straight_time: 0.0, // JS L1322 `straight: 0`
+                range: f32::INFINITY,
+                grav: w.gravity,
+                drag: w.drag,
+                size,
+                life: 2.2, // JS L1322
+                impact_radius: radius,
+                damage: w.damage,
+                trail_every: 1.6, // JS L1322
+                trail_radius: 0.42,
+                trail_start: 0.0, // JS L1322 `trail: 0`
+            };
+            self.push_round(a, &spec, pos, vdir, 2.2, false, None, false);
+            if let Some(p) = self.list.last_mut() {
+                p.below_falloff = w.below_falloff;
+                p.below_falloff_max = w.below_falloff_max;
+                p.volley = Some(group);
+            }
+        }
+        self.push_event(SimEvent::Fire {
+            owner_slot: a.slot,
+            team: a.team,
+            muzzle: m,
+            dir,
+            charge: None,
+            len: None,
+        });
+    }
+
+    /// JS `Projectiles.fireCharger` (weapons.js L1238-1303, minus the
+    /// boss/subs/specials cuts L1245-1246/L1259-1263 and the presentation
+    /// tail): the full hitscan beam — world raycast, nearest enemy capsule
+    /// along the beam (`+0.12` capsule pad, `+0.14` hit threshold, JS
+    /// L1252-1253), damage routed like a body hit (`applyHit` L1264, before
+    /// the paint), the ground-projected line splat (L1266-1272) and the
+    /// terminal splat on a world hit with no victim (L1273-1278). RNG
+    /// order: line seeds (one per ground hit) → terminal seed. The beam
+    /// ribbon's `uSeed` (L1293) is presentation-only and not drawn (same
+    /// rule as the shooter `vis`, Task 29 deviation).
+    #[allow(clippy::too_many_arguments)]
+    pub fn fire_charger(
+        &mut self,
+        owner_slot: usize,
+        team: usize,
+        m: Vec3,
+        dir: Vec3,
+        charge: f32,
+        cw: &Charger,
+        world: &CollisionWorld,
+        actors: &mut [Actor],
+        paint: &mut PaintGrid,
+        t: &PlayerTuning,
+        remote: Option<&[bool]>,
+    ) {
+        // JS L1241-1244: range and damage follow the charge.
+        let range = lerp(cw.range_min, cw.range_max, charge);
+        let dmg = if charge >= 0.999 {
+            cw.damage_max
+        } else {
+            lerp(cw.damage_min, cw.damage_max * 0.62, charge)
+        };
+        let hit = world.raycast(m, dir, range, true);
+        let mut len = if hit.hit { hit.dist } else { range };
+        // JS L1247-1257: the first enemy along the beam (nearest wins).
+        let mut victim: Option<(usize, f32)> = None;
+        {
+            let end = m + dir * len;
+            for (ei, e) in actors.iter().enumerate() {
+                if e.team == team || !e.alive {
+                    continue;
+                }
+                let h = if e.form == Form::Squid {
+                    t.squid_height
+                } else {
+                    t.height
+                };
+                let base = vec3(e.pos.x, e.visual_y(), e.pos.z);
+                let res = segment_capsule_dist(m, end, base, t.radius + 0.12, h);
+                if res.dist < t.radius + 0.14 {
+                    let d = res.t * len;
+                    let better = match victim {
+                        Some((_, vd)) => d < vd,
+                        None => true,
+                    };
+                    if better {
+                        victim = Some((ei, d));
+                    }
+                }
+            }
+        }
+        if let Some((_, d)) = victim {
+            len = d;
+        }
+        // JS L1264: the beam stops on the victim and hurts them — before
+        // the paint, like JS's emit order (`hit` then `weapon:fire/impact`).
+        if let Some((ei, _)) = victim {
+            let (victim_slot, victim_team) = (actors[ei].slot, actors[ei].team);
+            let send = remote.is_some_and(|rm| rm.get(ei).copied().unwrap_or(false));
+            if send {
+                self.push_event(SimEvent::HitSend {
+                    attacker_slot: owner_slot,
+                    victim_slot,
+                    victim_team,
+                    team,
+                    damage: dmg,
+                });
+            } else {
+                let outcome = apply_hit(actors, ei, dmg, Some((team, owner_slot)), t);
+                self.push_event(SimEvent::Hit {
+                    attacker_slot: owner_slot,
+                    victim_slot,
+                    team,
+                    damage: dmg,
+                    killed: outcome.killed,
+                });
+            }
+        }
+        // JS L1265-1272: paint along the line, projected to the ground.
+        let mut area = 0.0;
+        let mut s = 1.2f32;
+        while s < len - 0.3 {
+            let g = world.raycast(m + dir * s, -Vec3::Y, 3.5, true);
+            if g.hit {
+                let seed = self.rng.next_f32();
+                area += paint.splat(
+                    world,
+                    g.point + g.normal * 0.1,
+                    cw.line_radius * (0.8 + charge * 0.4),
+                    team,
+                    &SplatOpts {
+                        seed,
+                        stretch: Some(dir),
+                        stretch_amt: Some(1.2),
+                        kind: None,
+                    },
+                );
+            }
+            s += cw.line_splat_every;
+        }
+        // JS L1273-1278: the terminal splat only on a world hit with no body.
+        let rad = cw.impact_radius * (0.6 + 0.4 * charge);
+        let mut normal = -dir;
+        if hit.hit && victim.is_none() {
+            let seed = self.rng.next_f32();
+            area += paint.splat(
+                world,
+                hit.point + hit.normal * 0.12,
+                rad,
+                team,
+                &SplatOpts {
+                    seed,
+                    stretch: Some(dir),
+                    stretch_amt: Some(0.6),
+                    kind: None,
+                },
+            );
+            normal = hit.normal;
+        }
+        // JS L1280-1284: the fire event carries the beam's charge/len (the
+        // remote `_ghostBeam` input); the impact lands at the beam end and
+        // `a.addTurf(area)` rides its `area` field.
+        self.push_event(SimEvent::Fire {
+            owner_slot,
+            team,
+            muzzle: m,
+            dir,
+            charge: Some(charge),
+            len: Some(len),
+        });
+        self.push_event(SimEvent::Impact {
+            pos: m + dir * len,
+            normal,
+            team,
+            radius: rad,
+            victim_slot: victim.map(|(ei, _)| actors[ei].slot),
+            owner_slot,
+            area,
+        });
+    }
+
     /// Shared spawn tail of [`Self::fire_round`] / [`Self::fire_blaster`] /
     /// [`Self::fire_twin`] / the brolly pellets (JS `_new`, `Object.assign`,
     /// `_push` and the `weapon:fire` emit): draw the blob seed, push the
@@ -1508,6 +2112,9 @@ impl ProjectileSim {
             blast,
             pellet,
             ghost: false,
+            below_falloff: 0.0,
+            below_falloff_max: 0.0,
+            volley: None,
         });
         if emit_fire {
             self.push_event(SimEvent::Fire {
@@ -1515,6 +2122,8 @@ impl ProjectileSim {
                 team: a.team,
                 muzzle: m,
                 dir,
+                charge: None,
+                len: None,
             });
         }
     }
@@ -1578,6 +2187,18 @@ impl ProjectileSim {
         while i > 0 {
             i -= 1;
             if self.step_one(dt, world, actors, paint, t, w, i, remote, shields, owner) {
+                // JS lets the per-throw `volley.hit` Set die with its blobs
+                // (the object is shared, weapons.js L1316/L1599): drop the
+                // group's hit record when its last blob despawns.
+                if let Some(g) = self.list[i].volley
+                    && let Some(n) = self.volley_alive.get_mut(&g)
+                {
+                    *n = n.saturating_sub(1);
+                    if *n == 0 {
+                        self.volley_alive.remove(&g);
+                        self.volley_hits.retain(|&(gg, _), _| gg != g);
+                    }
+                }
                 self.list.swap_remove(i);
             }
         }
@@ -1730,7 +2351,7 @@ impl ProjectileSim {
         // ---- actors: enemy capsules only (JS `e.team === p.team || !e.alive`
         // skip). The victim's *visual* body is the hitbox (JS `hitBase`).
         // Gather the hit first, apply damage after the scan (borrow shape).
-        let mut body_hit: Option<(usize, Vec3, Vec3, f32)> = None;
+        let mut body_hit: Option<(usize, Vec3, Vec3, f32, f32)> = None;
         for (si, e) in actors.iter().enumerate() {
             if e.team == self.list[idx].team || !e.alive {
                 continue;
@@ -1750,24 +2371,32 @@ impl ProjectileSim {
             let base = vec3(e.pos.x, e.visual_y(), e.pos.z);
             let res = segment_capsule_dist(p.prev, p.pos, base, hr, h);
             if res.dist < hr * HITBOX_R_MUL + p.size {
+                // JS L1599-1600: bucket volley — a blob whose throw already
+                // landed on this victim passes through to the next enemy.
+                if let Some(g) = p.volley {
+                    if self.volley_hits.contains_key(&(g, si)) {
+                        continue;
+                    }
+                    self.volley_hits.insert((g, si), ());
+                }
                 let at = p.prev.lerp(p.pos, res.t);
                 let n = -p.vel.normalize_or_zero();
-                body_hit = Some((si, at, n, p.radius * 0.5));
+                // JS L1605: bucket below-falloff — full damage at any range,
+                // less only when the target stands below the thrower.
+                let mut dmg = p.damage;
+                if p.below_falloff > 0.0 {
+                    dmg *= 1.0
+                        - ((p.start.y - (e.pos.y + 0.8) - 0.5) * p.below_falloff)
+                            .clamp(0.0, p.below_falloff_max);
+                }
+                body_hit = Some((si, at, n, p.radius * 0.5, dmg));
                 break;
             }
         }
-        if let Some((si, at, n, r)) = body_hit {
-            let (owner_slot, dmg, team, blast, pellet, start, ghost) = {
+        if let Some((si, at, n, r, dmg)) = body_hit {
+            let (owner_slot, team, blast, pellet, start, ghost) = {
                 let p = &self.list[idx];
-                (
-                    p.owner_slot,
-                    p.damage,
-                    p.team,
-                    p.blast,
-                    p.pellet,
-                    p.start,
-                    p.ghost,
-                )
+                (p.owner_slot, p.team, p.blast, p.pellet, p.start, p.ghost)
             };
             let victim_slot = actors[si].slot;
             let victim_team = actors[si].team;

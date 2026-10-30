@@ -183,6 +183,14 @@ pub enum MatchEvent {
         owner: (usize, usize),
         muzzle: Vec3,
         dir: Vec3,
+        /// Charger beam charge (JS weapons.js L1281: only `fireCharger`
+        /// attaches `charge`/`len` to the `weapon:fire` payload — the remote
+        /// `_ghostBeam` input). `None` for every other shot.
+        #[serde(default)]
+        charge: Option<f32>,
+        /// Beam length in metres (JS L1281, same charger-only rule).
+        #[serde(default)]
+        len: Option<f32>,
     },
 }
 
@@ -577,6 +585,35 @@ impl Match {
             if let Some(c) = r.brolly_launch.take() {
                 self.launched.push(c);
             }
+            // D-T31-1: the charger's hitscan fires here, not inside the
+            // runner (which has no actor list for the victim scan). Same
+            // frame position as JS's inline `fireCharger` call (weapons.js
+            // L205): the actor's pose/aim is untouched in between, so the
+            // muzzle, the aim and the RNG draw order all match JS.
+            // Residual (recorded): JS steps each actor move-then-weapon
+            // serially (match.js L228), so a JS beam sees victims with
+            // index > i still on their *previous* frame's positions, while
+            // the sim's two-pass loop has already moved every actor. The
+            // victim scan can therefore differ by up to one frame of
+            // motion (~0.13 m at 8 m/s) on near-miss beams.
+            if let Some(c) = r.charger_release.take() {
+                let (slot, team) = (a.slot, a.team);
+                let m = ProjectileSim::muzzle(a);
+                let dir = ProjectileSim::aim_from(a, m, None);
+                self.projectiles.fire_charger(
+                    slot,
+                    team,
+                    m,
+                    dir,
+                    c,
+                    &w.charger,
+                    world.collision,
+                    &mut self.actors,
+                    &mut self.paint,
+                    t,
+                    remote,
+                );
+            }
         }
 
         // ---- soft push between actors (JS match.js L231-244; offline every
@@ -746,11 +783,15 @@ impl Match {
                     team,
                     muzzle,
                     dir,
+                    charge,
+                    len,
                 } => {
                     self.events.push(MatchEvent::Fire {
                         owner: (*team, *owner_slot),
                         muzzle: *muzzle,
                         dir: *dir,
+                        charge: *charge,
+                        len: *len,
                     });
                 }
                 // JS `recKit` (netmatch.js L134-137): a kit world-object
