@@ -1,0 +1,41 @@
+=== clippy ===
+[1m[92m    Finished[0m ]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\`dev` profile [unoptimized + debuginfo]]8;;\ target(s) in 1.09s
+CLIPPY_EXIT=0
+=== test ===
+test ui::online::tests::tr24_error_copy_matches_errmap ... ok
+test ui::online::tests::tr24_settle_error_routing ... ok
+test result: ok. 62 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.12s
+test result: ok. 189 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 6.24s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.00s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.36s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+TEST_DONE
+=== wasm32 check ===
+[1m[92m    Finished[0m ]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\`dev` profile [unoptimized + debuginfo]]8;;\ target(s) in 0.85s
+WASM_EXIT=0
+=== trunk build ===
+[1m[92m    Finished[0m ]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\`release` profile [optimized]]8;;\ target(s) in 20.73s
+2026-10-16T16:17:45.049884Z  INFO applying new distribution
+2026-10-16T16:17:45.054281Z  INFO ✅ success
+TRUNK_EXIT=0
+=== headless ===
+[inkwave] boot: sim crate 0.1.0-m1 (headless = true)
+[inkwave] headless frames complete
+HEADLESS_EXIT=0
+=== fmt (prepended section) ===
+FMT_EXIT=0 (no diff)
+=== cargo tree -p inkwave_sim ===
+inkwave_sim v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave_sim)
+[2m├──[0m glam v0.30.10
+[2m├──[0m serde v1.0.229
+[2m└──[0m serde_json v1.0.151
+=== JS tree git status ===
+JS_TREE_CLEAN (empty above)

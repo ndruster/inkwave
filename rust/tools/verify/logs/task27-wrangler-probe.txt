@@ -1,0 +1,3 @@
+HANDSHAKE: HTTP/1.1 101 Switching Protocols
+FRAME: {"t":"welcome","id":"K4PZ","host":"K4PZ","members":[{"id":"K4PZ","name":"RustProbe"}]}
+WELCOME_OK id=K4PZ host=K4PZ members=[{"id":"K4PZ","name":"RustProbe"}]

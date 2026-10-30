@@ -113,7 +113,68 @@ node rust/tools/verify/wasm-smoke.mjs http://localhost:8002/index.html 60 9222
 M1 其余渲染为固定简化档（无 GTAO/bloom/SMAA/tilt-shift，材质为 pattern 最小子集）；
 后处理与画质档位属于 M2+，见 PORT_MAP。
 
-## 3. 数据提取
+## 3. 联网运行（M2）
+
+联网协议为 PROTO v1，wire 格式与上游 JS 客户端（`src/net/`）**逐字节兼容**
+（金标准 fixture `rust/assets/net-fixtures.json`），`server/` relay **零改动**：
+Rust 客户端直连同一 relay。线上 relay 是 Cloudflare Worker（`server/`，本地
+`wrangler dev` 起服——开发沙箱可达：Task 19 对真实 Worker 复跑 TR-19.1 场景 8/8 交叉验证
+shim 语义；Task 27 实证 Rust 客户端形态的 Origin + PROTO v1 join 握手被真实 Worker 放行
+并收到 welcome，见 `rust/tools/verify/logs/task27-wrangler-probe.txt`）；离线/测试用
+**仅测试**的原生 shim（`rust/tools/relay-shim/`，语义复刻 `server/` 房间规则，
+**不是部署替代**）。Rust 客户端直连真实 Worker 的完整对局路径与部署端 relay 未验证，
+复核项见 `.trae/specs/rust-bevy-port-m2/REVIEW_CHECKLIST.md` §7。
+
+### 本地 relay（测试 shim）
+
+```bash
+cd rust
+cargo run -p relay-shim                  # ws://127.0.0.1:8787
+cargo run -p relay-shim -- 8791          # 指定端口
+```
+
+### 双端连房（native ↔ native）
+
+```bash
+# 终端 2/3（rust/ 目录）：两个原生客户端同房
+cargo run -p inkwave -- --relay=ws://127.0.0.1:8787   # 窗口 A：Play Online → Create → 记房间码
+cargo run -p inkwave -- --relay=ws://127.0.0.1:8787   # 窗口 B：Play Online → 输入房间码 → Join
+```
+
+guest 在 lobby Ready、host Start 开新局。host 掉线 → 最老成员迁移接管；guest 掉线 →
+host 以其最后可见状态转 bot（≡ JS session 语义）。
+
+### wasm 客户端（浏览器）
+
+`trunk serve`（第 2 节）起服后，浏览器打开：
+
+```text
+http://localhost:8080/?relay=ws://127.0.0.1:8787&net=create&netdur=60&netstart&autopilot&netprobe   # 建房
+http://localhost:8080/?relay=ws://127.0.0.1:8787&netjoin=<CODE>&netready&autopilot&netprobe          # 加入
+```
+
+`net=create` / `netjoin` / `netready` / `netstart` / `netdur` / `autopilot` / `netprobe` 是
+**test-only query 接缝**（`crates/inkwave/src/nettest.rs`，等价于 JS 侧 `__G.net` /
+`?skipTitle&autopilot` 先例），向浏览器 console 打 `[nettest] boot/code/lobby/err/probe`
+证据行供冒烟脚本断言；正常游玩不使用这些参数，走鼠标/键盘大厅 UI。
+
+### 联网冒烟（CDP headless，仓库根执行）
+
+```bash
+node rust/tools/verify/net-smoke.mjs --scenario all   # A: wasm↔wasm 全流程；B: JS↔Rust 跨端握手
+```
+
+脚本自动拉起 shim 与静态服务器，以 `[nettest]` 证据行断言握手与远端 actor 移动；
+证据落 `rust/tools/verify/logs/net-smoke-<utc>.json`。无 GPU 沙箱判 DEGRADED
+（SwiftShader PBR 渲染限制，见第 2 节已知限制），真实 GPU 环境期望 PASS。
+
+### 跨端（JS 客户端 ↔ Rust 客户端）
+
+JS 客户端（`tools/serve.py`，只读）与 Rust 客户端可同房：wire 格式经金标准 fixture
+（`rust/assets/net-fixtures.json`）逐字节一致。沙箱实据：JS 大厅实收 Rust 客人
+（`REVIEW_CHECKLIST.md` §3，房间 `3UZ9X`）。
+
+## 4. 数据提取
 
 Rust 侧所有关卡/数值 JSON 由 node 管线从上游 JS 求值生成，**禁止手抄数值**：
 
@@ -127,7 +188,7 @@ bash tools/extract/run-all.sh     # 重新生成 assets/tuning.json + assets/map
 - 产物确定性：同一上游提交重复运行不产生 diff（TR-3.4 已验证）；改完跑 `cargo test -p inkwave_sim` 回归。
 - 交叉验证：`bash tools/verify/run-crosscheck.sh`（JS 与 Rust 碰撞查询逐点对照）。
 
-## 4. 上游同步
+## 5. 上游同步
 
 JS 树是 https://github.com/jaydendavisnc/inkwave 的零改动 fork（remote 名 `upstream`）。
 Rust 无法 `git merge` JS，工作流为：
@@ -140,7 +201,7 @@ bash tools/sync-upstream.sh update-baseline   # 全部处理完才推进基线
 ```
 
 - 当前基线：见 `SYNC_LEDGER.md` 与 `.upstream-baseline`；
-- 调参/关卡数据改动优先重跑第 3 节提取管线（一般零手工代码）；
+- 调参/关卡数据改动优先重跑第 4 节提取管线（一般零手工代码）；
 - `server/` relay 协议保持兼容；协议变更须同步 `inkwave_sim::net` 类型与 NET 文档注释。
 
 ## 门禁速查
@@ -150,8 +211,9 @@ cd rust
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
-cargo check --target wasm32-unknown-unknown -p inkwave_sim
+cargo check --target wasm32-unknown-unknown -p inkwave_sim -p inkwave
 cargo tree -p inkwave_sim            # 应仅 serde/serde_json/glam（sim 零引擎依赖）
 trunk build --release
+node rust/tools/verify/net-smoke.mjs # 联网冒烟（仓库根执行；沙箱 DEGRADED 语义见第 3 节）
 cd .. && git status --porcelain -- src tools server docs   # 上游树须为空
 ```

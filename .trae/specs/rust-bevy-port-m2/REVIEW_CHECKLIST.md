@@ -66,6 +66,43 @@ cargo run -p inkwave -- --relay=ws://127.0.0.1:8787
 `executablePath: '/Applications/Google Chrome.app/…'`；Linux 复跑需临时改为
 `/usr/bin/chromium-browser`（或设 `CHROME_PATH`），属 JS 基线工具，本端口不触碰。
 
+## 6. M2 远端角色播放平滑视觉复核（TR-22 playback 层）
+
+真 GPU 双窗口同房（命令同 §1），观察点：
+- 远端角色移动平滑（per-sender 时钟 + Hermite 插值），无 teleport 式跳变（host 权威
+  correction 触发的收敛除外）；
+- correction 触发时位置/朝向过渡视觉自然；
+- 墨汁/ghost/触发事件重放两端一致（Task 23 时间线）；
+- 结算页分数两端一致。
+
+量化口径已在 TR-25.2 定标为单测断言（kink p95≤5 cm、turn p95≤3°、path p95≤30 cm、
+teleports≤2/端）；本条为**视觉**复核，确认渲染层观感与数值口径一致。
+
+## 7. 真实 relay（部署端）完整对局复核
+
+本地 `wrangler dev`（真实 Worker）沙箱可达：Task 19 已复跑 TR-19.1 场景 8/8 全绿，
+Task 27 又实证 Rust 客户端形态的 Origin + PROTO v1 join 握手被真实 Worker 放行并收到
+welcome（`rust/tools/verify/logs/task27-wrangler-probe.txt`：`HTTP/1.1 101` + `{"t":"welcome","id":"K4PZ",…}`）。
+**未验证**的是 Rust 客户端（NativeTransport/wasm）直连真实 Worker 的完整对局路径
+（tick 流量、RATE=90 限速、静默 sweep）与部署端 relay。可在用户机器执行：
+
+```bash
+cd server && npx wrangler dev        # 真实 Cloudflare Worker relay（本地）
+# Rust 原生客户端：cargo run -p inkwave -- --relay=ws://localhost:<port>
+# 或将 §2/§3 的 ?relay= 指向真实 relay 复跑
+```
+
+复核点：ORIGIN 白名单（`server/src/index.js` L22-23）放行 Rust 客户端 Origin 头；
+限速 RATE=90 msg/s、MSG_MAX=64KB、静默 sweep 行为与 shim 语义一致；JS↔Rust 跨端同房。
+
+## 8. M2 跨端握手总览（索引，非新增复核）
+
+- §2 wasm↔wasm（TR-26.1）：沙箱已证 boot/参数解析/真实 WS 可达；host 建房 welcome
+  证据行与完整局待复核。
+- §3 JS↔Rust（TR-26.2）：沙箱已证 JS 大厅实收 Rust 客人（房间 `3UZ9X`）；
+  Rust 侧 welcome/tick 段待复核。
+- §4 native↔wasm：沙箱无 DISPLAY 未跑，整体待复核。
+
 ## 复跑证据落盘位置
 
 `rust/tools/verify/logs/net-smoke-<utc>.json`（tabs 原始 console 行 + 场景判定）。

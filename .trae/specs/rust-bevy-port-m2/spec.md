@@ -136,4 +136,4 @@
 ## Open Questions
 - [x] FR-M2-2 fixture 引导路径：node 直接 import `src/net/netmatch.js`（three/ctx 依赖能否在 node 下 stub）vs 复刻 packer——Task 17 实施时定，降级方案已在文内。（**已落定 2026-10-08**：源码切片 + `new Function` eval 驱动真实 packer + 32 条上游字面量锚定，见 tasks.md Task 17 Completion Evidence。）
 - [x] 原生 WS 库选型（tungstenite 线程模型 vs 其他）——Task 18 实施时定并记 PORT_MAP。（**已落定 2026-10-08**：tungstenite 0.26 同步 API + 独立 I/O 线程 + std::mpsc，TLS=rustls-tls-webpki-roots；wasm=web-sys WebSocket；详见 PORT_MAP transport.js 行与 tasks.md Task 18。）
-- [ ] AC-M2-3 的 kink/path-error 数值门限——先产出 Rust 侧统计，对照 JS net-test 报告后评审定标。
+- [x] AC-M2-3 的 kink/path-error 数值门限——先产出 Rust 侧统计，对照 JS net-test 报告后评审定标。（**已定标 2026-10-16**：kink p95≤5 cm、turn p95≤3°、path p95≤30 cm、teleports≤2/端且总≤5、spike 离群仅报告；写入 `net-harness/tests/e2e_match.rs` 断言，见 tasks.md Task 25 审查定标记录。）

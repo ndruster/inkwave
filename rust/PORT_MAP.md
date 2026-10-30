@@ -1,7 +1,7 @@
 # JS → Rust 模块对照表（PORT MAP）
 
 上游 JavaScript 模块与 Rust 工作区模块的对应关系，供上游同步时快速定位。
-状态：`M1`（本里程碑移植）· `M2+`（后续里程碑）· `skip`（Rust 侧不适用）。
+状态：`M1`（M1 移植）· `M2 done`（M2 移植）· `M2+`（后续里程碑）· `skip`（Rust 侧不适用）。
 
 ## 技术栈基线
 
@@ -16,6 +16,10 @@
 ## M1 完成核对（Task 16）
 
 Task 9–15 已闭环，上表所有标 `M1` 的行均已落地：sim 侧（物理/角色/武器 Spritzer/对战涂地/easy bot/nav/墨汁覆盖网格/net 类型骨架）与 bevy 侧（输入/相机/世界几何/墨汁图集渲染/角色体块占位/菜单-HUD-结算 UI/占位音效）。标 `M2+` 的行为**未移植**，逐项范围见各行"移植备注"；标 `skip` 的 Rust 侧不适用。运行入口与门禁见 [README.md](./README.md)。
+
+## M2 完成核对（Task 27）
+
+Task 17–26 已闭环：联网链路全栈落地——codec（逐字节金标准）、双端 transport（native tungstenite 线程 / wasm web-sys）、NetSession 状态机、权威切分与 host 职责、播放层（per-sender 时钟 + Hermite + correction）、事件时间线重放、极简大厅 UI、Rust↔Rust 端到端完整局、浏览器联网冒烟与 JS↔Rust 跨端握手。上表标 `M2 done` 的行均已落地；`server/` 与 JS 树零改动（门禁实核）。M2 未做的行（zones、sub/special/kit 武器、showcase 大厅、小地图、完整角色绑定、后处理链、boss 等）维持 `M2+`，顺延 M3+。需真实 GPU/桌面环境复核的联网条目登记于 `.trae/specs/rust-bevy-port-m2/REVIEW_CHECKLIST.md`。
 
 ## 质量档位
 
@@ -81,18 +85,21 @@ M1 渲染为**固定简化档**，唯一运行时可调项：
 | `src/audio/audio.js`（2505 行 WebAudio 合成） | `inkwave::audio` | M1（占位音效） | 过程化合成 M2+ |
 | `src/audio/music.js` / `bossAudio.js` | `inkwave::audio::music` | M2+ | |
 | `src/boss/*` | `inkwave_sim::boss` + 渲染 | M2+ | Boss 战 |
-| `src/net/netmatch.js`（825 行） | `inkwave_sim::net`（M1 类型/文档骨架） | M1（骨架） | PROTO v1 字段逐项注释；实现在 M2 |
-| `src/net/transport.js` | `inkwave_sim::net::transport`（trait + FakeTransport）/ `inkwave::net::transport`（native + wasm） | M2 Task 18 | **选型（spec OQ-2）**：native = `tungstenite` 0.26 同步 API + 独立线程 + `std::mpsc`（Bevy 主线程零阻塞），TLS 走 `rustls-tls-webpki-roots`（纯 Rust、离线可解析）；弃 `fastwebsockets`（tokio 异步栈，违反 sim/最小依赖纪律）。wasm = `web-sys` WebSocket。必须发合规 `Origin` 头过 relay ORIGIN_OK |
-| `src/net/session.js` / `mock.js` | `inkwave::net` | M2+ | relay 复用，协议不改 |
+| `src/net/netmatch.js`（825 行） | `inkwave_sim::net::{wire,session,replication,playback}`（事件重放在 `replication::play_events`） | M2 done | codec 与 JS packer 逐字节一致（金标准 `assets/net-fixtures.json`，Task 17）；session/replication/playback/replay 逐字平移（Task 20–25），Rust↔Rust 完整局一致性 TR-25.1 |
+| `src/net/transport.js` | `inkwave_sim::net::transport`（trait + FakeTransport）/ `inkwave::net::transport`（native + wasm） | M2 done | **选型（spec OQ-2）**：native = `tungstenite` 0.26 同步 API + 独立线程 + `std::mpsc`（Bevy 主线程零阻塞），TLS 走 `rustls-tls-webpki-roots`（纯 Rust、离线可解析）；弃 `fastwebsockets`（tokio 异步栈，违反 sim/最小依赖纪律）。wasm = `web-sys` WebSocket。必须发合规 `Origin` 头过 relay ORIGIN_OK |
+| `src/net/session.js` / `mock.js` | `inkwave_sim::net::session` + `inkwave::net`（transport 接线）+ `inkwave::ui::online`（极简大厅） | M2 done | relay 复用、协议不改（`server/` 零改动）；大厅 UI 为极简版（Task 24），showcase 3D 大厅场景未做（M2+） |
 
 ## 仓库其他部分
 
 | 路径 | 处理 | 状态 |
 |---|---|---|
-| `server/`（Cloudflare Worker relay，144 行） | **保留不改**；Rust 客户端 M2 直连现有 relay | M2 对接 |
+| `server/`（Cloudflare Worker relay，144 行） | **保留不改**；Rust 客户端直连现有 relay（协议兼容经 fixture 逐字节 + shim 语义复刻 + JS↔Rust 跨端冒烟验证；wrangler/部署 relay 复核见 REVIEW_CHECKLIST） | M2 验证 |
 | `electron/` | skip — 桌面端即原生 Rust 可执行文件 | skip |
 | `tools/serve.py` | `trunk serve`（wasm）/ 直接运行（native） | skip |
 | `tools/botlab/*` | `inkwave --headless` autopilot + JSON 输出 | M1（等价最小版） |
 | `tools/measure-handling.mjs` | sim 无头测量（TR-5.4 对照口径） | M1 |
-| `tools/net-test.mjs` / `tools/smoke.sh` | Rust 冒烟/网络一致性测试 | M2（net-test）/M1（smoke） |
+| `tools/net-test.mjs` / `tools/smoke.sh` | Rust 等价物 `rust/tools/verify/net-smoke.mjs` / `wasm-smoke.mjs` | M2 done（JS 基线工具只读未动） |
 | `build/*`、`tools/build-dist.py`、`tools/release-pages.sh` | cargo/trunk/未来发布脚本替代 | skip/M2+ |
+| （Rust 新增）`rust/tools/net-fixtures/gen.mjs` | 金标准捕获：node 侧 import 真实 `src/net/` packer → `rust/assets/net-fixtures.json` | M2 done（Task 17） |
+| （Rust 新增）`rust/tools/relay-shim/` | 仅测试用原生 relay（复刻 `server/` 房间语义：fan-out/选举/lock/ping/sweep；**非部署替代**） | M2 done（Task 19） |
+| （Rust 新增）`rust/tools/net-harness/` | 网络集成测试 harness（FakeRelay + 虚拟时钟；`tests/acceptance.rs`、`tests/e2e_match.rs` 完整局） | M2 done（Task 19/25） |

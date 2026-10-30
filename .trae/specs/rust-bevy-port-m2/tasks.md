@@ -318,7 +318,7 @@
   - **审核心验通过项**：JS 树零改动；锚点行号实核全部正确（match.js L112/L118、transport.js L43/L48、net-test.mjs L73/L77/L80-87/L85/L144、ui/mod.rs L1002/L1339-1341、online.rs L235-236、replication.rs L318-321/L331-333）；native 恒 None；`!autopilot` 守卫为原代码包裹、无接缝时行为不变；host/guest 分支与 JS 驱动等价；借用/let-chain/单测边界 ✅。
 
 ## Task 27: M2 收尾——门禁、台账、文档与总评审
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 26
 - **Description**:
@@ -329,6 +329,30 @@
   - `rule` TR-27.2: 文档逐条命令实际执行验证（README 联网章节）；证据为输出
   - `rule` TR-27.3: 独立审查 agent 无未闭环 Blocker/Major；证据为评审记录
 - **Notes**: 完成后提交 M2 里程碑并 push origin/main（沿用 M1 提交流程与身份环境变量）。
+
+### Task 27 Completion Evidence（2026-10-16）
+- **TR-27.1 ✅ 全量门禁矩阵**（同 M1 Task 16 口径；日志 `rust/tools/verify/logs/task27-gates-20261016T161626Z.log` 共 8 段）：`cargo fmt --all -- --check` 无 diff ✅；`cargo clippy --workspace --all-targets -- -D warnings` exit 0 ✅；`cargo test --workspace` **273 passed**（62 inkwave + 189 sim + shim 8 + harness/acceptance 5 + e2e_match 4 等；>147，基线 147→164→180→194→217→229→239→243→259→269→273 单调递增）✅；`cargo check --target wasm32-unknown-unknown -p inkwave_sim -p inkwave` ✅；`cargo tree -p inkwave_sim --depth 1` 仅 glam/serde/serde_json（sim 零引擎依赖不破）✅；`trunk build --release` ✅；原生 headless 120 帧 boot+complete ✅；`git status --porcelain -- src tools server docs` 空（JS 树 + `server/` 零改动）✅。
+- **TR-27.2 ✅ README 增「3. 联网运行」章节并逐条命令实跑验证**（原 3/4 节顺延 4/5；门禁速查补 wasm32 双 crate 与 net-smoke）：
+  ① `cargo run -p relay-shim -- 8796` 实测就绪（banner 打印 MSG_MAX=65536/RATE=90/sweep）；
+  ② `cargo run -p inkwave -- --relay=ws://127.0.0.1:8796`：参数解析通过、失败点为 winit 事件循环创建（`DISPLAY is not set`，沙箱无窗口环境；窗口视觉复核 = CHECKLIST §1），如实标注；
+  ③ dist 静态服务：`trunk build --release` 产物 + http.server（net-smoke 内同路径实跑）；
+  ④ wasm query URL 与冒烟命令：`node rust/tools/verify/net-smoke.mjs --scenario all --secs 25 --relay-port 8796 --dist-port 8496 --js-port 8495 --cdp-port 9226` **exit 0**——A=DEGRADED（`[nettest] boot` 参数解析 + `err Could not connect` + render-error 记录在案）、B=DEGRADED（JS host 建房 `L74QY` 成功；本轮 lobby 行为 null = stall 波动，join 落地实据仍以 09-55 记录为准），证据 `logs/net-smoke-2026-10-16T16-31-48-848Z.json`；
+  ⑤ 跨端说明引 §3 实据。
+  **追加实据（真实 Worker 探针）**：`npx wrangler dev --port 8799` Ready + raw WS（Origin `http://127.0.0.1:8495` + `/room/<code>?name&v=1&create=1`，即 Rust 客户端形态）→ `HTTP/1.1 101` + welcome（id=K4PZ），日志 `logs/task27-wrangler-probe.txt`——真实 Worker 放行 Rust 形态 Origin 与 PROTO v1 握手已在沙箱实证。
+- **台账/文档更新**：`PORT_MAP.md`（net 三行 `M2 done`、`server/` 行改 M2 验证、net-test 行 Rust 等价物、新增 shim/fixtures/harness 三行、「M2 完成核对（Task 27）」小节、图例加 `M2 done`）；`SYNC_LEDGER.md`（「M2 基线核对」：沙箱 fetch 网络不可达、脚本降级本地 refs，`upstream/main`=基线 `3e9b5505` 零新提交，github 远端不可达如实记录；「M2 移植说明」JS→Rust 逐块映射表 + fixture/harness/shim 纪律；「M2 新增依赖登记」4 行表，sim 零依赖不破）；`REVIEW_CHECKLIST.md` 追加 §6 远端角色播放平滑视觉复核（TR-22）、§7 真实 relay（部署端）完整对局复核、§8 跨端握手总览索引。
+- **TR-27.3 ✅ 独立总评审**（见下 Review 附录）：0 blocker / 2 major / 4 minor / 1 nit，全部闭环或说明不修；复审追加 1 处证据缺口亦修复；复审结论**可合入**。
+- **M2 里程碑**：Task 17–27 全部 completed。
+
+### Task 27 Review 附录（M2 总评审：0 blocker / 2 major / 4 minor / 1 nit → 修复后可合入 → 复审闭环）
+- **M-1 ✅**：README/SYNC_LEDGER/CHECKLIST §7 三处「真实 relay 沙箱不可达」措辞与 Task 19 记录矛盾（`wrangler dev` 本地 DO 可达且 TR-19.1 场景 8/8 交叉验证过）——改为「本地 wrangler dev 可达、shim 语义已交叉验证；未验证 = Rust 客户端直连真实 Worker 完整对局路径与部署端」，并新增真实 Worker 握手探针实证（见 TR-27.2 追加实据）。
+- **M-2 ✅**：PORT_MAP/SYNC_LEDGER/计划文档使用不存在的模块名 `net::codec`/`net::replay`——修正为 `inkwave_sim::net::wire`（Task 17 codec 实名）与 `net::replication::play_events`（事件时间线重放归属），与 `net.rs` L63-68 模块声明一致。
+- **m-1 ✅**：SYNC_LEDGER 依赖表 web-sys features 补全（`Performance`/`MessageEvent`/`CloseEvent`，对照 Cargo.toml L28-39）。
+- **m-2 ✅**：gates 日志补齐 fmt/`cargo tree`/JS 树三段（共 8 段完整留档）。
+- **m-3 ✅**：spec.md OQ-3（AC-M2-3 数值门限）勾选并注记定标值（与 e2e_match.rs 断言逐值一致）。
+- **m-4 ✅**：README §3 首句「完全兼容」→「wire 格式逐字节兼容」（spec Non-Goals：全武器跨端玩法留 M3）。
+- **n-1 ⏸（说明不修）**：Task 18 段称 TR-18.1「11 passed」而 `transport.rs` 现 12 个 `#[test]`——当时按模块过滤口径计数，与现全量口径无矛盾（门禁 273 以实跑为准）。
+- **复审追加 ✅**：§7「房间 TEST27P」断言不被 probe 日志支撑（welcome 帧无 room 字段）——删除房间号断言，改以日志实存的 `HTTP/1.1 101` + welcome `id=K4PZ` 为据（严格以落盘日志为准纪律）。
+- **总评审实核通过项**：门禁复跑 273 一致；REVIEW_CHECKLIST 全部「已证」断言有落盘日志支撑（`3UZ9X`/players 列表/boot/err 行/code 行缺失均 grep 实核）；JS 锚点抽核 12+ 处命中（transport.js L43/L48、match.js L112/L118、server L22-23、netmatch.js packer、session.js、net-test.mjs L73/L77/L80-87 等）；偏差声明覆盖 spec Non-Goals 与 AC 降级条款；README §3 命令逐条对码一致。
 
 ---
 
