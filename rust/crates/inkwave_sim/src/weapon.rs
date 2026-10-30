@@ -67,6 +67,7 @@
 //!     is the Task 8 match layer's job — the claimed m² rides the
 //!     [`SimEvent::Impact`] / [`SimEvent::Turf`] payloads to it.
 
+pub mod blade;
 pub mod brolly;
 
 use std::collections::BTreeMap;
@@ -75,8 +76,10 @@ use glam::{Vec3, vec3};
 
 use crate::actor::{Actor, FireGate, Form};
 use crate::collision::CollisionWorld;
-use crate::paint::{PaintGrid, SplatOpts};
-use crate::tuning::{Blaster, Bucket, Charger, PlayerTuning, Spinner, Spritzer, Twins, WeaponSet};
+use crate::paint::{PaintGrid, SplatKind, SplatOpts};
+use crate::tuning::{
+    Blaster, Brush, Bucket, Charger, PlayerTuning, Roller, Spinner, Spritzer, Twins, WeaponSet,
+};
 use crate::weapon::brolly::{BrollyKit, CanopyState, LaunchedCanopy};
 
 /// Upstream projectile gravity for shooter-family rounds (weapons.js
@@ -234,7 +237,8 @@ impl WeaponKind {
 
     /// Whether this kind's update branch is wired (Task 29: `Shooter`;
     /// Task 30: `Twins` / `Blaster` / `Brolly`; Task 31: `Charger` /
-    /// `Spinner` / `Bucket`; Tasks 32-33 flip the rest).
+    /// `Spinner` / `Bucket`; Task 32: `Roller` / `Brush` / `Blade`;
+    /// Task 33 flips the rest).
     #[must_use]
     pub fn is_wired(self) -> bool {
         matches!(
@@ -246,6 +250,9 @@ impl WeaponKind {
                 | Self::Charger
                 | Self::Spinner
                 | Self::Bucket
+                | Self::Roller
+                | Self::Brush
+                | Self::Blade
         )
     }
 }
@@ -452,6 +459,17 @@ pub struct Projectile {
     /// [`ProjectileSim`] (`volley_hits` / `volley_alive`).
     #[serde(default)]
     pub volley: Option<u32>,
+    /// Drop-type far damage (JS `p.dmgFar`, weapons.js L1226/L1407/blade.js
+    /// L149): a body hit takes `lerp(damage, dmg_far, clamp(start→hit / 7))`
+    /// instead of the flat `damage` (`_step` L1603, applied *before* the
+    /// bucket below-falloff). `None` = shot-family round (no falloff).
+    #[serde(default)]
+    pub dmg_far: Option<f32>,
+    /// Staggered launch delay in seconds (JS `p.delay`, weapons.js L1571 /
+    /// blade.js L151 `delay: t * 0.018`): while positive the round does not
+    /// integrate at all — the step only counts the delay down.
+    #[serde(default)]
+    pub delay: f32,
 }
 
 /// Gameplay events produced by the weapon layer (JS `emit(...)`). The match
@@ -621,6 +639,25 @@ pub struct WeaponRunner {
     /// A canopy launched this frame (JS `addLaunched` → the world `LAUNCHED`
     /// list, brolly.js L265/L285): the match takes it into its registry.
     pub(crate) brolly_launch: Option<LaunchedCanopy>,
+    // ---- Task 32: roller / brush melee state (JS `reset()` L41/L48/L57).
+    /// JS `swipeSide` — brush swipe direction, alternating (reset to 1).
+    swipe_side: i32,
+    /// JS `lastRollPos` — the position sampled at the last paint step
+    /// (roller drum / brush bristles; JS `reset()` L43 `null`, set on the
+    /// roll edge before the first read).
+    last_roll_pos: Vec3,
+    /// JS `rollHits` (weapons.js L41/L264/L608): per-victim melee hit
+    /// cooldowns. JS stores absolute `G.time` stamps and tests
+    /// `G.time - last > cd`; the sim counts the window down per frame
+    /// instead (no global clock) — equivalent: an absent entry is ready,
+    /// a hit re-arms the countdown, every frame decays it.
+    roll_hits: BTreeMap<usize, f32>,
+    /// JS `this.kit` for the blade (weapons.js L57; blade.js `st()` L38-44):
+    /// `None` = no kit yet (JS creates it lazily, same as brolly's `kitOf`).
+    pub(crate) blade: Option<Box<blade::BladeKit>>,
+    /// A wave spawned this frame (JS `addWave` → the world `WAVES` list,
+    /// blade.js L261-265): the match takes it into its registry.
+    pub(crate) blade_wave: Option<blade::BladeWave>,
 }
 
 impl Default for WeaponRunner {
@@ -658,6 +695,11 @@ impl Default for WeaponRunner {
             burst_frac: 0.0,
             brolly: None,
             brolly_launch: None,
+            swipe_side: 1,
+            last_roll_pos: Vec3::ZERO,
+            roll_hits: BTreeMap::new(),
+            blade: None,
+            blade_wave: None,
         }
     }
 }
@@ -674,8 +716,10 @@ impl WeaponRunner {
     }
 
     /// JS `busy()` (L62): any state that blocks the actor. The retired-kind
-    /// terms (`slosh` / `streaming` / `dodge`) and the kit-weapon hook
-    /// (`MAIN_KITS[kind].busy`) are absent until their tasks land.
+    /// terms (`slosh` / `streaming` / `dodge`) are absent; the kit-weapon
+    /// hook (L62 `MAIN_KITS[kind].busy`) is wired for brolly (Task 30) and
+    /// blade (Task 32 — blade.js L681 `busy = !!K.swing`; a charge is
+    /// deliberately *not* busy: the kid may dive with it held).
     #[must_use]
     pub fn busy(&self) -> bool {
         self.charging
@@ -683,6 +727,7 @@ impl WeaponRunner {
             || self.burst_t > 0.0
             || self.dodge_t > 0.0
             || self.lock_t > 0.0
+            || self.blade.as_ref().is_some_and(|k| k.swing.is_some())
     }
 
     /// Whether the muzzle-flash window is open (JS `wr.firingT > 0`, the
@@ -825,12 +870,33 @@ impl WeaponRunner {
                     run
                 }
             }
+            // JS L64 `MAIN_KITS.blade.moveSpeed` (blade.js L683-689): the
+            // heavy cut plants you (`moveSpeedFiring * 0.55` for the first
+            // 0.3 s), a charge walks at `moveSpeedCharging`, the pose window
+            // after a cut runs `moveSpeedFiring`; the falsy `0` fall-through
+            // is the general tail (`firingT > 0 ? moveSpeedFiring : runSpeed`,
+            // JS L89-90 — already covered by the third arm).
+            WeaponKind::Blade => {
+                let heavy_swing = self
+                    .blade
+                    .as_ref()
+                    .is_some_and(|k| k.swing.as_ref().is_some_and(|s| s.heavy && s.t < 0.3));
+                if heavy_swing {
+                    w.blade.move_speed_firing * 0.55
+                } else if self.blade.as_ref().is_some_and(|k| k.charging) {
+                    w.blade.move_speed_charging
+                } else if self.firing_t > 0.0 {
+                    w.blade.move_speed_firing
+                } else {
+                    run
+                }
+            }
             // JS L64: the remaining kit weapons own their move-speed curve
             // (kits/*.js). Without a kit `moveSpeed` JS falls through to the
             // tail chain (L89-90: `firingT > 0 ? moveSpeedFiring : runSpeed`);
-            // the kits are unwired until Tasks 32/33, so the sim returns
+            // the kits are unwired until Task 33, so the sim returns
             // `runSpeed`.
-            WeaponKind::Bow | WeaponKind::Blade | WeaponKind::Mitts => run,
+            WeaponKind::Bow | WeaponKind::Mitts => run,
         }
     }
 
@@ -896,6 +962,13 @@ impl WeaponRunner {
     /// resolves (emerge delay + fire buffer) — hence the `gate` parameter
     /// alone; `move_dir` is the raw intent's move vector (JS reads
     /// `a.intent.move` in `_twins`, L493/L499/L534 — *not* the gated one).
+    /// Task 32 additions: `foes` is the actor list split around `actor`
+    /// (the roller / brush / blade melee scans hurt other actors while the
+    /// runner keeps mutating its own); `paint` receives the melee stripe
+    /// splats; `remote` routes proxy victims like [`ProjectileSim`]'s body
+    /// hits; `intent_fire` is the raw `a.intent.fire` the blade kit reads
+    /// (blade.js L630, *not* the gated `winp.fire`); `ps_time` is
+    /// [`ProjectileSim::time`] — the kit's `G.time` stand-in.
     /// The sub-weapon block (JS L130-155) is Task 34.
     #[allow(clippy::too_many_arguments)]
     pub fn update(
@@ -908,6 +981,12 @@ impl WeaponRunner {
         move_dir: Vec3,
         world: &CollisionWorld,
         projectiles: &mut ProjectileSim,
+        foes: &mut FoeScan<'_>,
+        paint: &mut PaintGrid,
+        t: &PlayerTuning,
+        remote: Option<&[bool]>,
+        intent_fire: bool,
+        ps_time: f32,
     ) {
         // ---- JS L110-116 common decay. JS `inp` here is the *gated* `winp`
         // (actor.js L370-373: `fire = intent.fire || buffered`, suppressed
@@ -924,14 +1003,22 @@ impl WeaponRunner {
         // JS L116: per-hand shot clocks (dualies / twins HUD).
         self.since_hand[0] += dt;
         self.since_hand[1] += dt;
+        // Task 32: JS `rollHits` (L264/L608) stores absolute `G.time`
+        // stamps; the sim counts each per-victim window down instead (no
+        // global clock) — decay first, a hit re-arms `cd`, an absent entry
+        // is ready (spec §1: equivalent windows).
+        for v in self.roll_hits.values_mut() {
+            *v -= dt;
+        }
+        self.roll_hits.retain(|_, v| *v > 0.0);
 
         // ---- JS L117-129 kind dispatch. Task 30 wires `shooter`/`blaster`
         // (`_auto`), `twins` (`_twins`) and `brolly` (`MAIN_KITS.brolly.
         // update`); Task 31 wires `charger` (`_charger`), `bucket`
-        // (`_bucket`) and `spinner` (`_spinner`). Remaining arms land in
-        // Tasks 32-33:
-        //   L120 `roller` / L124 `brush` → Task 32.
-        //   L128 `default` → `MAIN_KITS` (bow/blade/mitts, Tasks 33/32/33).
+        // (`_bucket`) and `spinner` (`_spinner`); Task 32 wires `roller`
+        // (L120), `brush` (L124) and `blade` (L128 `default` → MAIN_KITS).
+        // Remaining arms land in Task 33:
+        //   L128 `default` → `MAIN_KITS` (bow/mitts).
         match kind {
             WeaponKind::Shooter | WeaponKind::Blaster => {
                 self.auto_fire(gate, actor, kind, w, projectiles)
@@ -942,8 +1029,49 @@ impl WeaponRunner {
             WeaponKind::Charger => self.charger(dt, gate, actor, w, projectiles),
             WeaponKind::Spinner => self.spinner(dt, gate, actor, w, projectiles),
             WeaponKind::Bucket => self.bucket(dt, gate, actor, w, projectiles),
-            WeaponKind::Roller | WeaponKind::Brush => {}
-            WeaponKind::Bow | WeaponKind::Blade | WeaponKind::Mitts => {}
+            // Task 32: JS L120 `roller` / L124 `brush`.
+            WeaponKind::Roller => self.roller(
+                dt,
+                gate,
+                actor,
+                w,
+                world,
+                projectiles,
+                foes,
+                paint,
+                t,
+                remote,
+            ),
+            WeaponKind::Brush => self.brush(
+                dt,
+                gate,
+                actor,
+                w,
+                move_dir,
+                world,
+                projectiles,
+                foes,
+                paint,
+                t,
+                remote,
+            ),
+            // Task 32: JS L128 `default` → `MAIN_KITS.blade.update`.
+            WeaponKind::Blade => blade::update(
+                self,
+                dt,
+                gate,
+                intent_fire,
+                actor,
+                &w.blade,
+                world,
+                projectiles,
+                foes,
+                paint,
+                t,
+                remote,
+                ps_time,
+            ),
+            WeaponKind::Bow | WeaponKind::Mitts => {}
         }
     }
 
@@ -1274,6 +1402,317 @@ impl WeaponRunner {
         self.flick = 0.0; // JS L444
     }
 
+    /// JS `_empty()` (weapons.js L158-163): the low-ink `lowink` emit behind
+    /// an `EMPTY_CD` throttle (audio / rumble are presentation-only).
+    fn empty_click(&mut self, ps: &mut ProjectileSim, a: &Actor) {
+        if self.empty_cd <= 0.0 {
+            self.empty_cd = EMPTY_CD;
+            ps.push_event(SimEvent::LowInk { owner_slot: a.slot });
+        }
+    }
+
+    /// JS `_roller` (weapons.js L218-290): the drum rolls forward laying a
+    /// `roll` stripe and crushes enemies in front of it; `firePressed`
+    /// winds up the flick lob (boss L269-273 and audio/rumble out of scope).
+    /// The melee scan runs *before* the `moved < 0.28` paint gate (JS L258
+    /// vs L274) and collects victims first (disjoint borrows).
+    #[allow(clippy::too_many_arguments)]
+    fn roller(
+        &mut self,
+        dt: f32,
+        gate: &FireGate,
+        a: &mut Actor,
+        w: &WeaponSet,
+        world: &CollisionWorld,
+        ps: &mut ProjectileSim,
+        foes: &mut FoeScan<'_>,
+        paint: &mut PaintGrid,
+        t: &PlayerTuning,
+        remote: Option<&[bool]>,
+    ) {
+        let rw = &w.roller;
+        // JS L221-232: flick wind-up → release.
+        if self.flick >= 0.0 {
+            self.flick += dt;
+            if self.flick >= rw.flick_windup {
+                self.flick = -1.0;
+                ps.fire_flick(a, rw);
+                self.cooldown = rw.flick_interval - rw.flick_windup;
+                self.firing_t = 0.25; // JS L228 literal
+                self.flick_recover = 0.18; // JS L229 literal
+            }
+            return;
+        }
+        // JS L233-242: the flick throw — a `pressed` edge, not held. A
+        // low-ink press only clicks empty and *falls through* to rolling
+        // (JS L234 has no `return` on the empty branch).
+        if gate.pressed && self.cooldown <= 0.0 {
+            if a.ink < rw.flick_ink {
+                self.empty_click(ps, a);
+            } else {
+                a.ink -= rw.flick_ink;
+                a.note_fired();
+                self.flick = 0.0;
+                return;
+            }
+        }
+        // JS L243-252: the roll state machine.
+        let can_roll = gate.fire && a.grounded && a.ink > 0.5 && self.cooldown <= 0.25;
+        self.roll_t = if can_roll { self.roll_t + dt } else { 0.0 };
+        if can_roll != self.rolling {
+            self.rolling = can_roll;
+            if can_roll {
+                self.last_roll_pos = a.pos;
+            }
+        }
+        if gate.fire && a.ink <= 0.5 {
+            self.empty_click(ps, a);
+        }
+        if !self.rolling {
+            return;
+        }
+        a.note_fired();
+        // JS L254-267: drum damage in front of the roller, gated on the
+        // roll speed (`hs > 1.0`). Scan first, apply after (borrow shape).
+        let hs = a.vel.x.hypot(a.vel.z);
+        let fx = a.yaw.sin();
+        let fz = a.yaw.cos();
+        let mut hits: Vec<usize> = Vec::new();
+        for (ei, e) in foes.iter() {
+            if e.team == a.team || !e.alive {
+                continue;
+            }
+            let dx = e.pos.x - a.pos.x;
+            let dz = e.pos.z - a.pos.z;
+            let dy = e.pos.y - a.pos.y;
+            let fwd = dx * fx + dz * fz;
+            let lat = (dx * fz - dz * fx).abs();
+            if fwd > -0.2
+                && fwd < 1.35
+                && lat < rw.roll_width / 2.0 + 0.35
+                && dy.abs() < 1.2
+                && hs > 1.0
+                && !self.roll_hits.contains_key(&ei)
+            {
+                hits.push(ei);
+            }
+        }
+        let (a_slot, a_team) = (a.slot, a.team);
+        for ei in hits {
+            self.roll_hits.insert(ei, 0.5); // JS L265 literal window
+            let Some(v) = foes.get_mut(ei) else {
+                continue;
+            };
+            let (victim_slot, victim_team) = (v.slot, v.team);
+            let send = remote.is_some_and(|m| m.get(ei).copied().unwrap_or(false));
+            if send {
+                ps.push_event(SimEvent::HitSend {
+                    attacker_slot: a_slot,
+                    victim_slot,
+                    victim_team,
+                    team: a_team,
+                    damage: rw.roll_damage,
+                });
+            } else {
+                let outcome = apply_hit(v, rw.roll_damage, Some((a_team, a_slot)), t);
+                ps.push_event(SimEvent::Hit {
+                    attacker_slot: a_slot,
+                    victim_slot,
+                    team: a_team,
+                    damage: rw.roll_damage,
+                    killed: outcome.killed,
+                });
+            }
+        }
+        // JS L274-288: displacement ink + the three-stripe drum paint.
+        let moved = a.pos.distance(self.last_roll_pos);
+        if moved < 0.28 {
+            return;
+        }
+        self.last_roll_pos = a.pos;
+        a.ink = (a.ink - rw.roll_ink_per_meter * moved).max(0.0);
+        let rx = fz;
+        let rz = -fx;
+        let stretch = vec3(fx, 0.0, fz);
+        let mut area = 0.0;
+        for i in -1..=1 {
+            let off = i as f32 * rw.roll_width * 0.33;
+            let pt = vec3(
+                a.pos.x + fx * 0.75 + rx * off,
+                a.pos.y + 0.35,
+                a.pos.z + fz * 0.75 + rz * off,
+            );
+            // JS L285: one `Math.random` seed per splat, radius `0.62`
+            // literal, `kind: 'roll'` (straight-edged band, not a blob).
+            let seed = ps.rng.next_f32();
+            area += paint.splat(
+                world,
+                pt,
+                0.62,
+                a.team,
+                &SplatOpts {
+                    seed,
+                    stretch: Some(stretch),
+                    stretch_amt: None,
+                    kind: Some(SplatKind::Roll),
+                },
+            );
+        }
+        ps.push_event(SimEvent::Impact {
+            pos: vec3(a.pos.x + fx * 0.75, a.pos.y + 0.02, a.pos.z + fz * 0.75),
+            normal: Vec3::Y,
+            team: a_team,
+            radius: rw.roll_width / 2.0,
+            victim_slot: None,
+            owner_slot: a_slot,
+            area,
+        });
+    }
+
+    /// JS `_brush` (weapons.js L571-626): brushing drags a thin stretched
+    /// line and hurts enemies in front; standing still (or a `pressed` edge)
+    /// swipes instead, lobbing a side sweep of drops (`swipeSide`
+    /// alternates). The swipe wind-up is the JS-literal 0.04 s, not a config
+    /// field (L575). Boss (L613-617) and audio/rumble out of scope.
+    #[allow(clippy::too_many_arguments)]
+    fn brush(
+        &mut self,
+        dt: f32,
+        gate: &FireGate,
+        a: &mut Actor,
+        w: &WeaponSet,
+        move_dir: Vec3,
+        world: &CollisionWorld,
+        ps: &mut ProjectileSim,
+        foes: &mut FoeScan<'_>,
+        paint: &mut PaintGrid,
+        t: &PlayerTuning,
+        remote: Option<&[bool]>,
+    ) {
+        let bw = &w.brush;
+        // JS L573-577: swipe wind-up → release.
+        if self.flick >= 0.0 {
+            self.flick += dt;
+            if self.flick >= 0.04 {
+                self.flick = -1.0;
+                ps.fire_swipe(a, bw, self.swipe_side);
+                self.cooldown = bw.swipe_interval;
+                self.firing_t = 0.25; // JS L575 literal
+            }
+            return;
+        }
+        // JS L578-579: "moving" reads the raw intent (not the gated move).
+        let hs = a.vel.x.hypot(a.vel.z);
+        let moving = a.grounded && hs > 2.0 && move_dir.x.hypot(move_dir.z) > 0.3;
+        // JS L580-590: the swipe throw. A low-ink press clicks empty and
+        // falls through to the brushing block (no `return` on that branch).
+        if (gate.pressed || (gate.fire && !moving)) && self.cooldown <= 0.0 {
+            if a.ink < bw.swipe_ink {
+                self.empty_click(ps, a);
+            } else {
+                a.ink -= bw.swipe_ink;
+                a.note_fired();
+                self.flick = 0.0;
+                self.swipe_side = -self.swipe_side;
+                self.rolling = false; // JS L587
+                return;
+            }
+        }
+        // JS L591-599: the brushing drag.
+        let brushing = gate.fire && moving && a.ink > 0.3;
+        self.roll_t = if brushing { self.roll_t + dt } else { 0.0 };
+        if brushing != self.rolling {
+            self.rolling = brushing;
+            if brushing {
+                self.last_roll_pos = a.pos;
+                self.roll_hits.clear(); // JS L595: fresh bristles, fresh hits
+            }
+        }
+        if !self.rolling {
+            return;
+        }
+        a.note_fired();
+        let fx = a.yaw.sin();
+        let fz = a.yaw.cos();
+        let mut hits: Vec<usize> = Vec::new();
+        for (ei, e) in foes.iter() {
+            if e.team == a.team || !e.alive {
+                continue;
+            }
+            let dx = e.pos.x - a.pos.x;
+            let dz = e.pos.z - a.pos.z;
+            let dy = e.pos.y - a.pos.y;
+            let fwd = dx * fx + dz * fz;
+            let lat = (dx * fz - dz * fx).abs();
+            if fwd > -0.2
+                && fwd < 1.2
+                && lat < bw.brush_width / 2.0 + 0.3
+                && dy.abs() < 1.2
+                && !self.roll_hits.contains_key(&ei)
+            {
+                hits.push(ei);
+            }
+        }
+        let (a_slot, a_team) = (a.slot, a.team);
+        for ei in hits {
+            self.roll_hits.insert(ei, bw.brush_hit_cd);
+            let Some(v) = foes.get_mut(ei) else {
+                continue;
+            };
+            let (victim_slot, victim_team) = (v.slot, v.team);
+            let send = remote.is_some_and(|m| m.get(ei).copied().unwrap_or(false));
+            if send {
+                ps.push_event(SimEvent::HitSend {
+                    attacker_slot: a_slot,
+                    victim_slot,
+                    victim_team,
+                    team: a_team,
+                    damage: bw.brush_damage,
+                });
+            } else {
+                let outcome = apply_hit(v, bw.brush_damage, Some((a_team, a_slot)), t);
+                ps.push_event(SimEvent::Hit {
+                    attacker_slot: a_slot,
+                    victim_slot,
+                    team: a_team,
+                    damage: bw.brush_damage,
+                    killed: outcome.killed,
+                });
+            }
+        }
+        // JS L618-624: displacement ink + the single bristle line splat.
+        let moved = a.pos.distance(self.last_roll_pos);
+        if moved < 0.22 {
+            return;
+        }
+        self.last_roll_pos = a.pos;
+        a.ink = (a.ink - bw.brush_ink_per_meter * moved).max(0.0);
+        let seed = ps.rng.next_f32();
+        let pt = vec3(a.pos.x + fx * 0.65, a.pos.y + 0.35, a.pos.z + fz * 0.65);
+        // JS L623: no `kind` — a round blob stretched along the heading.
+        let area = paint.splat(
+            world,
+            pt,
+            bw.brush_width * 0.45,
+            a_team,
+            &SplatOpts {
+                seed,
+                stretch: Some(vec3(fx, 0.0, fz)),
+                stretch_amt: Some(0.5),
+                kind: None,
+            },
+        );
+        ps.push_event(SimEvent::Impact {
+            pos: vec3(a.pos.x + fx * 0.65, a.pos.y + 0.02, a.pos.z + fz * 0.65),
+            normal: Vec3::Y,
+            team: a_team,
+            radius: bw.brush_width / 2.0,
+            victim_slot: None,
+            owner_slot: a_slot,
+            area,
+        });
+    }
+
     /// JS `_twinDodge` (weapons.js L529-548): jump tapped while firing and
     /// moving → a dodge roll instead. Returns true when a roll started (or
     /// was queued), which the caller uses to swallow the jump press.
@@ -1475,6 +1914,63 @@ pub struct ShieldOwner<'a> {
     pub launched: &'a mut [LaunchedCanopy],
 }
 
+/// The actor list split around the runner's own actor (Task 32): the roller
+/// / brush / blade melee scans read *and damage* other actors while the
+/// runner keeps mutating its own, so the match hands the runner the two
+/// disjoint sides (`lo` = indices `< self`, `hi` = indices `> self`,
+/// `hi_off` = the first `hi` index in the full list). Indices are always
+/// full-list indices, like the `remote` mask.
+pub struct FoeScan<'a> {
+    lo: &'a mut [Actor],
+    hi: &'a mut [Actor],
+    hi_off: usize,
+}
+
+impl<'a> FoeScan<'a> {
+    /// Split `all` around `self_idx`: the runner's own actor plus the foe
+    /// scan over everyone else (the match's per-actor loop).
+    pub fn split_around(all: &'a mut [Actor], self_idx: usize) -> (&'a mut Actor, Self) {
+        let (lo, rest) = all.split_at_mut(self_idx);
+        let (me, hi) = rest.split_at_mut(1);
+        (
+            &mut me[0],
+            Self {
+                lo,
+                hi,
+                hi_off: self_idx + 1,
+            },
+        )
+    }
+
+    /// An empty scan (offline unit tests that only exercise fire paths).
+    pub fn empty() -> Self {
+        Self {
+            lo: &mut [],
+            hi: &mut [],
+            hi_off: 0,
+        }
+    }
+
+    /// `(full-list index, actor)` for every foe, low indices first.
+    pub fn iter(&self) -> impl Iterator<Item = (usize, &Actor)> {
+        self.lo.iter().enumerate().chain(
+            self.hi
+                .iter()
+                .enumerate()
+                .map(|(j, e)| (j + self.hi_off, e)),
+        )
+    }
+
+    #[must_use]
+    pub fn get_mut(&mut self, idx: usize) -> Option<&mut Actor> {
+        if idx < self.lo.len() {
+            Some(&mut self.lo[idx])
+        } else {
+            self.hi.get_mut(idx - self.hi_off)
+        }
+    }
+}
+
 /// JS `segShield(prev, pos, s, out)` (brolly.js L195-200): signed-distance
 /// crossing of the swept disc, either direction. Some = the crossing point.
 #[must_use]
@@ -1501,6 +1997,25 @@ struct PendingHit {
     victim: usize,
     dmg: f32,
     at: f32,
+}
+
+/// Shared parameter bag for the `type: 'drop'` round family (roller
+/// flick / brush swipe / blade drops): the JS `Object.assign` literals
+/// (weapons.js L1226-1227 / L1407-1408, blade.js L147-152).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DropSpec {
+    pub life: f32,
+    pub straight: f32,
+    pub size: f32,
+    pub radius: f32,
+    pub damage: f32,
+    pub dmg_far: f32,
+    pub trail_start: f32,
+    pub trail_every: f32,
+    pub trail_radius: f32,
+    pub grav: f32,
+    pub drag: f32,
+    pub delay: f32,
 }
 
 /// Global projectile system (JS `Projectiles`): owns the live rounds, the
@@ -1922,6 +2437,155 @@ impl ProjectileSim {
         });
     }
 
+    /// JS `Projectiles._new()` + the drop `Object.assign` + `_push`
+    /// (weapons.js L1223-1231): a drop round with its seed already drawn by
+    /// the caller (the per-family RNG order must stay verbatim), `prev` /
+    /// `start` pinned to the spawn position like JS.
+    pub(crate) fn push_drop(&mut self, a: &Actor, d: &DropSpec, pos: Vec3, vel: Vec3, seed: f32) {
+        self.list.push(Projectile {
+            pos,
+            prev: pos,
+            start: pos,
+            vel,
+            team: a.team,
+            owner_slot: a.slot,
+            age: 0.0,
+            life: d.life,
+            straight: d.straight,
+            radius: d.radius,
+            size: d.size,
+            damage: d.damage,
+            grav: d.grav,
+            drag: d.drag,
+            trail: d.trail_start,
+            trail_every: d.trail_every,
+            trail_radius: d.trail_radius,
+            seed,
+            blast: false,
+            pellet: None,
+            ghost: false,
+            below_falloff: 0.0,
+            below_falloff_max: 0.0,
+            volley: None,
+            dmg_far: Some(d.dmg_far),
+            delay: d.delay,
+        });
+    }
+
+    /// JS `Projectiles.fireFlick` (weapons.js L1215-1236, minus the
+    /// presentation `vis` draw and the boss/recoil/audio tail): the roller's
+    /// lobbed ink sheet. RNG order per drop: [ang jitter, speed, radius,
+    /// seed, cu] — `vis` (L1227) is presentation-only and not drawn (Task 29
+    /// rule).
+    pub(crate) fn fire_flick(&mut self, a: &Actor, w: &Roller) {
+        let m = vec3(a.pos.x, a.pos.y + 1.0, a.pos.z);
+        let fx = a.yaw.sin();
+        let fz = a.yaw.cos();
+        let up = clamp_f(a.aim_pitch, -0.2, 0.5) + 0.32;
+        let drops = w.flick_drops as f32;
+        for i in 0..w.flick_drops {
+            let fi = i as f32;
+            let t = (fi / (drops - 1.0)) * 2.0 - 1.0;
+            let ang =
+                a.yaw + t * w.flick_spread_deg * DEG * 0.5 + (self.rng.next_f32() - 0.5) * 0.05;
+            let sp = w.flick_speed * (0.82 + 0.28 * (1.0 - t.abs()) + self.rng.next_f32() * 0.08);
+            let radius = 0.85 + self.rng.next_f32() * 0.3;
+            let seed = self.rng.next_f32();
+            let cu = (up + (self.rng.next_f32() - 0.5) * 0.12).cos();
+            let pos = vec3(m.x + fx * 0.6, m.y + 0.3, m.z + fz * 0.6); // JS L1231
+            let vel = vec3(ang.sin() * cu * sp, up.sin() * sp, ang.cos() * cu * sp);
+            self.push_drop(
+                a,
+                &DropSpec {
+                    // JS L1226-1227: life 1.4, size 0.15, trailEvery 1.8,
+                    // trailRadius 0.45, grav 26, drag 0.4.
+                    life: 1.4,
+                    straight: 0.0,
+                    size: 0.15,
+                    radius,
+                    damage: w.flick_damage_near,
+                    dmg_far: w.flick_damage_far,
+                    trail_start: 0.0,
+                    trail_every: 1.8,
+                    trail_radius: 0.45,
+                    grav: 26.0,
+                    drag: 0.4,
+                    delay: 0.0,
+                },
+                pos,
+                vel,
+                seed,
+            );
+        }
+        self.push_event(SimEvent::Fire {
+            owner_slot: a.slot,
+            team: a.team,
+            muzzle: vec3(m.x + fx * 0.6, m.y + 0.3, m.z + fz * 0.6),
+            dir: vec3(fx, up.sin(), fz).normalize(),
+            charge: None,
+            len: None,
+        });
+    }
+
+    /// JS `Projectiles.fireSwipe` (weapons.js L1396-1417, minus the
+    /// presentation `vis` draw and the rumble tail): the brush's side sweep
+    /// of drops. RNG order per drop: [speed, radius, seed, cu].
+    pub(crate) fn fire_swipe(&mut self, a: &Actor, w: &Brush, side: i32) {
+        let fx = a.yaw.sin();
+        let fz = a.yaw.cos();
+        let up = clamp_f(a.aim_pitch, -0.3, 0.3) * 0.5 + 0.08;
+        let arc = w.swipe_spread_deg * DEG * 1.6;
+        let sidef = side as f32;
+        let denom = (w.swipe_drops as f32 - 1.0).max(1.0); // JS L1401 `max(1, …)`
+        for i in 0..w.swipe_drops {
+            let t = i as f32 / denom;
+            let ang = a.yaw - sidef * (t - 0.5) * arc;
+            let ox = ang.sin();
+            let oz = ang.cos();
+            let tx = -oz * sidef;
+            let tz = ox * sidef;
+            let sp = w.swipe_speed * (0.8 + self.rng.next_f32() * 0.3);
+            let radius = 0.55 + self.rng.next_f32() * 0.2;
+            let seed = self.rng.next_f32();
+            let cu = (up + (self.rng.next_f32() - 0.5) * 0.08).cos();
+            let pos = vec3(a.pos.x + ox * 0.85, a.pos.y + 0.45, a.pos.z + oz * 0.85); // JS L1409
+            let hx = ox * 0.8 + tx * 0.45 + fx * 0.25;
+            let hz = oz * 0.8 + tz * 0.45 + fz * 0.25;
+            let hl = hx.hypot(hz);
+            let vel = vec3(hx / hl * cu * sp, up.sin() * sp, hz / hl * cu * sp);
+            self.push_drop(
+                a,
+                &DropSpec {
+                    // JS L1404-1405: life 1.0, size 0.1, trailEvery 2.2,
+                    // trailRadius 0.32, grav 26, drag 0.6.
+                    life: 1.0,
+                    straight: 0.0,
+                    size: 0.1,
+                    radius,
+                    damage: w.swipe_damage_near,
+                    dmg_far: w.swipe_damage_far,
+                    trail_start: 0.0,
+                    trail_every: 2.2,
+                    trail_radius: 0.32,
+                    grav: 26.0,
+                    drag: 0.6,
+                    delay: 0.0,
+                },
+                pos,
+                vel,
+                seed,
+            );
+        }
+        self.push_event(SimEvent::Fire {
+            owner_slot: a.slot,
+            team: a.team,
+            muzzle: vec3(a.pos.x + fx * 0.85, a.pos.y + 0.45, a.pos.z + fz * 0.85),
+            dir: vec3(fx, up.sin(), fz).normalize(),
+            charge: None,
+            len: None,
+        });
+    }
+
     /// JS `Projectiles.fireCharger` (weapons.js L1238-1303, minus the
     /// boss/subs/specials cuts L1245-1246/L1259-1263 and the presentation
     /// tail): the full hitscan beam — world raycast, nearest enemy capsule
@@ -2000,7 +2664,7 @@ impl ProjectileSim {
                     damage: dmg,
                 });
             } else {
-                let outcome = apply_hit(actors, ei, dmg, Some((team, owner_slot)), t);
+                let outcome = apply_hit(&mut actors[ei], dmg, Some((team, owner_slot)), t);
                 self.push_event(SimEvent::Hit {
                     attacker_slot: owner_slot,
                     victim_slot,
@@ -2115,6 +2779,8 @@ impl ProjectileSim {
             below_falloff: 0.0,
             below_falloff_max: 0.0,
             volley: None,
+            dmg_far: None,
+            delay: 0.0,
         });
         if emit_fire {
             self.push_event(SimEvent::Fire {
@@ -2239,8 +2905,7 @@ impl ProjectileSim {
                 });
             } else {
                 let outcome = apply_hit(
-                    actors,
-                    rec.victim,
+                    &mut actors[rec.victim],
                     rec.dmg,
                     Some((rec.team, rec.owner_slot)),
                     t,
@@ -2272,6 +2937,18 @@ impl ProjectileSim {
         shields: &[Shield],
         owner: &mut ShieldOwner,
     ) -> bool {
+        // JS `update` L1571: a delayed round only counts its delay down —
+        // no integration, no age, no hit tests until it clears (blade
+        // `fireDrops` staggers the sheet, blade.js L151). The brolly canopy
+        // pre-scan skips the same rounds (brolly.js L428), which this early
+        // return reproduces: a still-delayed round is not even looked at.
+        if self.list[idx].delay > 0.0 {
+            let p = &mut self.list[idx];
+            p.delay -= dt;
+            if p.delay > 0.0 {
+                return false;
+            }
+        }
         // ---- integrate (JS order: gravity/drag, then position)
         {
             let p = &mut self.list[idx];
@@ -2381,9 +3058,14 @@ impl ProjectileSim {
                 }
                 let at = p.prev.lerp(p.pos, res.t);
                 let n = -p.vel.normalize_or_zero();
+                // JS L1603: drop rounds fall off over 7 m from the launch
+                // point to the hit point, *before* the below-falloff.
+                let mut dmg = p.damage;
+                if let Some(far) = p.dmg_far {
+                    dmg = lerp(dmg, far, (p.start.distance(at) / 7.0).clamp(0.0, 1.0));
+                }
                 // JS L1605: bucket below-falloff — full damage at any range,
                 // less only when the target stands below the thrower.
-                let mut dmg = p.damage;
                 if p.below_falloff > 0.0 {
                     dmg *= 1.0
                         - ((p.start.y - (e.pos.y + 0.8) - 0.5) * p.below_falloff)
@@ -2437,7 +3119,7 @@ impl ProjectileSim {
                     // never called on this branch), so `area` is 0. The attacker
                     // identity `(team, owner_slot)` rides `damage` → `lastAttacker`
                     // (JS L188) so a later water splat of the victim can credit it.
-                    let outcome = apply_hit(actors, si, dmg, Some((team, owner_slot)), t);
+                    let outcome = apply_hit(&mut actors[si], dmg, Some((team, owner_slot)), t);
                     self.push_event(SimEvent::Hit {
                         attacker_slot: owner_slot,
                         victim_slot,
@@ -2715,7 +3397,7 @@ impl ProjectileSim {
                     damage: dmg,
                 });
             } else {
-                let outcome = apply_hit(actors, ei, dmg, Some((team, owner_slot)), t);
+                let outcome = apply_hit(&mut actors[ei], dmg, Some((team, owner_slot)), t);
                 self.push_event(SimEvent::Hit {
                     attacker_slot: owner_slot,
                     victim_slot,
@@ -2736,13 +3418,11 @@ impl ProjectileSim {
 /// the damage (`victim.damage()` returns false), which [`HitOutcome::blocked`]
 /// records; `killed` mirrors JS (the `victim.damage()` return).
 fn apply_hit(
-    actors: &mut [Actor],
-    victim: usize,
+    v: &mut Actor,
     dmg: f32,
     attacker: Option<(usize, usize)>,
     t: &PlayerTuning,
 ) -> HitOutcome {
-    let v = &actors[victim];
     let blocked = !v.alive || v.invuln() > 0.0;
     if blocked {
         return HitOutcome {
@@ -2750,7 +3430,7 @@ fn apply_hit(
             blocked: true,
         };
     }
-    let killed = actors[victim].damage(dmg, attacker, t);
+    let killed = v.damage(dmg, attacker, t);
     HitOutcome {
         killed,
         blocked: false,
@@ -2911,3 +3591,6 @@ mod tests;
 
 #[cfg(test)]
 mod brolly_tests;
+
+#[cfg(test)]
+mod blade_tests;

@@ -453,6 +453,14 @@ impl Actor {
         self.smooth_y
     }
 
+    /// Seconds since spawn/respawn (JS `a.kidT`, actor.js): the blade kit's
+    /// emerge gate reads it like upstream `(a.kidT ?? 99) >= emergeDelay`
+    /// (blade.js L631, Task 32 §1).
+    #[must_use]
+    pub fn kid_t(&self) -> f32 {
+        self.kid_t
+    }
+
     /// Events emitted since the last drain (jump/land/splat/respawn).
     ///
     /// Contract: the caller drains once per fixed step (before/after `step`);

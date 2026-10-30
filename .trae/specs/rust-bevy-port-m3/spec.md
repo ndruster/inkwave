@@ -233,3 +233,84 @@
 - TR-31.2（bucket 弧采样口径）：5 blob 的 radius/size/sp 逐值、pos 回推 −i·0.12、side/pi 抖动界（±0.025 rad / ±0.02 rad）、同 seed 弹道逐值复现、异 seed 不同；`_lobAim` 在 reach 内命中目标（数值收敛）、超 reach 保持默认弧；volley 同组第二丸穿已命中 victim、belowFalloff 下打减伤（0.12/m、上限 0.35）。
 - 门禁：`/tmp/task30-gates.sh` → `/tmp/task31-gates.sh`，日志 `task31-gates-<UTC>.log` 九段全 exit 0；workspace 测试 > 321；JS 树零改动。
 
+
+---
+
+# Task 32 实施设计（决策完备，2026-10-31）
+
+## 0. 范围与模式
+主武器批三：roller（weapons.js `_roller` L218-290 + `fireFlick` L1215-1236）、brush（`_brush` L571-626 + `fireSwipe` L1396-1417）、blade（kits/blade.js `MAIN_KITS.blade` L622-743，仿 Task 30 brolly 的 kit 模式：`weapon/blade.rs` + `weapon/blade_tests.rs`）。近战判定 owner 本地 `applyHit` + splat 广播，无新 wire 类型；`['k','blade']` 复用 Task 30 的 `TickEvent::Kit` 通道。
+
+## 1. 共享基建改动（weapon.rs）
+- `Projectile` 新增 `#[serde(default)] pub dmg_far: Option<f32>`：JS `type:'drop'` 伤害衰减（`_step` L1603 `dmg = lerp(damage, dmgFar, clamp(start.distanceTo(hit)/7,0,1))`），仅 `Some` 时生效，在 below_falloff 之前乘算（JS 顺序 L1603→L1605）。
+- `step_one` 延迟门（JS update L1571 `if(p.delay>0){p.delay-=dt; if(p.delay>0) continue}`）：`Projectile` 新增 `#[serde(default)] pub delay: f32`，在积分之前递减/跳过（age/prev/pos 全不动）。
+- brolly 盾预扫跳过延迟丸（brolly.js L428 `if(!p.owner || (p.delay>0 && p.delay-dt>0)) continue`）：`step_masked` 盾循环内同条件跳过。
+- `WeaponRunner` 新增字段（JS `reset()` L37-61 对齐）：`swipe_side: i32`（brush，初值 1）、`last_roll_pos: Vec3`、`roll_hits: BTreeMap<usize,f32>`（per-victim 近战冷却倒计时；JS `G.time` 绝对时刻（L264/L608）在 sim 无全局时钟下等价改写：每帧 `retain(|_,v| *v-=dt >0)` 后判 `<=0`、命中置 `cd`，窗口语义逐值一致）。blade kit 字段 `blade: Option<Box<BladeKit>>`、波次交接 `blade_wave: Option<BladeWave>`、`kid_t()` 只读访问器（Actor `kid_t` 私有，blade `canAct` 需要）。
+- `update` 签名扩展：追加 `actors: &mut [Actor]`、`paint: &mut PaintGrid`、`t: &PlayerTuning`、`remote: Option<&[bool]>`、`ps_time: f32`（`ps.time`，blade 空闲判定/波次时钟）。roller/brush 敌扫描与 blade melee 需要 actor 列表与画布；proxy 路由复用既有范式（`remote[i]` → `HitSend`，否则 `apply_hit`+`Hit`）。
+- dispatch（JS L117-129）：`Roller => self.roller(...)`（L120）、`Brush => self.brush(...)`（L124）、`Blade => blade::update(...)`（L128 default→MAIN_KITS）；Bow/Mitts 保持空分支至 Task 33。`is_wired` 增 Roller/Brush/Blade。
+- `move_speed`：Blade 分支替换 `run`（JS blade.js L683-689：`swing.heavy && t<0.3 → moveSpeedFiring*0.55`；`charging → moveSpeedCharging`；`firingT>0 → moveSpeedFiring`；否则尾链 `run`）。Roller/Brush 分支 Task 29 已就位，本批接线后生效。
+- 注记（同 Task 31 P2-2）：sim `aim_point` 恒 None → `cutYaw` 直接落 `a.yaw`（blade.js L65-71 aimPoint 分支不可达）。
+
+## 2. roller 分支（JS `_roller` L218-290 逐值）
+- flick 风上（L221-232）：`flick>=0 → flick+=dt; flick>=flick_windup → flick=-1; ps.fire_flick(a, roller); cooldown=flick_interval-flick_windup; firing_t=0.25`（JS 字面量 0.25，非 `FIRING_T`）。
+- 出手（L233-242）：`gate.pressed && cooldown<=0`：`ink<flick_ink → _empty`（`empty_cd<=0 → EMPTY_CD+LowInk`），否则 `ink-=flick_ink; note_fired; flick=0; return`。
+- 滚动（L243-253）：`can_roll = gate.fire && grounded && ink>0.5 && cooldown<=0.25`；`roll_t = can_roll ? +dt : 0`；边沿进入 → `rolling=true; last_roll_pos=a.pos`；`gate.fire && ink<=0.5 → _empty`；`!rolling → return`；`note_fired`。
+- 位移扣墨+涂墨（L254-289）：`fx=sin(yaw), fz=cos(yaw)`；`moved=|a.pos-last_roll_pos|`；敌扫描（见下）先于位移门；`moved<0.28 → return`；`last_roll_pos=a.pos`；`ink=max(0, ink-roll_ink_per_meter*moved)`；3 个 stripe splat：`i=-1..1`，`off=i*roll_width*0.33`，点 `(a.pos + f*0.75 + rx*off, y+0.35)`（`rx=(fz,0,-fx)`），`radius=0.62`（JS 字面量），`SplatOpts{seed:rng, kind:Some(SplatKind::Roll), stretch:Some((fx,0,fz))}`，每 splat 一次 rng 抽值；`Impact{pos:(a.pos+f*0.75, y+0.02), normal:Y, radius:roll_width/2, owner_slot, team, area=Σ, victim_slot:None}`。
+- 敌扫描（L258-267）：`hs=hypot(vel.x,vel.z)`；敌 `e`：`fwd=dx*fx+dz*fz ∈ (-0.2,1.35)`、`lat=|dx*fz-dz*fx| < roll_width/2+0.35`、`|dy|<1.2`、`hs>1.0` → 冷却 `0.5`（JS 字面量）→ 伤害 `roll_damage=140`。
+- boss 分支（L269-273）与 audio/rumble/character 不移植（既有范围）。
+
+## 3. brush 分支（JS `_brush` L571-626 逐值）
+- flick（L573-577）：`flick+=dt; flick>=0.04 → flick=-1; ps.fire_swipe(a, brush, swipe_side); cooldown=swipe_interval; firing_t=0.25`（JS 硬编码 0.04，非 config 字段）。
+- `moving = grounded && hs>2.0 && |intent.move|>0.3`（`move_dir` 参数，JS 读 raw intent）。
+- 出手（L580-590）：`(pressed || (fire && !moving)) && cooldown<=0`：`ink<swipe_ink → _empty`，否则 `ink-=swipe_ink; note_fired; flick=0; swipe_side=-swipe_side; rolling → rolling=false; return`。
+- 拖墨（L591-599）：`brushing = fire && moving && ink>0.3`；边沿进入 → `last_roll_pos=a.pos; roll_hits.clear()`；`!rolling → return`；`note_fired`。
+- 敌扫描（L602-611）：`fwd∈(-0.2,1.2)`、`lat<brush_width/2+0.3`、`|dy|<1.2`（无 hs 门槛）→ 冷却 `brush_hit_cd=0.35` → `brush_damage=30`。
+- 位移（L618-624）：`moved<0.22 → return`；`ink=max(0, ink-0.32*moved 字段)`；1 splat：`(a.pos+f*0.65, y+0.35)`，`radius=brush_width*0.45`，`stretch=(fx,0,fz)`，`stretch_amt=0.5`，`kind=None`（JS L623 未传 kind），seed 1 抽；`Impact{pos:(x+fx*0.65, y+0.02, ...), radius:brush_width/2, area}`。
+- `move_speed` Brush 分支 Task 29 已就位（rolling lerp(moveSpeedFiring→brushSpeed, smoothstep(0,0.35,rollT))；firingT>0→moveSpeedFiring）。
+
+## 4. fireFlick / fireSwipe（ProjectileSim 新方法，drop 弹种）
+- `fire_flick`（L1215-1236）：`m=(pos.x, pos.y+1.0, pos.z)`；`up=clamp(aim_pitch,-0.2,0.5)+0.32`；`t=(i/(drops-1))*2-1`；每 drop RNG 序 = [角度抖动, 速度, 半径, seed, cu]（`vis` 为 presentation-only 不抽，同 Task 29 规则）：`ang=yaw+t*flick_spread_deg*DEG*0.5+(r-0.5)*0.05`；`sp=flick_speed*(0.82+0.28*(1-|t|)+r*0.08)`；`radius=0.85+r*0.3`；`seed`；`cu=cos(up+(r-0.5)*0.12)`。drop 字段：`life 1.4, straight 0, size 0.15, dmg=near, dmg_far=Some(far), trail 0, trail_every 1.8, trail_radius 0.45, grav 26, drag 0.4`；`pos=(m.x+fx*0.6, m.y+0.3, m.z+fz*0.6)`（prev=start=pos）；`vel=(sin(ang)*cu*sp, sin(up)*sp, cos(ang)*cu*sp)`。发射后 `Fire{muzzle:(a.pos+f*0.6, y+1.3, z+fz*0.6), dir:normalize(fx, sin(up), fz)}`。
+- `fire_swipe`（L1396-1417）：`up=clamp(aim_pitch,-0.3,0.3)*0.5+0.08`；`arc=swipe_spread_deg*DEG*1.6`；`t=i/(drops-1)`；`ang=yaw-side*(t-0.5)*arc`；`ox=sin,oz=cos`；`tx=-oz*side,tz=ox*side`；RNG 序 = [sp, radius, seed, cu]：`sp=swipe_speed*(0.8+r*0.3)`；`radius=0.55+r*0.2`；`cu=cos(up+(r-0.5)*0.08)`；drop：`life 1.0, size 0.1, trail_every 2.2, trail_radius 0.32, grav 26, drag 0.6, dmg=near/far`；`pos=(x+ox*0.85, y+0.45, z+oz*0.85)`；`hx=ox*0.8+tx*0.45+fx*0.25, hz 同, hl=hypot`；`vel=(hx/hl*cu*sp, sin(up)*sp, hz/hl*cu*sp)`。`Fire{muzzle:(x+fx*0.85, y+0.45, z+fz*0.85), dir:normalize(fx, sin(up), fz)}`。
+
+## 5. blade kit（weapon/blade.rs，仿 brolly.rs）
+`BladeKit{held,hold_t,charge,charging,full,store,cd,queued,side:i32(-1),swing:Option<Swing>,lunge,lx,lz,lv,last_t,since}`；`Swing{heavy,t,side,yaw,pitch,hits:BTreeSet<usize>,fired,dev,stroke}`。
+- `update`（L624-678）：`ps_time-last_t>0.3 → cancel_charge; held=false; swing=None; lunge=0; queued=0`；`last_t=ps_time`；`cd-=dt; since+=dt; queued=max(0,queued-dt)`；`swing → run_swing`；`raw=gate 前的 intent.fire`（sim 用 `gate.fire||gate.pressed` 近似 raw——注记：JS `a.intent.fire` 是未门控原始输入，sim 的 gate 已含 emerge 抑制；`canAct` 独立判 form/kid_t/alive，raw 差异仅影响 squid/emerge 期的 held 保持，记为偏差 D-T32-2）；`canAct = form!=Squid && kid_t>=emerge_delay && alive`；`!canAct`：charging 时 `store+=dt; a.note_fired 侧 lastFire`（JS `a.lastFire=0` → `note_fired`）；`!raw || store>charge_store → cancel_charge`；`held = held&&raw`；`r.charge=k.charge; return`。`store=0`。
+- `pressed || (auto&&fire&&cd<=0)`：`cd<=0 → tap; else queued=0.16`；`held=true; hold_t=0`。`else queued>0 && cd<=0 && !charging → queued=0; tap`。（`coreDriven` bot 逻辑不移植：`auto=false`；`botHolds` 同理省略，记 D-T32-3。）
+- `fire && held`：`hold_t+=dt`；`!charging && hold_t>=charge_delay && !(swing&&heavy) → charging=true,charge=0,full=false`；`cap = ink>=heavy_ink ?1:0.94`；`charge=min(cap, charge+dt/charge_time)`；`charge>=1 && !full → full=true`；`cap<1 && charge>=cap && !low_warned → low_warned=true; _empty`；`a.fireFacing 侧` 不移植；`r.firing_t=max(firing_t,0.3)`；`note_fired`。
+- `held && !fire`（释放）：`held=false; low_warned=false`；charging：`c=charge; cancel_charge; c>=1 → heavy; else c>=0.3 → (cd<=0.04 ? cd=0,tap : queued=0.16)`。末尾 `r.charge=k.charge`。
+- `cancel_charge`（L49-53）：`charging=false; charge=0; full=false; store=0; r.charge=0`。
+- `tap`（L72-86）：`ink<tap_ink → _empty; cd=0.18; return`；`ink-=tap_ink; note_fired; side=-side; cd=tap_interval; since=0; swing={heavy:false,t:0,side,yaw:a.yaw,pitch:a.aim_pitch,hits:{},fired:false,dev:false}; r.firing_t=0.4`。
+- `heavy`（L87-102）：`ink=max(0,ink-heavy_ink); note_fired; cd=heavy_interval; since=0; swing={heavy:true,side:1,stroke:false,...}; r.firing_t=0.5`；`grounded && lunge_safe → lunge=lunge_time; lx/lz=(sin,cos)(swing.yaw); lv=lunge_dist/(lunge_time*0.75)`。
+- `lunge_safe`（L103-111）：`k∈[0.5,1,1.4]`：`world.ground_height(pos+f*d*k, y+0.6) > water_y+0.25`（bot 悬崖分支不移植）。
+- `run_swing`（L114-127）：`t+=dt`；`!fired && t>=(heavy?0.05:0.028) → fired=true; heavy?spawn_wave:fire_drops`；`heavy && !stroke && t>=0.075 → stroke=true; ground_stroke`；`t>=0.01 && t-dt<=（heavy?0.16:0.12） → melee`（本帧跨过窗口即判，同 JS）；lunge：`-=dt; >0 && alive → v=lv*(0.55+0.45*min(1,lunge/(lunge_time*0.5))); a.vel.x=lx*v; a.vel.z=lz*v`；`t>0.4 → swing=None`。
+- `fire_drops`（L131-178）：`steep=pitch<-0.55`；`up=steep? pitch*0.85 : clamp(pitch,-0.4,0.45)*0.75+0.06`；`vol` 组复用 Task 31 volley 基建（`volley_next/volley_hits/volley_alive`，`volley=Some(g)`，`volley_alive.insert(g,N)`）；`t=i/(N-1)`；`off=side*(t-0.5)*tap_spread_deg*DEG`；`mid=1-|t-0.5|*2`；RNG 序 = [sp, radius, seed, cu]：`sp=tap_speed*(0.8+0.24*mid)*(0.95+r*0.1)*(steep?0.45:1)`；`radius=tap_drop_radius*(0.85+r*0.3)`；drop：`life 1.2, straight=steep?0:tap_straight, size 0.13, dmg=near, dmg_far=Some(far), trail -0.2, trail_every 1.25, trail_radius 0.3, grav 24, drag 0.5, delay=t*0.018`；`r0=steep?0.55:0.8`；`pos=(x+ox*r0, y+(steep?0.7:0.98)+(0.5-t)*0.12, z+oz*r0)`；`!los((x,pos.y,z),pos) → pos=(x,y,z)+(ox,0,oz)*0.12`；`cu=cos(up+(r-0.5)*0.05)`；`hx=ox+tx*0.12, hz=oz+tz*0.12`；`vel=(hx/hl*cu*sp, sin(up)*sp, hz/hl*cu*sp)`。发射后 `Fire{muzzle:(x+sin(yaw)*0.8, y+0.98, z+cos(yaw)*0.8), dir:normalize(sin(yaw), sin(up), cos(yaw))}`。
+- `ground_stroke`（L181-194）：`d∈[0.75,1.35]`：`raycast((x+fx*d, y+0.8, z+fz*d), DOWN, 2.2)` → `splat(g.point+n*0.08, stroke_radius, seed, stretch=(fx,0,fz), stretch_amt=0.9)`；area 走 `Impact`（`pos=g.point, normal=g.normal, radius=stroke_radius, victim None`）。
+- `melee`（L199-242）：`half=(heavy?heavy_arc:melee_arc)*DEG*0.5`；`dmg=heavy?heavy_melee:tap_melee`；`o=(x,y+1,z)`；敌 `ei`（跳过 `ei==self`/同队/死亡/`hits.contains`）：`d=hypot(dx,dz)<=reach+hr`；`ey=e.pos.y+e.smooth_y()-a.pos.y`；`ey <= (heavy?1.9:1.55) && ey+h >= (heavy?-0.9:-0.35)`；`ang=atan2(lat,fwd)<=half || (d<hr+0.4 && fwd>-0.15)`；`los(o → (e.x, e.y+smooth_y+min(h*0.6,0.85), e.z))`；`hits.insert`；`remote → HitSend else apply_hit+Hit`。`dev` 一次性（L237-241 `damageArea`）不移植（无 devices 层，记注）。boss（L232-235）不移植。
+- `spawn_wave`（L247-258）：`pitch = |S.pitch|<0.3 ? S.pitch*0.4 : clamp(S.pitch,-0.45,0.35)`；`dir=(sin(yaw)*cos p, sin p, cos(yaw)*cos p)`；`pos=(x+sin(yaw)*0.55, y+wave_height*0.52, z+cos(yaw)*0.55)`；`!los((x,pos.y,z),pos) → pos=(x,pos.y,z)`；`r.blade_wave=Some(BladeWave{owner_slot,team,pos,prev=pos,dir,dist:0,t:0,hits:{},paint_acc:0.3,dying:-1,ghost:false})`；`Kit{kind:"blade", data:[r2 pos×3, r3 dir×3]}`（经 runner→match `kit_out`，同 brolly L609 模式）；`Fire{muzzle=pos, dir}`。
+- `BladeWave` 步进（`step_wave` L304-372，Match 每帧反序）：`t+=dt`；`dying>=0 → dying-=dt; <=0 → remove`；`step=wave_speed*dt; prev=pos; pos+=dir*step; dist+=step`；`dmg=lerp(wave_damage, far, clamp(dist/wave_range,0,1))`；敌 slab：`along=ex*ux+ez*uz ∈ [-hr, step*hl+hr]`、`|ex*uz-ez*ux| <= wave_width*0.5+hr`、`cy=lerp(prev.y,pos.y,clamp(along/max(1e-4,step*hl),0,1))`、`y0=e.y+smooth_y`、`y0+h >= cy-wave_height*0.55 && y0 <= cy+wave_height*0.45`；`hits` 一次；`!ghost → apply_hit/HitSend`（weaponId 'blade'）。`blockShot/specials`（L347）不移植（无 subs/specials 层，记注）。`world.segment(prev,pos)` 命中 → `pos=hit.point; end_wave(hit.point, hit.normal)`；`paint_acc+=step`，`>=wave_paint_every && 未停` → `raycast(pos, DOWN, wave_height*0.52+1.4)` → `splat(g.point+n*0.08, wave_paint_radius*(0.9+r*0.2), seed, stretch=(ux,0,uz), stretch_amt=0.85)`（2 抽：半径抖动、seed）；`dist>=wave_range && 未停 → end_wave(None)`。
+- `end_wave`（L272-295）：`dying=0.14`；`at=Some` → `splat(at+n*0.1, wave_end_radius, seed)` + `Impact`；`None` → `raycast(pos, DOWN, 3)` → `splat(g.point+n*0.1, wave_end_radius*0.85, seed, stretch=dirXZ, stretch_amt=0.6)` + `Impact`。ghost 不涂不伤（`mute` 语义 = `ghost` 守卫，同 LaunchedCanopy）。
+- `busy`：blade swing（`WeaponRunner::busy` 追加 `blade.as_ref().is_some_and(|k| k.swing.is_some())`）。
+- `move_speed` Blade：见 §1。
+
+## 6. Match 接线（match_.rs）
+- 新增 `pub waves: Vec<BladeWave>`（仿 `launched` L230）；runner 循环 drain `blade_wave.take()` → `waves.push`；reset/clear 同 `launched`。
+- 步进位置：launched canopy 之后、projectile step 之前（JS `Projectiles.update` L1564 kit tick 环先于丸循环；brolly tick 在前，alphabet 序 brolly<blade）。
+- `update` 调用点（L573）传新参数：`&mut self.actors`（扫描用切片 + 本 actor 已由 `a` 借用——实现取 `actors=&mut self.actors` 整片、runner 内以 `i` 索引自身，避免双借；或传 `&mut self.actors[..i]`+`&mut self.actors[i+1..]` 由实施定形，语义不变）、`&mut self.paint`、`t`、`remote`、`self.projectiles.time`。
+- `SimEvent::Kit{kind:"blade"}` 已由 `kit_out` 通道落线（Task 30 §4），无新编码。
+
+## 7. net 接线（replication.rs）
+- `TickEvent::Kit` 回放（L877-917）：现 `k.kind != "brolly" → continue` 改为匹配 `"blade"`：`data.len()>=6`、owner 为 remote → `m.waves.push(BladeWave{ghost:true, dir=vec3(d[3],d[4],d[5]).normalize(), ...})`（JS `ghost` L267-270：不喷墨不判伤，`dying` 自行走完）。`KitRecord` 的 kind 为 String、data 为 Vec<f32>，无新 wire 类型。
+- `F.flick` 旗标（Task 31 已接）自动覆盖 roller/brush 风上窗口；`ch` 槽位覆盖 blade 蓄力（`r.charge=k.charge` 镜像，HUD/姿态用）。
+
+## 8. 测试与门禁
+- TR-32.1（固定种子逐值，覆盖带断言）：
+  - roller：60 帧滚动扫过固定路径 → 断言 3-splat 组数 = 位移/0.28 触发次数（逐值）、每帧 rng 抽值数 = 3、ink 扣减 `1.1×moved` 逐值、`moved<0.28` 帧不涂不扣、覆盖带新增格数下限断言（带内格被 `Roll` stripe 覆盖）。
+  - brush：1-splat 计数与 `moved<0.22` 门、ink `0.32×moved`、覆盖格数下限；`swipe_side` 交替（+1→-1）与 fireSwipe 5 drop 逐值。
+  - blade：tap 7 drops 的 delay/pos/vel/radius 逐值（固定种子）、heavy 满充释放 → `Kit` 事件 data 6 值 = r2/r3 量化、wave 步进 12 m 射程 → paint splat 次数 = floor((acc)/0.7) 逐值、覆盖带格数下限、`end_wave` 半径 1.05/0.8925。
+- TR-32.2（flick/侧扫与近距边界）：
+  - roller flick：windup 0.22 帧精确（flick 0→0.22 释放、cooldown=0.40、firing_t=0.25、flick_recover=0.18）；ink<9 → `_empty`+LowInk、`empty_cd` 0.45 节流；`pressed` 沿（非 held）。
+  - brush flick：windup 0.04、`cooldown=swipe_interval`（0.16 全额）；`moving` 三条件边界（hs=2.0/2.01、intent 0.3/0.31）；`fire&&!moving` 出手沿。
+  - drop 衰减：`dmg_far` 命中距 0/3.5/7/9 → 125/77.5/30/30（flick 值）逐值；`delay` 丸延迟帧（首帧不步进）。
+  - 近距边界：roller `hs>1.0` 门槛（hs=0.9 不判伤）、`fwd∈(-0.2,1.35)` 两端、`lat` 恰界；brush `fwd<1.2`、per-victim 0.35 冷却逐帧；blade melee `d=reach+hr` 恰界、`ang=half` 恰界、贴脸 `d<hr+0.4 && fwd>-0.15` 豁免、LOS 遮挡不判、每 swing 一次；lungeSafe 三采样点（海面/平台）。
+  - ghost wave：不涂不伤、12 m 后 `dying=0.14` 移除。
+- 门禁：`/tmp/task31-gates.sh` → `/tmp/task32-gates.sh`，日志 `rust/tools/verify/logs/task32-gates-<UTC>.log` 九段全 exit 0；workspace 测试 > 327；JS 树零改动。

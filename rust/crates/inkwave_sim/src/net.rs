@@ -860,6 +860,8 @@ mod tests {
             ..Default::default()
         };
         let mut proj = ProjectileSim::new(1);
+        let mut pg = crate::paint::PaintGrid::new(&f.world);
+        let mut foes = crate::weapon::FoeScan::empty();
         wr.update(
             crate::actor::FIXED_DT,
             &gate,
@@ -869,6 +871,12 @@ mod tests {
             glam::Vec3::ZERO,
             &f.world,
             &mut proj,
+            &mut foes,
+            &mut pg,
+            t,
+            None,
+            false,
+            0.0,
         );
         assert!(wr.firing(), "a shot must open the firing window");
 

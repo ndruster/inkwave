@@ -144,6 +144,12 @@ impl Sim {
                 Vec3::ZERO,
                 &self.f.world,
                 &mut self.ps,
+                &mut FoeScan::empty(),
+                &mut self.paint,
+                &self.f.t,
+                None,
+                false,
+                0.0,
             );
         }
         self.ps.step(
@@ -262,6 +268,12 @@ fn tr7_2_ink_gating_and_shots_to_empty() {
             Vec3::ZERO,
             &f.world,
             &mut ps,
+            &mut FoeScan::empty(),
+            &mut PaintGrid::new(&f.world),
+            &f.t,
+            None,
+            false,
+            0.0,
         );
         fired += ps
             .drain_events()
@@ -293,6 +305,12 @@ fn tr7_2_ink_gating_and_shots_to_empty() {
             Vec3::ZERO,
             &f.world,
             &mut ps,
+            &mut FoeScan::empty(),
+            &mut PaintGrid::new(&f.world),
+            &f.t,
+            None,
+            false,
+            0.0,
         );
         low += ps
             .drain_events()
@@ -549,6 +567,12 @@ fn runner_bloom_and_spread_track_upstream_formulas() {
         Vec3::ZERO,
         &f.world,
         &mut ps,
+        &mut FoeScan::empty(),
+        &mut PaintGrid::new(&f.world),
+        &f.t,
+        None,
+        false,
+        0.0,
     );
     assert!(r.bloom < 1.0);
 }
@@ -573,6 +597,12 @@ fn runner_move_speed_uses_firing_penalty() {
         Vec3::ZERO,
         &f.world,
         &mut ps,
+        &mut FoeScan::empty(),
+        &mut PaintGrid::new(&f.world),
+        &f.t,
+        None,
+        false,
+        0.0,
     );
     assert_eq!(
         r.move_speed(WeaponKind::Shooter, &f.t, &f.w),
@@ -784,11 +814,12 @@ fn tr29_2_kind_table_and_dispatch_skeleton() {
     assert!(WeaponKind::Charger.is_wired());
     assert!(WeaponKind::Spinner.is_wired());
     assert!(WeaponKind::Bucket.is_wired());
-    // The remaining kinds are the Task 32/33 batches.
-    assert!(!WeaponKind::Roller.is_wired());
-    assert!(!WeaponKind::Brush.is_wired());
+    // Task 32 batch three: roller / brush / blade joined the wired set.
+    assert!(WeaponKind::Roller.is_wired());
+    assert!(WeaponKind::Brush.is_wired());
+    assert!(WeaponKind::Blade.is_wired());
+    // The remaining kinds are the Task 33 batch.
     assert!(!WeaponKind::Bow.is_wired());
-    assert!(!WeaponKind::Blade.is_wired());
     assert!(!WeaponKind::Mitts.is_wired());
 
     // Move-speed table (weapons.js L63-92): idle is always the run speed,
@@ -814,9 +845,15 @@ fn tr29_2_kind_table_and_dispatch_skeleton() {
         r.move_speed(WeaponKind::Brush, &f.t, &f.w),
         f.w.brush.move_speed_firing
     );
-    for k in [WeaponKind::Bow, WeaponKind::Blade, WeaponKind::Mitts] {
+    for k in [WeaponKind::Bow, WeaponKind::Mitts] {
         assert_eq!(r.move_speed(k, &f.t, &f.w), f.t.run_speed, "kit {k:?}");
     }
+    // Task 32: the blade kit owns its curve (blade.js L683-689) — with the
+    // pose window active the kit `moveSpeedFiring` applies.
+    assert_eq!(
+        r.move_speed(WeaponKind::Blade, &f.t, &f.w),
+        f.w.blade.move_speed_firing
+    );
     // Brolly kit semantics (weapons.js L664 / brolly.js): the raised canopy
     // is the slowest stance, firing next, plain run otherwise.
     r.firing_t = 0.0;
@@ -923,6 +960,12 @@ fn tr29_2_kind_table_and_dispatch_skeleton() {
             Vec3::ZERO,
             &f.world,
             &mut ps,
+            &mut FoeScan::empty(),
+            &mut PaintGrid::new(&f.world),
+            &f.t,
+            None,
+            false,
+            0.0,
         );
     }
     assert_eq!(a.ink, ink0, "charger arm must not consume ink yet");
@@ -958,6 +1001,12 @@ fn tr30_1_twins_cadence_ink_and_bloom() {
             Vec3::ZERO,
             &f.world,
             &mut ps,
+            &mut FoeScan::empty(),
+            &mut PaintGrid::new(&f.world),
+            &f.t,
+            None,
+            false,
+            0.0,
         );
         for e in ps.drain_events() {
             if let SimEvent::Fire { .. } = e {
@@ -1042,6 +1091,12 @@ fn tr30_1_twins_roll_plants_the_turret() {
         Vec3::ZERO,
         &f.world,
         &mut ps,
+        &mut FoeScan::empty(),
+        &mut PaintGrid::new(&f.world),
+        &f.t,
+        None,
+        false,
+        0.0,
     );
     let _ = ps.drain_events();
     let normal = ps.list.last().unwrap();
@@ -1072,6 +1127,12 @@ fn tr30_1_twins_roll_plants_the_turret() {
             Vec3::ZERO,
             &f.world,
             &mut ps,
+            &mut FoeScan::empty(),
+            &mut PaintGrid::new(&f.world),
+            &f.t,
+            None,
+            false,
+            0.0,
         );
         ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
     }
@@ -1088,6 +1149,12 @@ fn tr30_1_twins_roll_plants_the_turret() {
             Vec3::ZERO,
             &f.world,
             &mut ps,
+            &mut FoeScan::empty(),
+            &mut PaintGrid::new(&f.world),
+            &f.t,
+            None,
+            false,
+            0.0,
         );
         ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
     }
@@ -1108,6 +1175,12 @@ fn tr30_1_twins_roll_plants_the_turret() {
         Vec3::ZERO,
         &f.world,
         &mut ps,
+        &mut FoeScan::empty(),
+        &mut PaintGrid::new(&f.world),
+        &f.t,
+        None,
+        false,
+        0.0,
     );
     let planted = ps.list.last().unwrap();
     assert!(ps.list.len() > n_before);
@@ -1126,6 +1199,12 @@ fn tr30_1_twins_roll_plants_the_turret() {
         vec3(1.0, 0.0, 0.0),
         &f.world,
         &mut ps,
+        &mut FoeScan::empty(),
+        &mut PaintGrid::new(&f.world),
+        &f.t,
+        None,
+        false,
+        0.0,
     );
     assert!(!r.turret, "walking un-plants");
     // Releasing the trigger also un-plants.
@@ -1139,6 +1218,12 @@ fn tr30_1_twins_roll_plants_the_turret() {
         Vec3::ZERO,
         &f.world,
         &mut ps,
+        &mut FoeScan::empty(),
+        &mut PaintGrid::new(&f.world),
+        &f.t,
+        None,
+        false,
+        0.0,
     );
     assert!(!r.turret, "releasing the trigger un-plants");
 }
@@ -1175,6 +1260,12 @@ fn tr30_1_twins_roll_chain_lockout_and_refill() {
             md,
             &f.world,
             &mut ps,
+            &mut FoeScan::empty(),
+            &mut PaintGrid::new(&f.world),
+            &f.t,
+            None,
+            false,
+            0.0,
         );
         ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
     }
@@ -1197,6 +1288,12 @@ fn tr30_1_twins_roll_chain_lockout_and_refill() {
             Vec3::ZERO,
             &f.world,
             &mut ps,
+            &mut FoeScan::empty(),
+            &mut PaintGrid::new(&f.world),
+            &f.t,
+            None,
+            false,
+            0.0,
         );
         ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
     }
@@ -1242,6 +1339,12 @@ fn tr30_1_blaster_cadence_ink_and_fields() {
             Vec3::ZERO,
             &f.world,
             &mut ps,
+            &mut FoeScan::empty(),
+            &mut PaintGrid::new(&f.world),
+            &f.t,
+            None,
+            false,
+            0.0,
         );
         shots += ps
             .drain_events()
@@ -1429,6 +1532,12 @@ fn hold(
             Vec3::ZERO,
             &f.world,
             ps,
+            &mut FoeScan::empty(),
+            &mut PaintGrid::new(&f.world),
+            &f.t,
+            None,
+            false,
+            0.0,
         );
     }
 }
@@ -1444,6 +1553,12 @@ fn release(r: &mut WeaponRunner, a: &mut Actor, k: WeaponKind, f: &Fix, ps: &mut
         Vec3::ZERO,
         &f.world,
         ps,
+        &mut FoeScan::empty(),
+        &mut PaintGrid::new(&f.world),
+        &f.t,
+        None,
+        false,
+        0.0,
     );
 }
 
@@ -1770,6 +1885,12 @@ fn tr31_2_bucket_windup_and_blob_taper() {
         Vec3::ZERO,
         &f.world,
         &mut ps,
+        &mut FoeScan::empty(),
+        &mut PaintGrid::new(&f.world),
+        &f.t,
+        None,
+        false,
+        0.0,
     );
     assert_eq!(r.flick, 0.0, "the throw wound up on the tap");
     assert!((a.ink - (f.t.ink_max - bw.ink_per_shot)).abs() < MM);
@@ -1953,6 +2074,8 @@ fn tr31_2_volley_passthrough_and_below_falloff() {
         below_falloff: bw.below_falloff,
         below_falloff_max: bw.below_falloff_max,
         volley: Some(0),
+        dmg_far: None,
+        delay: 0.0,
     };
 
     // Two blobs of one throw across the same victim: the first hurts, the

@@ -140,6 +140,7 @@ use crate::net::{
 };
 use crate::paint::{SplatKind, SplatOpts};
 use crate::tuning::{Difficulty, PlayerTuning, Spritzer, WeaponSet};
+use crate::weapon::blade::BladeWave;
 use crate::weapon::brolly::LaunchedCanopy;
 use crate::weapon::{PROJ_DRAG, PROJ_GRAV, PROJ_SIZE, SHOT_LIFE, WeaponKind};
 use glam::{Vec3, vec3};
@@ -861,6 +862,10 @@ impl Replication {
                             below_falloff: 0.0,
                             below_falloff_max: 0.0,
                             volley: None,
+                            // Task 32: the `['p']` record carries no drop
+                            // falloff / delay — a ghost round is a plain one.
+                            dmg_far: None,
+                            delay: 0.0,
                         });
                     }
                     TickEvent::Trigger(_) => {
@@ -885,35 +890,56 @@ impl Replication {
                         // `LaunchedCanopy::update`). Kinds without a sim-side
                         // kit layer are ignored verbatim (JS `!K || !K.ghost`
                         // breaks — the decode-tolerance Non-Goal clause).
-                        if k.kind != "brolly" {
-                            continue;
-                        }
                         let Some(i) = self.idx_of_nid(k.nid) else {
                             continue;
                         };
                         if !self.remote[i] {
                             continue;
                         }
-                        // JS `ghost` guards `Array.isArray(d)` (L651); a
-                        // short payload would pack `undefined` → NaN — the
-                        // sim drops the malformed record instead.
-                        if k.data.len() < 7 {
-                            continue;
+                        match k.kind.as_str() {
+                            // JS `ghost` guards `Array.isArray(d)` (L651); a
+                            // short payload would pack `undefined` → NaN —
+                            // the sim drops the malformed record instead.
+                            "brolly" => {
+                                if k.data.len() < 7 {
+                                    continue;
+                                }
+                                let d = &k.data;
+                                // JS L652: `_gd.set(d[3], 0, d[4]).normalize()`.
+                                let dir = vec3(d[3], 0.0, d[4]).normalize_or(Vec3::Z);
+                                m.launched.push(LaunchedCanopy::new(
+                                    m.actors[i].team,
+                                    m.actors[i].slot,
+                                    vec3(d[0], d[1], d[2]),
+                                    dir,
+                                    d[5],
+                                    w.brolly.canopy_hp as f32,
+                                    w.brolly.launch_life,
+                                    d[6],
+                                    true,
+                                ));
+                            }
+                            // JS `blade.js ghost(a, d)` L267-270: a remote
+                            // player's ink wave — it moves and dies for the
+                            // eye only (Task 32 §7).
+                            "blade" => {
+                                if k.data.len() < 6 {
+                                    continue;
+                                }
+                                let d = &k.data;
+                                let pos = vec3(d[0], d[1], d[2]);
+                                // JS L269: `_gd.set(d[3], d[4], d[5]).normalize()`.
+                                let dir = vec3(d[3], d[4], d[5]).normalize_or(Vec3::Z);
+                                m.waves.push(BladeWave::new(
+                                    m.actors[i].slot,
+                                    m.actors[i].team,
+                                    pos,
+                                    dir,
+                                    true,
+                                ));
+                            }
+                            _ => {}
                         }
-                        let d = &k.data;
-                        // JS L652: `_gd.set(d[3], 0, d[4]).normalize()`.
-                        let dir = vec3(d[3], 0.0, d[4]).normalize_or(Vec3::Z);
-                        m.launched.push(LaunchedCanopy::new(
-                            m.actors[i].team,
-                            m.actors[i].slot,
-                            vec3(d[0], d[1], d[2]),
-                            dir,
-                            d[5],
-                            w.brolly.canopy_hp as f32,
-                            w.brolly.launch_life,
-                            d[6],
-                            true,
-                        ));
                     }
                     // M1/M2 placeholders (`b`/`z`): no bomb/zone gameplay in
                     // scope — JS L494/L496 would hand them to the boss/zones

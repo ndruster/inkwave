@@ -110,6 +110,12 @@ fn frame(
         Vec3::ZERO,
         &f.world,
         ps,
+        &mut FoeScan::empty(),
+        &mut PaintGrid::new(&f.world),
+        &f.t,
+        None,
+        false,
+        0.0,
     );
     ps.drain_events()
 }
@@ -323,6 +329,8 @@ fn tr30_1_held_canopy_blocks_breaks_regrows() {
         below_falloff: 0.0,
         below_falloff_max: 0.0,
         volley: None,
+        dmg_far: None,
+        delay: 0.0,
     });
     let mut launched: Vec<LaunchedCanopy> = Vec::new();
     let mut owner = ShieldOwner {

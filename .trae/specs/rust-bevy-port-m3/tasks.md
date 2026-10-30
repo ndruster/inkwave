@@ -114,7 +114,7 @@
 - **P2-2（注记，不改）** `lob_aim` 当前 sim 内不可达（aim_point 恒 None，spec §4 已注明「仅 Some 时启用」，Task 36 播放侧/瞄准点接入后生效）。
 
 ## Task 32: 主武器批三——近战扫类（roller/brush/blade）
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 29
 - **Description**:
@@ -124,6 +124,20 @@
   - `rule` TR-32.1: 三类扫击的墨迹覆盖带（固定路径下覆盖格数断言）。
   - `rule` TR-32.2: flick/侧扫的抛射物与近距判定边界用例。
 - **Notes**: 近战判定走 owner 本地 + splat 广播（同 Spritzer 命中模型），无新 wire 类型。
+
+### Task 32 Completion Evidence（2026-10-31）
+- **TR-32.1 ✅**：固定种子逐值测试全绿（`weapon/blade_tests.rs`，18 测试）。roller 拖行：≥0.28 m 一组 3 splat、ink=1.1×moved、Impact radius=rollWidth/2、40 帧 9 组、rng 消耗 3×组数；brush 拖行：≥0.22 m 一条细线、ink=0.32×moved、splat radius=brushWidth×0.45、30 帧 14 线、rng 1×组数；brush swipe：0.04 s wind-up 帧 4 释放、5 滴逐值（RNG 序 speed→radius→seed→cu、`swipeSide` 抛时翻转故首扫 side=−1、cooldown 0.16/firing_t 0.25）；blade tap 新月逐值（drop y=0.98+(0.5−t)·0.12、muzzle y=0.98）；heavy 波：`blade_wave` 交接记录、甲板条纹 14+1 组=29 draws、wall burst Impact radius=waveEndRadius 1.05/dying=0.14；void 掠过（评审后新增）：越界 0 draws 0 Turf、end spatter raycast miss 不抽 seed、paint_acc 仍复位。
+- **TR-32.2 ✅**：边界/时序测试全绿。flick：pressed 边沿、0.22 s wind-up（14 帧）、9 滴逐值、cooldown 0.40、低墨 click empty 0.45 锁且保持滚动；brush moving boundary；drop dmg_far lerp 四段长采样（容差 0.5——`segment_capsule_dist` 6 步+三分 8 轮在 t=0 边界收敛偏差 ~0.003·L，已注记）；delay 冻结首帧；roller melee 窗（140 一击必杀→每帧复活 victim）；brush melee box/CD；blade melee 弧（75°±ε、face-hug 豁免 `d<hr+0.4 && fwd>−0.15`、每 swing 一次）；lunge 安全采样；ghost 波静默（0 事件 0 draws）；busy/swing 窗（swing 于 press 帧末 t=0 创建）。
+- **架构落地（spec §1–§5）**：`weapon.rs`——`_roller`/`_brush` runner 臂、`fire_flick`/`fire_swipe`+`push_drop`（`DropSpec` 字面量带 `// JS L…` 锚点注释）、melee 弧、`is_wired += Roller|Brush|Blade`、`blade_wave.take()` 交接。`weapon/blade.rs`（新增 955 行）——`BladeKit` 状态机（hold/charge/store/cd/queued/swing/lunge，take/store 模式）+ `BladeWave` 世界对象（条纹 raycast/敌体穿刺/墙爆/end spatter/ghost），`update` 对齐 JS L128 `MAIN_KITS.blade.update`。`match_.rs`——`SimEvent::Kit`→`kit_out`、`blade_wave`→`m.waves` 统一步进。`net/replication.rs`——local `TickEvent::Kit` 发送、`"blade"` 接收分支推 ghost 波、ghost round `dmg_far=None`/`delay=0`。`actor.rs`——`FireGate` 扩展。无新 wire 类型（复用 `['k']` Kit 记录）。
+- **门禁**：全量九段矩阵全 exit 0，日志 `rust/tools/verify/logs/task32-gates-20261030T224938Z.log`（fmt/clippy/test/wasm32/cargo tree/trunk release/headless 600 帧/JS 树零改动；workspace **345 passed** > 327 单调递增）。
+
+### Task 32 Review 附录（独立评审：1 P0 / 1 P1 / 2 P2 → P0 修复、P1 核实驳回、P2 全部落地 → 门禁复验全绿）
+- **P0 ✅** stripe rng 抽取未门控 `g.hit`（JS blade.js L353-359 `Math.random` 是 splat 实参，raycast 命中后才求值）→ `blade.rs` 两次抽取移入 `g.hit` 门内，ghost 仍抽取（mute 不抑制实参求值）；新增 void 掠过测试锁死「miss 时 0 抽取」。
+- **P1 ❌（驳回）** blade `empty_click` 缺 `a.isLocal` 门控——核实：`match_.rs` L562-566 对 remote actor 直接 `continue`，runner pass 根本不执行，JS `isLocal` 语义已由调用点覆盖，无需再门控。
+- **P2-1 ✅** `fire_flick`/`fire_swipe` `DropSpec` 字面量缺 JS 锚 → 补 `// JS L1226-1227`/`// JS L1231`/`// JS L1404-1405`/`// JS L1409`。
+- **P2-2 ✅** void 用例缺失 → `tr32_1_blade_wave_over_void_draws_nothing`。
+- **门禁首跑暴露 clippy 6 错**（`ensure_blade` 死代码删除、`BladeKit` 补 `Default`（连带 `unwrap_or_else`→`unwrap_or_default`）、negated comparison 改写、冗余括号×2、测试 helper `too_many_arguments` allow）→ 修复后九段复验全绿。
+- **裁决/偏差记录**：`ground_stroke`→`Turf` 经 `SimEvent::Turf` 记账（同 Spritzer 命中模型）；D-T32-2/3 偏差（blade-fx 简化、远端波单记录）落 spec §5；`swipe_side` 抛时翻转（首扫 side=−1）；`spawn_at` 将 pos.y 吸附地面（甲板顶 y=0，全部 y 断言基准 0.0）；三分搜索边界偏差以容差 0.5+内点采样处置。
 
 ## Task 33: 主武器批四——特殊机制类（bow/mitts）
 - **Status**: `pending`

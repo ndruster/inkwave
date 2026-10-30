@@ -63,9 +63,11 @@ use serde::{Deserialize, Serialize};
 use crate::actor::{Actor, ActorEvent, ActorInput, FireGate, Form, SimWorld, SplatCause};
 use crate::paint::{PaintGrid, SplatOpts};
 use crate::tuning::{MatchConfig, PlayerTuning, WeaponSet};
+use crate::weapon::blade::BladeWave;
 use crate::weapon::brolly::{HELD_R, LAUNCH_R, LaunchedCanopy, held_shield};
 use crate::weapon::{
-    ProjectileSim, Rng, Shield, ShieldOwner, ShieldTarget, SimEvent, WeaponKind, WeaponRunner,
+    FoeScan, ProjectileSim, Rng, Shield, ShieldOwner, ShieldTarget, SimEvent, WeaponKind,
+    WeaponRunner,
 };
 use glam::{Vec3, vec3};
 
@@ -228,6 +230,9 @@ pub struct Match {
     /// Launched brolly canopies (JS `LAUNCHED` world list, brolly.js L167):
     /// advanced every frame inside the projectile-tick window.
     pub launched: Vec<LaunchedCanopy>,
+    /// Blade ink waves (JS `WAVES` world list, blade.js L245): advanced every
+    /// frame right after the launched canopies (kit `tick` order, Task 32 §6).
+    pub waves: Vec<BladeWave>,
     /// Kit spawns produced this frame, waiting for the replication layer to
     /// record them onto the outgoing timeline (JS `recKit`, Task 30 §4).
     /// Drained every frame by `Replicator::update`; cleared at the top of
@@ -306,6 +311,7 @@ impl Match {
             // overwrites this from the roster weapon strings.
             kinds: vec![WeaponKind::Shooter; team_size * 2],
             launched: Vec::new(),
+            waves: Vec::new(),
             kit_out: Vec::new(),
             paint: PaintGrid::new(world.collision),
             projectiles: ProjectileSim::new(seed),
@@ -395,6 +401,7 @@ impl Match {
         // JS `clearAll()` (brolly.js L487-490): world canopies die with the
         // match; the runner kits are released by `r.reset()` below.
         self.launched.clear();
+        self.waves.clear();
         self.kit_out.clear();
         for (a, r) in self.actors.iter_mut().zip(self.runners.iter_mut()) {
             r.reset();
@@ -557,7 +564,11 @@ impl Match {
             if remote.is_some_and(|m| m.get(i).copied().unwrap_or(false)) {
                 continue;
             }
-            let (a, r) = (&mut self.actors[i], &mut self.runners[i]);
+            // Task 32: the melee scans (roller / brush / blade) need the rest
+            // of the roster alongside the runner's own actor — `FoeScan`
+            // splits the slice around the index (spec §6).
+            let (a, mut foes) = FoeScan::split_around(&mut self.actors, i);
+            let r = &mut self.runners[i];
             if !a.alive {
                 r.reset();
                 a.fire_gate = FireGate::default();
@@ -570,6 +581,9 @@ impl Match {
                 ActorInput::default()
             };
             // Per-actor loadout (spec D-2): the runner dispatches by kind.
+            // `inp.fire` is the raw (ungated) intent the blade kit reads as
+            // JS `a.intent.fire` (blade.js L630, spec D-T32-2).
+            let ps_time = self.projectiles.time;
             r.update(
                 dt,
                 &gate,
@@ -579,11 +593,22 @@ impl Match {
                 inp.move_dir,
                 world.collision,
                 &mut self.projectiles,
+                &mut foes,
+                &mut self.paint,
+                t,
+                remote,
+                inp.fire,
+                ps_time,
             );
             // A brolly launch this frame joins the world canopy list (JS
             // `addLaunched` → `LAUNCHED.push`, brolly.js L285).
             if let Some(c) = r.brolly_launch.take() {
                 self.launched.push(c);
+            }
+            // A blade wave this frame joins the world wave list (JS
+            // `addWave` → `WAVES.push`, blade.js L264).
+            if let Some(wv) = r.blade_wave.take() {
+                self.waves.push(wv);
             }
             // D-T31-1: the charger's hitscan fires here, not inside the
             // runner (which has no actor list for the victim scan). Same
@@ -654,6 +679,29 @@ impl Match {
             }
             if !keep {
                 self.launched.remove(li);
+            }
+        }
+
+        // JS `updateWaves` (blade.js L296-303, kit `tick` L692): blade ink
+        // waves advance right after the canopies, reverse order (faded ones
+        // spliced out, JS L311). Their turf / hits ride the projectile event
+        // queue (`SimEvent::Turf` / `Impact` / `Hit`), drained below like
+        // every other splat credit.
+        let mut wi = self.waves.len();
+        while wi > 0 {
+            wi -= 1;
+            let keep = self.waves[wi].step(
+                dt,
+                world.collision,
+                &mut self.paint,
+                &w.blade,
+                t,
+                &mut self.projectiles,
+                &mut self.actors,
+                remote,
+            );
+            if !keep {
+                self.waves.remove(wi);
             }
         }
 
