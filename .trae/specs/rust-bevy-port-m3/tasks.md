@@ -4,7 +4,7 @@
 > **M3 决议（2026-10-30 与用户确认）**：主线 = 内容移植 + 跨端开黑；模式 turf + Zone Control（boss 留后）；武器 12 主 + 15 副 + 19 特殊（kit 留后）；地图 tidewater + 2 张（推荐 saltpan/crossmarket，OQ-1）；视觉/音频完整度整体顺延 M4。
 
 ## Task 28: tuning 全量提取——武器/副/特殊/zone/bot 参数进管线
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 27
 - **Description**:
@@ -14,6 +14,21 @@
   - `rule` TR-28.1: 提取产物 stable-json 可 diff；锚定单测全绿（断言值 grep 自 config.js 行号注释）。证据：测试输出 + tuning.json diff。
   - `rule` TR-28.2: retired 武器（dualies/slosher/splatling）不入产物；`WEAPON_ORDER` 12 项一致。
 - **Notes**: 纯管线任务，不动 sim 逻辑；JS 树零改动门禁本任务起持续生效。
+
+### Task 28 Completion Evidence（2026-10-30）
+- **TR-28.1 ✅**：`extract-tuning.mjs` 扩抓 PLAYER + `WEAPONS`(12，按 `WEAPON_ORDER` L303 投影) + `weaponRange`(L307-315 提取时预计算成映射表) + `SUBS`(15)/`SPECIALS`(19)/`ZONES`(L485-501)/`MATCH`/`TEAM_PALETTES`/`DIFFICULTY`(三档)，schema `inkwave.tuning.v1→v2`。确定性：连跑两次逐字节一致 + 评审员独立重提取 diff 一致。锚定单测全绿：`cargo test -p inkwave_sim` **216 passed**（189→216，+27：order 锁定×3、spritzer 别名等值、weaponRange 表、11 武器逐值、sub 分组×5、special 分组×6、zones、difficulty），断言值逐条对 config.js 行号注释实核。全量门禁日志 `rust/tools/verify/logs/task28-gates-20261030T085619Z.log`（fmt/clippy/test/wasm32/cargo tree/trunk release/headless 120 帧/JS 树零改动，全 exit 0；workspace **300 passed** > 273 基线，基线 273→300 单调递增）。首轮 fmt 失败（rustfmt 展开数组字面量）→ `cargo fmt --all` 修复后全绿。
+- **TR-28.2 ✅**：retired `dualies/slosher/splatling`（L266-299）不入产物——提取器按 `WEAPON_ORDER` 投影（`pick()` 缺 id 即 throw），测试 `weapon_order_locked_and_retired_excluded` 以 `TUNING_JSON.contains` 反向断言 0 命中；`WEAPON_ORDER` 12 项与 L303 逐字一致。
+- **类型扩展**：`tuning.rs` 顶层新增 `weapon_order/weapons(12 struct)/weapon_range(HashMap)/sub_order/subs(15)/special_order/specials(19，barrage_* 蛇形键显式 rename)/zones(17 字段)/difficulty(三档)`；u32=整数语义（pellets/blobs/drops/max/uses/hp/canopyHp/count/sampleHz/specialCost 等）、f32=其余、`[f32;2]`=bow 二元数组、`Option`=anim 等 JS 可选字段。`spritzer` 保留为 `weapons.shooter` M1 别名（Task 29 迁移消费端后移除），既有消费端零改动（workspace 全绿证明不破）。
+- **文档**：`tuning.schema.md` 重写为 v2（顶层表、逐武器/副/特殊字段分组+行号锚点、weaponRange 表、zones 17 字段表、difficulty 三档表）。
+
+### Task 28 Review 附录（独立评审：0 blocker / 0 major / 5 P2 → 全部当场修复 → 结论可闭环）
+- 评审员实核通过：重提取逐字节一致；bow/mitts/brolly/blade 全字段 + torpedo/waddle/shaker/boomerang/mine/beacon + stamp/crab/jetpack/blower/zipcaster/barrage×5 逐值对 config.js 一致；serde 边界（`barrage_*` 显式 rename、`rMin/rMax/launchSpeed0/finalCentre/ring1/deflectR` camelCase 转换）正确；u32/f32 选型正确；`Spritzer`/`Difficulty` struct 与 HEAD 逐字节相同（消费端无漂移）；JS 树零改动。
+- **P2-1 ✅** schema.md PLAYER 锚点 L21-91→L21-90（L91 空行，实核）。
+- **P2-2 ✅** schema.md blaster L126-136→L126-135（L136 为 bucket 注释行）。
+- **P2-3 ✅** schema.md「解析前校验前缀」→「单测 `schema_and_provenance` 精确断言」（`embedded_tuning()` 无运行时校验，措辞对齐实现）。
+- **P2-4 ✅** tuning.rs L207/L1460 retired 锚点 L265-305→L266-299（与 schema.md 统一）。
+- **P2-5 ✅** tuning.rs 头注释单位说明补齐：散布/弧判定/扇形/跃角字段为度（原仅提散布）。
+- 修复复验：fmt/clippy/test 重跑全绿（300 passed），追加至同一门禁日志。
 
 ## Task 29: 武器 runner 架构——kind 分发与弹丸系统泛化
 - **Status**: `pending`

@@ -1,0 +1,122 @@
+=== fmt ===
+Diff in /root/work/project/inkwave/rust/crates/inkwave_sim/src/tuning.rs:1463:
+         assert_eq!(
+             t.weapon_order,
+             [
+-                "shooter", "twins", "brolly", "blaster", "spinner", "charger", "bow", "roller", "brush",
+-                "blade", "mitts", "bucket"
++                "shooter", "twins", "brolly", "blaster", "spinner", "charger", "bow", "roller",
++                "brush", "blade", "mitts", "bucket"
+             ]
+         );
+         for retired in ["dualies", "slosher", "splatling"] {
+Diff in /root/work/project/inkwave/rust/crates/inkwave_sim/src/tuning.rs:1899:
+         assert_eq!(
+             t.sub_order,
+             [
+-                "bomb", "sticky", "burst", "shaker", "seeker", "waddle", "torpedo", "tracer", "boomerang",
+-                "scan", "curtain", "sprinkler", "mine", "beacon", "mist"
++                "bomb",
++                "sticky",
++                "burst",
++                "shaker",
++                "seeker",
++                "waddle",
++                "torpedo",
++                "tracer",
++                "boomerang",
++                "scan",
++                "curtain",
++                "sprinkler",
++                "mine",
++                "beacon",
++                "mist"
+             ]
+         );
+     }
+Diff in /root/work/project/inkwave/rust/crates/inkwave_sim/src/tuning.rs:2126:
+         assert_eq!(
+             t.special_order,
+             [
+-                "slam", "storm", "barrage", "barrage_sticky", "barrage_burst", "barrage_seeker",
+-                "barrage_mist", "bubbler", "sonar", "strike", "zooka", "wail", "kraken", "blower", "jetpack",
+-                "stamp", "booyah", "zipcaster", "crab"
++                "slam",
++                "storm",
++                "barrage",
++                "barrage_sticky",
++                "barrage_burst",
++                "barrage_seeker",
++                "barrage_mist",
++                "bubbler",
++                "sonar",
++                "strike",
++                "zooka",
++                "wail",
++                "kraken",
++                "blower",
++                "jetpack",
++                "stamp",
++                "booyah",
++                "zipcaster",
++                "crab"
+             ]
+         );
+         assert_eq!(t.special_order.len(), 19);
+FMT_EXIT=1
+=== clippy ===
+[1m[92m    Checking[0m inkwave v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave)
+[1m[92m    Checking[0m net-harness v0.1.0-m1 (/root/work/project/inkwave/rust/tools/net-harness)
+[1m[92m    Finished[0m ]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\`dev` profile [unoptimized + debuginfo]]8;;\ target(s) in 11.39s
+CLIPPY_EXIT=0
+=== test ===
+test result: ok. 62 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.23s
+test result: ok. 216 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 5.55s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.00s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.66s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+TEST_EXIT=0
+=== wasm32 check ===
+[1m[92m    Checking[0m inkwave_sim v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave_sim)
+[1m[92m    Checking[0m inkwave v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave)
+[1m[92m    Finished[0m ]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\`dev` profile [unoptimized + debuginfo]]8;;\ target(s) in 9.98s
+WASM_EXIT=0
+=== cargo tree -p inkwave_sim ===
+inkwave_sim v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave_sim)
+[2m├──[0m glam v0.30.10
+[2m│[0m   [2m└──[0m serde_core v1.0.229
+[2m├──[0m serde v1.0.229
+[2m│[0m   [2m├──[0m serde_core v1.0.229
+[2m│[0m   [2m└──[0m serde_derive v1.0.229 (proc-macro)
+[2m│[0m   [2m [0m   [2m├──[0m proc-macro2 v1.0.107
+[2m│[0m   [2m [0m   [2m│[0m   [2m└──[0m unicode-ident v1.0.26
+[2m│[0m   [2m [0m   [2m├──[0m quote v1.0.47
+[2m│[0m   [2m [0m   [2m│[0m   [2m└──[0m proc-macro2 v1.0.107 [33m[2m(*)[39m[22m
+[2m│[0m   [2m [0m   [2m└──[0m syn v3.0.6
+[2m│[0m   [2m [0m   [2m [0m   [2m├──[0m proc-macro2 v1.0.107 [33m[2m(*)[39m[22m
+[2m│[0m   [2m [0m   [2m [0m   [2m├──[0m quote v1.0.47 [33m[2m(*)[39m[22m
+[2m│[0m   [2m [0m   [2m [0m   [2m└──[0m unicode-ident v1.0.26
+[2m└──[0m serde_json v1.0.151
+[2m [0m   [2m├──[0m itoa v1.0.18
+[2m [0m   [2m├──[0m memchr v2.8.3
+[2m [0m   [2m├──[0m serde_core v1.0.229
+[2m [0m   [2m└──[0m zmij v1.0.23
+=== trunk build ===
+[1m[92m    Finished[0m ]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\`release` profile [optimized]]8;;\ target(s) in 38.74s
+2026-10-30T08:54:59.886716Z  INFO applying new distribution
+2026-10-30T08:54:59.887734Z  INFO ✅ success
+TRUNK_EXIT=0
+=== headless ===
+[inkwave] boot: sim crate 0.1.0-m1 (headless = true)
+[inkwave] headless frames complete
+HEADLESS_EXIT=0
+=== JS tree git status ===
+JS_TREE_CLEAN (empty above)
