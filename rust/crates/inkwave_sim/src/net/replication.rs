@@ -135,12 +135,13 @@ use crate::net::wire::{
     parse_json,
 };
 use crate::net::{
-    ActorSample, ActorStatsRow, DirectMsg, EventRecord, ForwardEvent, HostMsg, ProjectileRecord,
-    SessionId, SplatRecord, Tick, TickEvent, TimedEvent, TrigData, TriggerRecord,
+    ActorSample, ActorStatsRow, DirectMsg, EventRecord, ForwardEvent, HostMsg, KitRecord,
+    ProjectileRecord, SessionId, SplatRecord, Tick, TickEvent, TimedEvent, TrigData, TriggerRecord,
 };
 use crate::paint::{SplatKind, SplatOpts};
 use crate::tuning::{Difficulty, PlayerTuning, Spritzer, WeaponSet};
-use crate::weapon::{PROJ_DRAG, PROJ_GRAV, PROJ_SIZE, SHOT_LIFE};
+use crate::weapon::brolly::LaunchedCanopy;
+use crate::weapon::{PROJ_DRAG, PROJ_GRAV, PROJ_SIZE, SHOT_LIFE, WeaponKind};
 use glam::{Vec3, vec3};
 
 /// JS `TICK = 1/20` (netmatch.js L30): owners stream every 1/20 s.
@@ -416,7 +417,7 @@ impl Replication {
         // sampling, before the tick send — so a due splat paints into this
         // frame's grid and a due death already hides the proxy before its
         // sample is applied below).
-        self.play_events(m, sim, t);
+        self.play_events(m, sim, t, w);
 
         // ---- outgoing tick (L182-187: `tickT -= dt; if (<=0) { += TICK;
         // if (<0) = TICK; _sendTick() }`).
@@ -509,6 +510,22 @@ impl Replication {
             }
         }
 
+        // ---- kit world-object spawns (JS `recKit`, L134-137): the owner
+        // records `['k', nid, kind, data]` for its *local* actors only — a
+        // proxy never launches (its runner is masked), and the guard mirrors
+        // JS `if (!a || a.remote …) return`.
+        for spawn in std::mem::take(&mut m.kit_out) {
+            if let Some(i) = find_actor(&m.actors, spawn.owner.0, spawn.owner.1)
+                && !self.remote[i]
+            {
+                self.rec(TickEvent::Kit(KitRecord {
+                    nid: self.nids[i],
+                    kind: spawn.kind,
+                    data: spawn.data,
+                }));
+            }
+        }
+
         // ---- apply the sampled path + correction onto the proxies (JS
         // `applyRemote`, L349-428, run by `Match.update` after
         // `NetMatch.update` in the same frame).
@@ -517,6 +534,18 @@ impl Replication {
             for (i, &rem) in self.remote.iter().enumerate() {
                 if rem {
                     playback.apply(i, &mut m.actors[i], dt);
+                    // JS `applyRemote` L398: `MAIN_KITS[kind]?.netApply?.(wr,
+                    // S.ks | 0, dt)` — rebuild the remote brolly canopy pose
+                    // so the held-shield assembly (match_.rs `refreshShields`,
+                    // brolly.js L178-190) turns the proxy's umbrella into a
+                    // shield that blocks LOCAL shots. The `!alive` / `!ready`
+                    // early-outs of JS L352/L354 gate the call identically.
+                    if m.kinds[i] == WeaponKind::Brolly
+                        && m.actors[i].alive
+                        && let Some(ks) = playback.cur_ks(i)
+                    {
+                        m.runners[i].net_apply_brolly(ks, w);
+                    }
                 }
             }
         }
@@ -708,7 +737,7 @@ impl Replication {
     /// `respawn` into the proxy state machines and ignores the FX-only
     /// names (`weapon:fire` presentation is the `'p'` ghost + audio, out of
     /// sim scope).
-    fn play_events(&mut self, m: &mut Match, sim: &SimWorld, t: &PlayerTuning) {
+    fn play_events(&mut self, m: &mut Match, sim: &SimWorld, t: &PlayerTuning, w: &WeaponSet) {
         let due = self.playback.due_events();
         if due.is_empty() {
             return;
@@ -789,6 +818,10 @@ impl Replication {
                             // client's own rng stream.
                             seed: m.projectiles.rng.next_f32(),
                             ghost: true,
+                            // Task 30 §4 (net layer) realises blast/pellet
+                            // ghosts; the sim-side ghost stays a plain round.
+                            blast: false,
+                            pellet: None,
                         });
                     }
                     TickEvent::Trigger(_) => {
@@ -802,9 +835,50 @@ impl Replication {
                     TickEvent::Event(e) => {
                         self.play_event(m, t, &e);
                     }
-                    // M1/M2 placeholders (`b`/`k`/`z`): no kit/bomb/zone
-                    // gameplay in scope — JS L477/L486-493 would hand them
-                    // to the kit/boss/zones layers, which the sim lacks.
+                    TickEvent::Kit(k) => {
+                        // JS `_play` 'k' (L486-492): resolve the owner,
+                        // require a *remote* actor, hand the payload to the
+                        // kit's `ghost` — brolly spawns a solid sliding ghost
+                        // canopy (`brolly.js ghost` L650-653 → `addLaunched`
+                        // with `ghost = true`, L276-288: blocks shots and
+                        // holds players, never paints — the JS `mute++`
+                        // wrapper L490 is the `ghost` flag in
+                        // `LaunchedCanopy::update`). Kinds without a sim-side
+                        // kit layer are ignored verbatim (JS `!K || !K.ghost`
+                        // breaks — the decode-tolerance Non-Goal clause).
+                        if k.kind != "brolly" {
+                            continue;
+                        }
+                        let Some(i) = self.idx_of_nid(k.nid) else {
+                            continue;
+                        };
+                        if !self.remote[i] {
+                            continue;
+                        }
+                        // JS `ghost` guards `Array.isArray(d)` (L651); a
+                        // short payload would pack `undefined` → NaN — the
+                        // sim drops the malformed record instead.
+                        if k.data.len() < 7 {
+                            continue;
+                        }
+                        let d = &k.data;
+                        // JS L652: `_gd.set(d[3], 0, d[4]).normalize()`.
+                        let dir = vec3(d[3], 0.0, d[4]).normalize_or(Vec3::Z);
+                        m.launched.push(LaunchedCanopy::new(
+                            m.actors[i].team,
+                            m.actors[i].slot,
+                            vec3(d[0], d[1], d[2]),
+                            dir,
+                            d[5],
+                            w.brolly.canopy_hp as f32,
+                            w.brolly.launch_life,
+                            d[6],
+                            true,
+                        ));
+                    }
+                    // M1/M2 placeholders (`b`/`z`): no bomb/zone gameplay in
+                    // scope — JS L494/L496 would hand them to the boss/zones
+                    // layers, which the sim lacks.
                     _ => {}
                 }
             }
@@ -886,7 +960,10 @@ impl Replication {
             if self.remote[i] {
                 continue;
             }
-            actors.push((self.nids[i], ActorSample::from_actor(a, wr, a.net_tp, ts)));
+            actors.push((
+                self.nids[i],
+                ActorSample::from_actor(a, wr, m.kinds[i], a.net_tp, ts),
+            ));
         }
         let clock = if self.is_host() {
             self.clock_t -= TICK_DT;
@@ -1276,6 +1353,7 @@ mod tests {
     use crate::net::transport::{FakeRelay, FakeTransport, TransportEvent};
     use crate::tuning::Tuning;
     use crate::weapon::WeaponRunner;
+    use crate::weapon::brolly::CanopyState;
     use glam::vec3;
 
     struct Fix {
@@ -1358,6 +1436,7 @@ mod tests {
         a.invuln = 0.0;
         m.actors.push(a);
         m.runners.push(WeaponRunner::new());
+        m.kinds.push(crate::weapon::WeaponKind::Shooter);
         m
     }
 
@@ -2203,6 +2282,7 @@ mod tests {
                                     let s = ActorSample::from_actor(
                                         &mh.actors[i],
                                         &mh.runners[i],
+                                        mh.kinds[i],
                                         mh.actors[i].net_tp,
                                         now as f32,
                                     );
@@ -2214,6 +2294,7 @@ mod tests {
                                     let s = ActorSample::from_actor(
                                         &mg.actors[i],
                                         &mg.runners[i],
+                                        mg.kinds[i],
                                         mg.actors[i].net_tp,
                                         now as f32,
                                     );
@@ -2717,5 +2798,434 @@ mod tests {
             mh.projectiles.list.is_empty() && mg.projectiles.list.is_empty(),
             "the ghost disappears on expiry"
         );
+    }
+
+    // ------------------------------------------------------------------ TR-30.2
+    /// Latest decoded actor sample per nid across every recorded `t` frame.
+    fn latest_samples(rec: &Rec) -> Vec<(u8, ActorSample)> {
+        let mut out: Vec<(u8, ActorSample)> = Vec::new();
+        for (_, payload) in &rec.out {
+            let Some(v) = parse_json(payload) else {
+                continue;
+            };
+            if v.field("k").and_then(JVal::as_str) != Some("t") {
+                continue;
+            }
+            let (tick, _) = decode_tick(&v);
+            for (nid, s) in tick.actors {
+                match out.iter_mut().find(|(n, _)| *n == nid) {
+                    Some(row) => row.1 = s,
+                    None => out.push((nid, s)),
+                }
+            }
+        }
+        out
+    }
+
+    /// Every decoded actor sample of every recorded `t` frame.
+    fn all_samples(rec: &Rec) -> Vec<(u8, ActorSample)> {
+        let mut out = Vec::new();
+        for (_, payload) in &rec.out {
+            if let Some(v) = parse_json(payload)
+                && v.field("k").and_then(JVal::as_str) == Some("t")
+            {
+                let (tick, _) = decode_tick(&v);
+                out.extend(tick.actors);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn tr30_2_pack_slots_three_loadouts() {
+        // JS `packActor` (netmatch.js L723-751) slots `ch` (s[14], L748),
+        // `lock` (s[20], L750) and `ks` (s[21], `MAIN_KITS[kind].netState`,
+        // L750) for the Task 30 batch (twins / blaster / brolly). Spec D-5:
+        // the twins dodge never appears in `lock` or in the `F` word.
+        let f = fix();
+        let sim = f.sim();
+        let t = &f.tuning.player;
+        let w = &f.tuning.weapons;
+        let (h, g) = ("HOST", "GUEST");
+        let cfg = cfg(roster111(h, g), "tidewater", h);
+        let mut mh = match111(&f, 30, 120.0);
+        let mut mg = match111(&f, 30, 120.0);
+        // D-2 per-actor loadout: actor0 twins, actor1 blaster, actor2 brolly.
+        mh.kinds = vec![WeaponKind::Twins, WeaponKind::Blaster, WeaponKind::Brolly];
+        mg.kinds = mh.kinds.clone();
+        let mut rh = Replication::new(&cfg, h, h);
+        let mut rg = Replication::new(&cfg, g, h);
+        rh.bind_match(&mut mh);
+        rg.bind_match(&mut mg);
+        let mut rech = Rec::default();
+        let mut recg = Rec::default();
+        for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+        }
+        assert_eq!(mh.phase, Phase::Active);
+
+        // Hold twins fire + move (dodge gate, weapons.js L533-548), tap the
+        // jump at frame 10 → dodge roll; hold the blaster (auto) and the
+        // brolly (tap-blast then unfold).
+        let mut inputs = vec![ActorInput::default(); 3];
+        let mut saw_roll = false;
+        for frame in 0..30 {
+            inputs[0].fire = true;
+            inputs[0].move_dir = vec3(1.0, 0.0, 0.0);
+            inputs[0].jump = frame == 10;
+            inputs[1].fire = true;
+            inputs[2].fire = true;
+            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w);
+            mg.step_masked(FIXED_DT, &inputs, Some(rg.remote_mask()), &sim, t, w);
+            // `dodge_vel` is read *before* `try_dodge` (JS order, match_.rs
+            // L505-509), so the roll shows from the frame after the tap.
+            if (10..28).contains(&frame) && mh.actors[0].dodge_vel.is_some() {
+                saw_roll = true;
+            }
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut rech);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut recg);
+        }
+        assert!(
+            saw_roll,
+            "the twins jump-tap started a dodge roll (spec D-5)"
+        );
+
+        let hs = latest_samples(&rech);
+        let s0 = &hs.iter().find(|(n, _)| *n == 0).expect("twins sample").1;
+        let s2 = &hs.iter().find(|(n, _)| *n == 2).expect("brolly sample").1;
+        // Brolly unfolded: state Ready, open=1, grow=1, hp=450/450,
+        // regrowK=0 → ks = 15<<2 | 7<<6 | 31<<9 = 16380 (brolly.js L636-641).
+        assert_eq!(s2.ks, 16380, "brolly open pose (spec D-1)");
+        assert_eq!(s2.ch, 0.0, "brolly is not streaming (Task 31)");
+        assert_eq!(s2.lock, 0.0, "lockT is a dualies field (spec D-5)");
+        assert_eq!(s0.ks, 0, "twins has no kit netState (spec D-1)");
+        assert_eq!(s0.ch, 0.0, "twins is not a charge weapon");
+        assert_eq!(
+            s0.lock, 0.0,
+            "twins roll lives in dodgeT/rollLock, not lockT"
+        );
+        let gs = latest_samples(&recg);
+        let s1 = &gs.iter().find(|(n, _)| *n == 1).expect("blaster sample").1;
+        assert_eq!(s1.ks, 0, "blaster has no kit netState");
+        assert_eq!(s1.ch, 0.0, "blaster is auto, not streaming/charging");
+        assert_eq!(s1.lock, 0.0);
+
+        // No wire sample ever carries `F.dodge` (JS L735 reads `wr.dodge`,
+        // the dualies object — spec D-5 keeps it 0 for twins).
+        for (nid, s) in all_samples(&rech) {
+            assert!(!s.flag(crate::net::flags::DODGE), "nid{nid} packed F.dodge");
+            assert_eq!(s.lock, 0.0, "nid{nid} packed a lock timer");
+        }
+
+        // Release the brolly: the canopy folds (close_time 0.1 s) back to the
+        // fresh Ready pose open=0, grow=1, hp full → ks = 7<<6 | 31<<9 = 16320.
+        inputs[2].fire = false;
+        for _ in 0..15 {
+            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut rech);
+        }
+        let s2 = &latest_samples(&rech)
+            .into_iter()
+            .find(|(n, _)| *n == 2)
+            .expect("brolly sample")
+            .1;
+        assert_eq!(s2.ks, 16320, "brolly folded pose");
+    }
+
+    #[test]
+    fn tr30_2_kit_record_ghost_blocks_local_shots() {
+        // JS→Rust shape: a received `['k', nid, 'brolly', [x,y,z,dx,dz,hp,h0]]`
+        // (recKit, netmatch.js L134-137) spawns a ghost canopy on the
+        // receiver (JS `ghost` L650-653 → `addLaunched(ghost=true)` L276-288):
+        // it slides, blocks the local player's shots and never paints (the
+        // `mute++` wrapper L490 / paint.js L470). Unknown kinds and short
+        // payloads are ignored (decode tolerance).
+        let f = fix();
+        let sim = f.sim();
+        let t = &f.tuning.player;
+        let w = &f.tuning.weapons;
+        let (h, g) = ("HOST", "GUEST");
+        let cfg = cfg(roster111(h, g), "tidewater", h);
+        let mut mg = match111(&f, 31, 120.0);
+        let mut rg = Replication::new(&cfg, g, h);
+        rg.bind_match(&mut mg);
+        for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+        }
+        assert_eq!(mg.phase, Phase::Active);
+        let mut rec = Rec::default();
+
+        // Tolerance first: an unknown kit kind (JS `!K || !K.ghost` breaks)
+        // and a truncated payload (JS would pack NaN) must spawn nothing.
+        let junk = |kind: &str, data: Vec<f32>, ts: f32| Tick {
+            ts,
+            actors: Vec::new(),
+            events: vec![TimedEvent {
+                ts,
+                kind: TickEvent::Kit(KitRecord {
+                    nid: 0,
+                    kind: kind.into(),
+                    data,
+                }),
+            }],
+        };
+        rg.on_message(
+            h,
+            &encode_tick(&junk("mitts", vec![0.0; 7], 0.5), None),
+            &mut mg,
+            t,
+        );
+        rg.on_message(
+            h,
+            &encode_tick(&junk("brolly", vec![1.0, 2.0, 3.0], 0.5), None),
+            &mut mg,
+            t,
+        );
+        for _ in 0..30 {
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut rec);
+        }
+        assert!(
+            mg.launched.is_empty(),
+            "unknown / short 'k' records spawn nothing (decode tolerance)"
+        );
+
+        // The real record: a canopy at `pad0` (owner nid0 = the guest's
+        // proxy, team0), its normal facing back at the local shooter pinned
+        // 2.5 m behind it.
+        let base = sim.spawn_pads[0];
+        let shooter = vec3(base.x, base.y, base.z - 2.5);
+        let hp0 = w.brolly.canopy_hp as f32;
+        let proxy_hp = mg.actors[0].hp;
+        let live = Tick {
+            ts: 2.0,
+            actors: Vec::new(),
+            events: vec![TimedEvent {
+                ts: 2.0,
+                kind: TickEvent::Kit(KitRecord {
+                    nid: 0,
+                    kind: "brolly".into(),
+                    data: vec![base.x, base.y, base.z, 0.0, -1.0, hp0, 1.2],
+                }),
+            }],
+        };
+        rg.on_message(h, &encode_tick(&live, None), &mut mg, t);
+
+        let mut inputs = vec![ActorInput::default(); 3];
+        let mut spawned = None;
+        let mut fired = false;
+        let mut min_hp = hp0;
+        for frame in 0..120 {
+            mg.actors[1].pos = shooter;
+            mg.actors[1].yaw = 0.0;
+            mg.actors[1].aim_yaw = 0.0;
+            mg.actors[1].aim_pitch = 0.0;
+            mg.actors[1].invuln = 0.0;
+            inputs[1].fire = spawned.is_some() && !fired;
+            if inputs[1].fire {
+                fired = true;
+            }
+            mg.step_masked(FIXED_DT, &inputs, Some(rg.remote_mask()), &sim, t, w);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut rec);
+            if spawned.is_none() && !mg.launched.is_empty() {
+                let c = &mg.launched[0];
+                spawned = Some((frame, c.ghost, c.team, c.hp, c.pos, c.dir));
+            }
+            if let Some(c) = mg.launched.first() {
+                min_hp = min_hp.min(c.hp);
+            }
+        }
+        let (frame, ghost, team, hp_at_spawn, pos, dir) =
+            spawned.expect("the 'k' record spawned a ghost canopy");
+        assert!(
+            frame > 0,
+            "the ghost matures on the sender timeline (JS `p.tr`, L452-462)"
+        );
+        assert!(ghost, "the replayed canopy is a ghost (JS `mute++`, L490)");
+        assert_eq!(team, 0, "the canopy carries the owner's team");
+        assert_eq!(hp_at_spawn, hp0, "addLaunched seeds hp from the record");
+        assert!((pos - vec3(base.x, base.y, base.z)).length() < 1e-3);
+        assert!((dir - vec3(0.0, 0.0, -1.0)).length() < 1e-3);
+
+        // The shot died on the canopy, not on the proxy behind it: the
+        // canopy lost hp, no team-1 round survives, the proxy is untouched
+        // and the ghost painted nothing (value 1 = team0 ink).
+        assert!(
+            min_hp < hp0 && min_hp > 0.0,
+            "the blocked round drained the ghost canopy: {min_hp} of {hp0}"
+        );
+        assert_eq!(
+            mg.actors[0].hp, proxy_hp,
+            "the round never reached the proxy"
+        );
+        assert!(
+            mg.projectiles.list.iter().all(|p| p.team != 1),
+            "the round died on the shield"
+        );
+        assert!(
+            mg.paint.grid().iter().all(|&v| v != 1),
+            "a ghost canopy never paints (JS `mute`)"
+        );
+    }
+
+    #[test]
+    fn tr30_2_brolly_pose_converges_rust_to_rust() {
+        // Rust→Rust, same seed: the host owns the brolly (actor0); the
+        // canopy pose reaches the guest's proxy through the `ks` slot
+        // (packActor L750 → unpackActor L754 → applyRemote `netApply` L398),
+        // and the rebuilt held shield blocks the guest's own shots (item B).
+        // The ghost round on the host drains the *real* kit hp, which flows
+        // back through `ks`; a break and the full regrow cycle converge on
+        // the same slot.
+        let f = fix();
+        let sim = f.sim();
+        let t = &f.tuning.player;
+        let w = &f.tuning.weapons;
+        let relay = FakeRelay::new();
+        let (mut trh, mut trg) = pair(&relay);
+        let (h, g) = (trh.id(), trg.id());
+        let cfg = cfg(roster111(&h, &g), "tidewater", &h);
+        let mut mh = match111(&f, 32, 120.0);
+        let mut mg = match111(&f, 32, 120.0);
+        mh.kinds = vec![WeaponKind::Brolly, WeaponKind::Shooter, WeaponKind::Shooter];
+        mg.kinds = mh.kinds.clone();
+        let mut rh = Replication::new(&cfg, &h, &h);
+        let mut rg = Replication::new(&cfg, &g, &h);
+        rh.bind_match(&mut mh);
+        rg.bind_match(&mut mg);
+        for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+        }
+        assert_eq!(mh.phase, Phase::Active);
+
+        // Geometry: host actor0 at `base` aiming +Z; the guest's own actor
+        // 2.5 m ahead aiming back (re-pinned every frame, tr23_2 pattern).
+        let base = sim.spawn_pads[0];
+        let front = vec3(base.x, base.y, base.z + 2.5);
+        let host_hp0 = mh.actors[0].hp;
+        let mut inputs = vec![ActorInput::default(); 3];
+        let mut frame = 0usize;
+        // Phase A: the host holds fire (tap-blast at frame 0, then unfold);
+        // the guest fires one round at frame 30, ~15 frames after `open=1`.
+        while frame < 60 {
+            inputs[0].fire = true;
+            inputs[1].fire = frame == 30;
+            for m in [&mut mh.actors[0], &mut mg.actors[0]] {
+                m.pos = base;
+                m.yaw = 0.0;
+                m.aim_yaw = 0.0;
+                m.aim_pitch = 0.0;
+                m.invuln = 0.0;
+            }
+            for m in [&mut mh.actors[1], &mut mg.actors[1]] {
+                m.pos = front;
+                m.yaw = std::f32::consts::PI;
+                m.aim_yaw = std::f32::consts::PI;
+                m.aim_pitch = 0.0;
+                m.invuln = 0.0;
+            }
+            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w);
+            mg.step_masked(FIXED_DT, &inputs, Some(rg.remote_mask()), &sim, t, w);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut trh);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
+            trh.advance(16.0);
+            trg.advance(0.0);
+            for (from, p) in drain_msgs(&mut trh) {
+                rh.on_message(&from, &p, &mut mh, t);
+            }
+            for (from, p) in drain_msgs(&mut trg) {
+                rg.on_message(&from, &p, &mut mg, t);
+            }
+            frame += 1;
+        }
+        // The guest's round died on the proxy's rebuilt held shield: the
+        // host player is untouched. Its ghost copy flew the same path on the
+        // host and drained the *real* canopy: 450 − 10 (JS `projDamage`
+        // `p.damage || 10`, brolly.js L244) = 440, quantised into `ks` as
+        // 30/31 → both ends agree on 15<<2 | 7<<6 | 30<<9 = 15868.
+        let kit = mh.runners[0].brolly.as_ref().expect("host brolly kit");
+        assert_eq!(kit.state, CanopyState::Ready);
+        assert!(
+            (kit.hp - 440.0).abs() < 1e-3,
+            "the ghost round drained the real canopy: {}",
+            kit.hp
+        );
+        assert_eq!(mh.actors[0].hp, host_hp0, "the blocked round never hurt");
+        assert!(
+            mg.projectiles.list.iter().all(|p| p.team != 1),
+            "the guest round died on the proxy shield"
+        );
+        let hk = mh.runners[0].brolly_net_state();
+        let gk = mg.runners[0].brolly_net_state();
+        assert_eq!(hk, 15868, "host pose word (brolly.js L636-641)");
+        assert_eq!(gk, hk, "the guest proxy converged through `ks`");
+
+        // Phase B: break the host canopy (direct `hit_kit` — the break
+        // mechanism itself is TR-30.1's scope; here only its propagation).
+        inputs[0].fire = false;
+        inputs[1].fire = false;
+        crate::weapon::brolly::hit_kit(
+            mh.runners[0].brolly.as_mut().expect("host kit"),
+            500.0,
+            mh.projectiles.time,
+            w.brolly.regrow_time,
+        );
+        while frame < 90 {
+            mh.actors[0].pos = base;
+            mh.actors[0].aim_yaw = 0.0;
+            mg.actors[1].pos = front;
+            mg.actors[1].aim_yaw = std::f32::consts::PI;
+            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w);
+            mg.step_masked(FIXED_DT, &inputs, Some(rg.remote_mask()), &sim, t, w);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut trh);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
+            trh.advance(16.0);
+            trg.advance(0.0);
+            for (from, p) in drain_msgs(&mut trh) {
+                rh.on_message(&from, &p, &mut mh, t);
+            }
+            for (from, p) in drain_msgs(&mut trg) {
+                rg.on_message(&from, &p, &mut mg, t);
+            }
+            frame += 1;
+        }
+        // `regrow_k` starts filling the moment the canopy breaks (JS `tick`
+        // L401-405), so compare the semantic bits + convergence, not a fixed
+        // word: state Broken, hp 0, open/grow 0.
+        let hk = mh.runners[0].brolly_net_state();
+        let gk = mg.runners[0].brolly_net_state();
+        assert_eq!(hk & 3, 1, "Broken state bits (brolly.js L636-641)");
+        assert_eq!((hk >> 9) & 31, 0, "hp 0 bits");
+        assert_eq!(hk & 0x1FF, 1, "open/grow folded on break");
+        assert_eq!(gk, hk, "the break converges through `ks`");
+
+        // Phase C: the 5 s regrow. At completion the host kit is Ready,
+        // hp full, grow→1, regrowK=1 → ks = 7<<6 | 31<<9 | 7<<14 = 131008,
+        // and the proxy's netApply→re-quantise round-trips exactly.
+        while frame < 420 {
+            mh.actors[0].pos = base;
+            mh.actors[0].aim_yaw = 0.0;
+            mg.actors[1].pos = front;
+            mg.actors[1].aim_yaw = std::f32::consts::PI;
+            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w);
+            mg.step_masked(FIXED_DT, &inputs, Some(rg.remote_mask()), &sim, t, w);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut trh);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
+            trh.advance(16.0);
+            trg.advance(0.0);
+            for (from, p) in drain_msgs(&mut trh) {
+                rh.on_message(&from, &p, &mut mh, t);
+            }
+            for (from, p) in drain_msgs(&mut trg) {
+                rg.on_message(&from, &p, &mut mg, t);
+            }
+            frame += 1;
+        }
+        let hk = mh.runners[0].brolly_net_state();
+        let gk = mg.runners[0].brolly_net_state();
+        assert_eq!(hk, 131008, "regrown pose word (brolly.js L636-641)");
+        assert_eq!(gk, hk, "the regrow converges through `ks`");
     }
 }

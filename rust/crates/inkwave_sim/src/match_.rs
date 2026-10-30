@@ -60,10 +60,13 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::actor::{Actor, ActorEvent, ActorInput, FireGate, SimWorld, SplatCause};
+use crate::actor::{Actor, ActorEvent, ActorInput, FireGate, Form, SimWorld, SplatCause};
 use crate::paint::{PaintGrid, SplatOpts};
 use crate::tuning::{MatchConfig, PlayerTuning, WeaponSet};
-use crate::weapon::{ProjectileSim, Rng, SimEvent, WeaponKind, WeaponRunner};
+use crate::weapon::brolly::{HELD_R, LAUNCH_R, LaunchedCanopy, held_shield};
+use crate::weapon::{
+    ProjectileSim, Rng, Shield, ShieldOwner, ShieldTarget, SimEvent, WeaponKind, WeaponRunner,
+};
 use glam::{Vec3, vec3};
 
 /// JS intro length (match.js L193: `stateT > 4.2`).
@@ -183,6 +186,19 @@ pub enum MatchEvent {
     },
 }
 
+/// A kit world-object spawn queued for the net layer (JS `recKit`,
+/// netmatch.js L134-137 `['k', nid, kind, data]`): the owner's launch
+/// surfaces as a [`crate::weapon::SimEvent::Kit`] and the replication
+/// layer turns it into a [`crate::net::TickEvent::Kit`] timeline record.
+/// `owner` is the `(team, slot)` identity (the replicator resolves it to
+/// the roster `nid` byte).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KitSpawn {
+    pub owner: (usize, usize),
+    pub kind: String,
+    pub data: Vec<f32>,
+}
+
 /// A Turf War match: the roster (spec: 8 slots, 4v4), the paint grid, the
 /// projectile sim, the clock and the rules glue between them.
 #[derive(Serialize, Deserialize)]
@@ -197,6 +213,19 @@ pub struct Match {
     pub paused: bool,
     pub actors: Vec<Actor>,
     pub runners: Vec<WeaponRunner>,
+    /// Per-actor main weapon kind (spec D-2; JS `actor.weapon.kind`): the
+    /// runner dispatch, the twins' dodge and the brolly shield assembly all
+    /// index this parallel list.
+    pub kinds: Vec<WeaponKind>,
+    /// Launched brolly canopies (JS `LAUNCHED` world list, brolly.js L167):
+    /// advanced every frame inside the projectile-tick window.
+    pub launched: Vec<LaunchedCanopy>,
+    /// Kit spawns produced this frame, waiting for the replication layer to
+    /// record them onto the outgoing timeline (JS `recKit`, Task 30 §4).
+    /// Drained every frame by `Replicator::update`; cleared at the top of
+    /// [`Match::step_masked`] so the offline path never grows it.
+    #[serde(default)]
+    pub kit_out: Vec<KitSpawn>,
     pub paint: PaintGrid,
     pub projectiles: ProjectileSim,
     /// Seeded stream for the judge tie-break + splash seeds (JS `Math.random`).
@@ -265,6 +294,11 @@ impl Match {
             paused: false,
             actors,
             runners: (0..team_size * 2).map(|_| WeaponRunner::new()).collect(),
+            // Spec D-2: the default loadout is the Spritzer; the net builder
+            // overwrites this from the roster weapon strings.
+            kinds: vec![WeaponKind::Shooter; team_size * 2],
+            launched: Vec::new(),
+            kit_out: Vec::new(),
             paint: PaintGrid::new(world.collision),
             projectiles: ProjectileSim::new(seed),
             rng: Rng::new(seed ^ 0x5bd1_e995),
@@ -350,6 +384,10 @@ impl Match {
         self.paint = PaintGrid::new(world.collision);
         self.projectiles = ProjectileSim::new(self.seed);
         self.rng = Rng::new(self.seed ^ 0x5bd1_e995);
+        // JS `clearAll()` (brolly.js L487-490): world canopies die with the
+        // match; the runner kits are released by `r.reset()` below.
+        self.launched.clear();
+        self.kit_out.clear();
         for (a, r) in self.actors.iter_mut().zip(self.runners.iter_mut()) {
             r.reset();
             a.reset(t);
@@ -403,6 +441,10 @@ impl Match {
         if self.paused {
             return;
         }
+        // Per-frame kit-spawn queue (JS `recKit` is inline during the sim
+        // step): the replication layer drains it in the same frame, offline
+        // matches simply drop it next frame.
+        self.kit_out.clear();
         self.state_t += dt;
         match self.phase {
             Phase::Init => {}
@@ -451,7 +493,7 @@ impl Match {
         let live = self.phase == Phase::Active;
         let intro = self.phase == Phase::Intro;
         let can_respawn = self.can_respawn();
-        for (i, a) in self.actors.iter_mut().enumerate() {
+        for i in 0..self.actors.len() {
             if remote.is_some_and(|m| m.get(i).copied().unwrap_or(false)) {
                 continue;
             }
@@ -460,6 +502,27 @@ impl Match {
             } else {
                 ActorInput::default()
             };
+            // JS actor.js L305-306: the twins' roll owns the horizontal
+            // velocity — read *before* the dodge may start this frame, so a
+            // fresh roll first moves the actor on the next step (JS order).
+            let dv = self.runners[i].dodge_velocity(self.kinds[i], w);
+            self.actors[i].dodge_vel = dv;
+            // JS actor.js L310: `tryDodge` swallows the jump buffer when the
+            // twins dodge off the jump press instead (squid can't roll).
+            if self.actors[i].alive
+                && self.actors[i].jump_edge(&inp)
+                && self.actors[i].form != Form::Squid
+                && self.runners[i].try_dodge(
+                    self.kinds[i],
+                    &mut self.actors[i],
+                    w,
+                    inp.move_dir,
+                    inp.fire,
+                )
+            {
+                self.actors[i].jump_swallowed = true;
+            }
+            let a = &mut self.actors[i];
             // Respawn gating (see module docs): hold dead timers above the
             // step while the phase does not allow respawning.
             if !a.alive && !can_respawn && a.respawn_timer <= dt {
@@ -482,24 +545,38 @@ impl Match {
         // stale trigger gate is cleared until the respawn resets both.
         // Remote actors have no runner pass at all (JS L228 — `applyRemote`
         // only poses the character).
-        for ((i, a), r) in self
-            .actors
-            .iter_mut()
-            .enumerate()
-            .zip(self.runners.iter_mut())
-        {
+        for i in 0..self.actors.len() {
             if remote.is_some_and(|m| m.get(i).copied().unwrap_or(false)) {
                 continue;
             }
+            let (a, r) = (&mut self.actors[i], &mut self.runners[i]);
             if !a.alive {
                 r.reset();
                 a.fire_gate = FireGate::default();
                 continue;
             }
             let gate = a.fire_gate;
-            // M1/M3 roster: every actor carries the Spritzer until the
-            // per-actor loadout lands (Tasks 30+); the dispatch is by kind.
-            r.update(dt, &gate, a, WeaponKind::Shooter, w, &mut self.projectiles);
+            let inp = if live {
+                inputs.get(i).copied().unwrap_or_default()
+            } else {
+                ActorInput::default()
+            };
+            // Per-actor loadout (spec D-2): the runner dispatches by kind.
+            r.update(
+                dt,
+                &gate,
+                a,
+                self.kinds[i],
+                w,
+                inp.move_dir,
+                world.collision,
+                &mut self.projectiles,
+            );
+            // A brolly launch this frame joins the world canopy list (JS
+            // `addLaunched` → `LAUNCHED.push`, brolly.js L285).
+            if let Some(c) = r.brolly_launch.take() {
+                self.launched.push(c);
+            }
         }
 
         // ---- soft push between actors (JS match.js L231-244; offline every
@@ -508,15 +585,132 @@ impl Match {
         // gives way, L239).
         soft_push_masked(&mut self.actors, remote, t);
 
-        // ---- projectiles (JS main.js L1119: after `match.update`).
+        // ---- projectiles (JS main.js L1119: after `match.update`; the brolly
+        // kit's `tick`, brolly.js L390-485, runs inside the projectile step —
+        // the sim interleaves the same order here: launched canopies move,
+        // shields refresh, rounds step, poses snap, canopies shove).
+
+        // JS `tick` L413-421: launched canopies move first (reverse iteration,
+        // dead ones spliced out). Their ground stripe credits the owner like
+        // `addTurf` (L337).
+        let mut li = self.launched.len();
+        while li > 0 {
+            li -= 1;
+            let (area, keep) = self.launched[li].update(
+                dt,
+                world.collision,
+                &mut self.paint,
+                t,
+                &w.brolly,
+                &mut self.projectiles.rng,
+            );
+            if area > 0.0 {
+                let (team, slot) = (self.launched[li].team, self.launched[li].slot);
+                if let Some(ai) = find_actor(&self.actors, team, slot) {
+                    self.actors[ai].turf += area;
+                    self.events.push(MatchEvent::Turf {
+                        owner_team: team,
+                        owner_slot: slot,
+                        area,
+                    });
+                }
+            }
+            if !keep {
+                self.launched.remove(li);
+            }
+        }
+
+        // JS `refreshShields` (L178-190): held canopies from the runners,
+        // launched ones from the world list; a shield without a `prev` pose
+        // snapshot takes the current pose as its sweep start (spawn frame).
+        let mut shields: Vec<Shield> = Vec::new();
+        for i in 0..self.runners.len() {
+            if self.kinds[i] != WeaponKind::Brolly {
+                continue;
+            }
+            let Some(kit) = self.runners[i].brolly.as_mut() else {
+                continue;
+            };
+            match held_shield(kit, &self.actors[i]) {
+                Some((c, n)) => {
+                    kit.shield_c = c;
+                    kit.shield_n = n;
+                    if !kit.shield_prev {
+                        kit.shield_cp = c;
+                        kit.shield_np = n;
+                        kit.shield_prev = true;
+                    }
+                    shields.push(Shield {
+                        team: self.actors[i].team,
+                        c,
+                        n,
+                        r: HELD_R,
+                        cp: kit.shield_cp,
+                        np: kit.shield_np,
+                        regrow_time: w.brolly.regrow_time,
+                        target: ShieldTarget::Held(i),
+                    });
+                }
+                None => kit.shield_prev = false,
+            }
+        }
+        for (li, c) in self.launched.iter_mut().enumerate() {
+            if !c.alive {
+                continue;
+            }
+            if !c.shield_prev {
+                c.shield_cp = c.cur_c;
+                c.shield_np = c.cur_n;
+                c.shield_prev = true;
+            }
+            shields.push(Shield {
+                team: c.team,
+                c: c.cur_c,
+                n: c.cur_n,
+                r: LAUNCH_R,
+                cp: c.shield_cp,
+                np: c.shield_np,
+                regrow_time: w.brolly.regrow_time,
+                target: ShieldTarget::Launched(li),
+            });
+        }
+
+        let mut owner = ShieldOwner {
+            runners: &mut self.runners,
+            launched: &mut self.launched,
+        };
         self.projectiles.step_masked(
             dt,
             world.collision,
             &mut self.actors,
             &mut self.paint,
             t,
+            w,
             remote,
+            &shields,
+            &mut owner,
         );
+
+        // JS `snapShields` (L192): this frame's pose becomes the next
+        // frame's sweep start.
+        for (i, r) in self.runners.iter_mut().enumerate() {
+            if self.kinds[i] != WeaponKind::Brolly {
+                continue;
+            }
+            if let Some(kit) = r.brolly.as_mut() {
+                kit.shield_cp = kit.shield_c;
+                kit.shield_np = kit.shield_n;
+            }
+        }
+        for c in self.launched.iter_mut() {
+            c.shield_cp = c.cur_c;
+            c.shield_np = c.cur_n;
+        }
+
+        // JS `tick` L484: launched canopies hold enemy players back.
+        for li in 0..self.launched.len() {
+            self.launched[li].block_actors(&mut self.actors, t.radius);
+        }
 
         // ---- scoring drains (JS `on('hit'/'weapon:impact')` + `_credit`).
         let pev = self.projectiles.drain_events();
@@ -557,6 +751,22 @@ impl Match {
                         owner: (*team, *owner_slot),
                         muzzle: *muzzle,
                         dir: *dir,
+                    });
+                }
+                // JS `recKit` (netmatch.js L134-137): a kit world-object
+                // spawn (brolly launch, brolly.js L266) rides the net
+                // timeline, not the HUD bus — the replication layer drains
+                // `kit_out` and records `['k', nid, kind, data]`.
+                SimEvent::Kit {
+                    owner_slot,
+                    team,
+                    kind,
+                    data,
+                } => {
+                    self.kit_out.push(KitSpawn {
+                        owner: (*team, *owner_slot),
+                        kind: kind.clone(),
+                        data: data.clone(),
                     });
                 }
                 _ => {}
@@ -646,6 +856,10 @@ impl Match {
         // The runner is dropped with the actor — JS `a.weaponRunner.reset()`
         // (L180) only releases JS-side references; the Rust runner owns none.
         self.runners.remove(idx);
+        // Keep the loadout list parallel with the roster (spec D-2).
+        if idx < self.kinds.len() {
+            self.kinds.remove(idx);
+        }
     }
 
     /// JS `_judge`: coverage → winner (seeded tie-break) → `judge` phase.

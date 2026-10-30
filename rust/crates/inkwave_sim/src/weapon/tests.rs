@@ -135,7 +135,16 @@ impl Sim {
             s.step(DT, inp, &sim, &zero, &self.f.t);
             v.step(DT, &idle(), &sim, &zero, &self.f.t);
             let gate = s.fire_gate;
-            self.runners[0].update(DT, &gate, s, WeaponKind::Shooter, &self.f.w, &mut self.ps);
+            self.runners[0].update(
+                DT,
+                &gate,
+                s,
+                WeaponKind::Shooter,
+                &self.f.w,
+                Vec3::ZERO,
+                &self.f.world,
+                &mut self.ps,
+            );
         }
         self.ps.step(
             DT,
@@ -143,6 +152,7 @@ impl Sim {
             &mut self.actors,
             &mut self.paint,
             &self.f.t,
+            &self.f.w,
         );
     }
 }
@@ -249,6 +259,8 @@ fn tr7_2_ink_gating_and_shots_to_empty() {
             &mut a,
             WeaponKind::Shooter,
             &f.w,
+            Vec3::ZERO,
+            &f.world,
             &mut ps,
         );
         fired += ps
@@ -278,6 +290,8 @@ fn tr7_2_ink_gating_and_shots_to_empty() {
             &mut a,
             WeaponKind::Shooter,
             &f.w,
+            Vec3::ZERO,
+            &f.world,
             &mut ps,
         );
         low += ps
@@ -345,7 +359,7 @@ fn tr7_3_straight_phase_then_parabola_and_range_cutoff() {
             );
             straight_steps += 1;
         }
-        ps.step(DT, &f.world, &mut [], &mut pg, &f.t);
+        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
         if let Some(p) = ps.list.first() {
             max_err = max_err.max(p.pos.distance(ref_pos));
             if age <= straight {
@@ -397,7 +411,7 @@ fn tr7_4_impact_paints_the_face_queryable_by_the_grid() {
     ps.fire_shooter(&a, &f.w.shooter, 0.0, None);
     let mut impacts = Vec::new();
     for _ in 0..30 {
-        ps.step(DT, &f.world, &mut [], &mut pg, &f.t);
+        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
         for e in ps.drain_events() {
             if let SimEvent::Impact {
                 pos,
@@ -532,6 +546,8 @@ fn runner_bloom_and_spread_track_upstream_formulas() {
         &mut a,
         WeaponKind::Shooter,
         w,
+        Vec3::ZERO,
+        &f.world,
         &mut ps,
     );
     assert!(r.bloom < 1.0);
@@ -554,6 +570,8 @@ fn runner_move_speed_uses_firing_penalty() {
         &mut a,
         WeaponKind::Shooter,
         &f.w,
+        Vec3::ZERO,
+        &f.world,
         &mut ps,
     );
     assert_eq!(
@@ -591,6 +609,7 @@ fn tr29_2_fire_round_straight_then_parabola_and_life_cutoff() {
         damage: 0.0,
         trail_every: 0.0,
         trail_radius: 0.0,
+        trail_start: -2.5,
     };
     let mut ps = ProjectileSim::new(1234);
     ps.fire_round(&a, &spec, 0.0, None);
@@ -613,7 +632,7 @@ fn tr29_2_fire_round_straight_then_parabola_and_life_cutoff() {
             ref_vel.y -= spec.grav * DT;
         }
         ref_pos += ref_vel * DT;
-        ps.step(DT, &f.world, &mut [], &mut pg, &f.t);
+        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
         if let Some(p) = ps.list.first() {
             max_err = max_err.max(p.pos.distance(ref_pos));
             if age <= spec.straight_time {
@@ -685,6 +704,7 @@ fn tr29_2_trail_drips_paint_the_deck_under_a_fixed_seed() {
         damage: 0.0,
         trail_every: 0.8,
         trail_radius: 0.3,
+        trail_start: -(2.5 - 0.8),
     };
     let mut ps = ProjectileSim::new(777);
     ps.fire_round(&a, &spec, 0.0, None);
@@ -693,7 +713,7 @@ fn tr29_2_trail_drips_paint_the_deck_under_a_fixed_seed() {
     let mut impacts = 0usize;
     let mut turf = 0usize;
     for _ in 0..40 {
-        ps.step(DT, &f.world, &mut [], &mut pg, &f.t);
+        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
         for e in ps.drain_events() {
             match e {
                 SimEvent::Impact { .. } => impacts += 1,
@@ -730,7 +750,7 @@ fn tr29_2_trail_drips_paint_the_deck_under_a_fixed_seed() {
     ps2.fire_round(&a, &spec, 0.0, None);
     let mut drips2: Vec<(f32, f32)> = Vec::new();
     for _ in 0..40 {
-        ps2.step(DT, &f.world, &mut [], &mut pg2, &f.t);
+        ps2.step(DT, &f.world, &mut [], &mut pg2, &f.t, &f.w);
         let _ = ps2.drain_events();
         for s in pg2.drain_ink() {
             drips2.push((s.center.z, s.radius));
@@ -756,7 +776,11 @@ fn tr29_2_kind_table_and_dispatch_skeleton() {
     }
     assert_eq!(WeaponKind::from_kind_str("dualies"), None);
     assert!(WeaponKind::Shooter.is_wired());
-    assert!(!WeaponKind::Blaster.is_wired());
+    // Task 30 batch one: twins / blaster / brolly joined the wired set.
+    assert!(WeaponKind::Blaster.is_wired());
+    assert!(WeaponKind::Twins.is_wired());
+    assert!(WeaponKind::Brolly.is_wired());
+    assert!(!WeaponKind::Charger.is_wired());
 
     // Move-speed table (weapons.js L63-92): idle is always the run speed,
     // the firing states read the def, the kit kinds stay at run speed.
@@ -781,14 +805,27 @@ fn tr29_2_kind_table_and_dispatch_skeleton() {
         r.move_speed(WeaponKind::Brush, &f.t, &f.w),
         f.w.brush.move_speed_firing
     );
-    for k in [
-        WeaponKind::Brolly,
-        WeaponKind::Bow,
-        WeaponKind::Blade,
-        WeaponKind::Mitts,
-    ] {
+    for k in [WeaponKind::Bow, WeaponKind::Blade, WeaponKind::Mitts] {
         assert_eq!(r.move_speed(k, &f.t, &f.w), f.t.run_speed, "kit {k:?}");
     }
+    // Brolly kit semantics (weapons.js L664 / brolly.js): the raised canopy
+    // is the slowest stance, firing next, plain run otherwise.
+    r.firing_t = 0.0;
+    assert_eq!(r.move_speed(WeaponKind::Brolly, &f.t, &f.w), f.t.run_speed);
+    r.firing_t = 0.1;
+    assert_eq!(
+        r.move_speed(WeaponKind::Brolly, &f.t, &f.w),
+        f.w.brolly.move_speed_firing,
+        "brolly firing"
+    );
+    r.firing_t = 0.0;
+    r.ensure_brolly(&f.w).open = 0.5;
+    assert_eq!(
+        r.move_speed(WeaponKind::Brolly, &f.t, &f.w),
+        f.w.brolly.move_speed_shield,
+        "brolly shield up (open > 0.2)"
+    );
+    r.brolly = None;
     r.firing_t = 0.0;
     r.charging = true; // charge 0 → the lerp floor
     assert!((r.move_speed(WeaponKind::Charger, &f.t, &f.w) - f.t.run_speed * 0.7).abs() < MM);
@@ -836,13 +873,15 @@ fn tr29_2_kind_table_and_dispatch_skeleton() {
         WeaponKind::Charger,
         WeaponKind::Bucket,
         WeaponKind::Brush,
-        WeaponKind::Brolly,
         WeaponKind::Bow,
         WeaponKind::Blade,
         WeaponKind::Mitts,
     ] {
         assert_eq!(r.spread_deg(true, k, &f.w), 0.0, "spread {k:?}");
     }
+    // Brolly cone (brolly.js fireBlast): ground vs air spread from the def.
+    assert!((r.spread_deg(true, WeaponKind::Brolly, &f.w) - f.w.brolly.spread_deg).abs() < MM);
+    assert!((r.spread_deg(false, WeaponKind::Brolly, &f.w) - f.w.brolly.spread_air).abs() < MM);
 
     // busy() / MAX_ROUNDS scaffold.
     let mut r = WeaponRunner::new();
@@ -855,7 +894,8 @@ fn tr29_2_kind_table_and_dispatch_skeleton() {
     assert_eq!(MAX_ROUNDS, 700);
 
     // Unwired kinds: the dispatch arm is a strict no-op — no ink spent, no
-    // round, no event (the blaster ammo path lands with Task 30).
+    // round, no event. (Task 30 wired the blaster; the charger stands in as
+    // the still-unwired arm — it lands with Task 31.)
     let mut a = Actor::new(0, 0, &f.t);
     a.spawn_at(vec3(0.0, 0.05, 0.0), 0.0, &f.sim(), &f.t);
     let mut ps = ProjectileSim::new(5);
@@ -869,15 +909,489 @@ fn tr29_2_kind_table_and_dispatch_skeleton() {
                 ..Default::default()
             },
             &mut a,
-            WeaponKind::Blaster,
+            WeaponKind::Charger,
             &f.w,
+            Vec3::ZERO,
+            &f.world,
             &mut ps,
         );
     }
-    assert_eq!(a.ink, ink0, "blaster arm must not consume ink yet");
+    assert_eq!(a.ink, ink0, "charger arm must not consume ink yet");
     assert!(
         ps.list.is_empty(),
-        "blaster arm fires nothing until Task 30"
+        "charger arm fires nothing until Task 31"
     );
     assert!(ps.drain_events().is_empty(), "no events from a no-op arm");
+}
+
+// ============================================================ Task 30: twins
+// TR-30.1 — cadence / ink / bloom / damage, fixed-seed value assertions.
+#[test]
+fn tr30_1_twins_cadence_ink_and_bloom() {
+    let f = fix();
+    let mut pg = PaintGrid::new(&f.world);
+    let mut a = Actor::new(0, 0, &f.t);
+    a.spawn_at(vec3(0.0, 0.05, 0.0), 0.0, &f.sim(), &f.t);
+    let mut ps = ProjectileSim::new(0xABCD_0001);
+    let mut r = WeaponRunner::new();
+    let gate = FireGate {
+        fire: true,
+        ..Default::default()
+    };
+    let mut shots = 0usize;
+    for frame in 0..60 {
+        r.update(
+            DT,
+            &gate,
+            &mut a,
+            WeaponKind::Twins,
+            &f.w,
+            Vec3::ZERO,
+            &f.world,
+            &mut ps,
+        );
+        for e in ps.drain_events() {
+            if let SimEvent::Fire { .. } = e {
+                shots += 1;
+            }
+        }
+        // One shot lands on frame 0 (cooldown 0) and every 0.085 s after.
+        if frame == 0 {
+            assert_eq!(shots, 1);
+            // D-4: the twins bloom step is the hardcoded +0.25 (JS L511).
+            assert!((r.spread_deg(true, WeaponKind::Twins, &f.w) - 6.0 * 0.625).abs() < MM);
+        }
+        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
+    }
+    assert_eq!(shots, 12, "60 frames at fireInterval 0.085 = 12 shots");
+    assert!(
+        (a.ink - (f.t.ink_max - 12.0 * f.w.twins.ink_per_shot)).abs() < MM,
+        "ink spent: 12 × 0.85"
+    );
+    // Four shots saturate the bloom → the full ground / air cones (6° / 11°).
+    assert!((r.spread_deg(true, WeaponKind::Twins, &f.w) - f.w.twins.spread_ground).abs() < MM);
+    assert!((r.spread_deg(false, WeaponKind::Twins, &f.w) - f.w.twins.spread_air).abs() < MM);
+    // Firing pose slows the kid to `moveSpeedFiring` (5.2).
+    assert!((r.move_speed(WeaponKind::Twins, &f.t, &f.w) - f.w.twins.move_speed_firing).abs() < MM);
+    // Hands alternate: the two per-hand clocks were both reset.
+    assert!(r.since_hand[0] < 1.0 && r.since_hand[1] < 1.0);
+}
+
+// TR-30.1 — a twin round does `damage: 30` on a body hit.
+#[test]
+fn tr30_1_twins_hit_damage_30() {
+    let f = fix();
+    let mut pg = PaintGrid::new(&f.world);
+    let mut a = Actor::new(0, 0, &f.t);
+    a.spawn_at(vec3(0.0, 0.05, 0.0), 0.0, &f.sim(), &f.t);
+    let mut victim = Actor::new(1, 4, &f.t);
+    victim.spawn_at(vec3(0.0, 0.05, 3.0), std::f32::consts::PI, &f.sim(), &f.t);
+    victim.set_invuln(0.0);
+    let mut actors = vec![a.clone(), victim];
+    let mut ps = ProjectileSim::new(99);
+    ps.fire_twin(&actors[0], &f.w.twins, 0.0, -1, &f.world);
+    let mut hits = Vec::new();
+    for _ in 0..30 {
+        ps.step(DT, &f.world, &mut actors, &mut pg, &f.t, &f.w);
+        hits.extend(ps.drain_events().into_iter().filter_map(|e| match e {
+            SimEvent::Hit {
+                victim_slot,
+                damage,
+                ..
+            } => Some((victim_slot, damage)),
+            _ => None,
+        }));
+        if !hits.is_empty() {
+            break;
+        }
+    }
+    assert_eq!(hits, vec![(4usize, f.w.twins.damage)], "one 30-damage hit");
+    assert!(actors[1].alive, "one twin round does not splat");
+}
+
+// TR-30.1 — the planted turret: post-roll stance fires the `turret*` group.
+#[test]
+fn tr30_1_twins_roll_plants_the_turret() {
+    let f = fix();
+    let mut pg = PaintGrid::new(&f.world);
+    let mut a = Actor::new(0, 0, &f.t);
+    a.spawn_at(vec3(0.0, 0.05, 0.0), 0.0, &f.sim(), &f.t);
+    let mut ps = ProjectileSim::new(7);
+    let mut r = WeaponRunner::new();
+    let gate_fire = FireGate {
+        fire: true,
+        ..Default::default()
+    };
+    let gate_idle = FireGate::default();
+    // One normal shot first (hand-alternating group).
+    r.update(
+        DT,
+        &gate_fire,
+        &mut a,
+        WeaponKind::Twins,
+        &f.w,
+        Vec3::ZERO,
+        &f.world,
+        &mut ps,
+    );
+    let _ = ps.drain_events();
+    let normal = ps.list.last().unwrap();
+    assert!(
+        (normal.vel.length() - f.w.twins.proj_speed).abs() < MM,
+        "dual-mode round flies at projSpeed 31"
+    );
+    ps.list.clear();
+    // Jump-tap while firing + moving → the dodge roll.
+    let move_dir = vec3(0.0, 0.0, 1.0);
+    assert!(
+        r.try_dodge(WeaponKind::Twins, &mut a, &f.w, move_dir, true),
+        "roll starts"
+    );
+    assert!((a.ink - (f.t.ink_max - f.w.twins.ink_per_shot - f.w.twins.roll_ink)).abs() < MM);
+    // The roll velocity curve: full v0 at the start, 0.4·v0 at the end
+    // (JS L552-554: v = dodgeDir · v0(1 − 0.6u), v0 = rollDist/(0.7·rollTime)).
+    let v0 = f.w.twins.roll_dist / (0.7 * f.w.twins.roll_time);
+    let v = r.dodge_velocity(WeaponKind::Twins, &f.w).unwrap();
+    assert!((v.length() - v0).abs() < MM);
+    for _ in 0..9 {
+        r.update(
+            DT,
+            &gate_fire,
+            &mut a,
+            WeaponKind::Twins,
+            &f.w,
+            Vec3::ZERO,
+            &f.world,
+            &mut ps,
+        );
+        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
+    }
+    let v_mid = r.dodge_velocity(WeaponKind::Twins, &f.w).unwrap();
+    assert!((v_mid.length() - v0 * 0.7).abs() < 0.05);
+    // Finish the roll (0.3 s) with the trigger held → planted.
+    for _ in 0..9 {
+        r.update(
+            DT,
+            &gate_fire,
+            &mut a,
+            WeaponKind::Twins,
+            &f.w,
+            Vec3::ZERO,
+            &f.world,
+            &mut ps,
+        );
+        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
+    }
+    assert_eq!(r.dodge_t, 0.0);
+    assert!(r.turret, "roll ends planted while the trigger is held");
+    assert!(
+        (r.spread_deg(true, WeaponKind::Twins, &f.w) - f.w.twins.turret_spread).abs() < MM,
+        "planted cone is turretSpread 1.6 (JS _spreadDeg L103)"
+    );
+    // The planted shot: both guns at once (`side = 0`) — the turret group.
+    let n_before = ps.list.len();
+    r.update(
+        DT,
+        &gate_fire,
+        &mut a,
+        WeaponKind::Twins,
+        &f.w,
+        Vec3::ZERO,
+        &f.world,
+        &mut ps,
+    );
+    let planted = ps.list.last().unwrap();
+    assert!(ps.list.len() > n_before);
+    assert!(
+        (planted.vel.length() - f.w.twins.turret_proj_speed).abs() < MM,
+        "turret round flies at 36"
+    );
+    assert!(planted.straight >= f.w.twins.turret_straight - MM);
+    // Walking un-plants the stance.
+    r.update(
+        DT,
+        &gate_fire,
+        &mut a,
+        WeaponKind::Twins,
+        &f.w,
+        vec3(1.0, 0.0, 0.0),
+        &f.world,
+        &mut ps,
+    );
+    assert!(!r.turret, "walking un-plants");
+    // Releasing the trigger also un-plants.
+    r.turret = true;
+    r.update(
+        DT,
+        &gate_idle,
+        &mut a,
+        WeaponKind::Twins,
+        &f.w,
+        Vec3::ZERO,
+        &f.world,
+        &mut ps,
+    );
+    assert!(!r.turret, "releasing the trigger un-plants");
+}
+
+// TR-30.1 — the roll chain: two charges, then the lockout, then the refill.
+#[test]
+fn tr30_1_twins_roll_chain_lockout_and_refill() {
+    let f = fix();
+    let mut pg = PaintGrid::new(&f.world);
+    let mut a = Actor::new(0, 0, &f.t);
+    a.spawn_at(vec3(0.0, 0.05, 0.0), 0.0, &f.sim(), &f.t);
+    let mut ps = ProjectileSim::new(3);
+    let mut r = WeaponRunner::new();
+    let gate = FireGate {
+        fire: true,
+        ..Default::default()
+    };
+    let md = vec3(1.0, 0.0, 0.0);
+    // Roll 1.
+    assert!(r.try_dodge(WeaponKind::Twins, &mut a, &f.w, md, true));
+    assert_eq!(r.rolls_used, 1);
+    // A tap mid-roll queues the chain link.
+    assert!(r.try_dodge(WeaponKind::Twins, &mut a, &f.w, md, true));
+    assert!(r.roll_queued);
+    // Roll 1 ends → the queued roll chains straight on (JS L499 re-checks the
+    // live intent, so the move direction must still be held).
+    for _ in 0..18 {
+        r.update(
+            DT,
+            &gate,
+            &mut a,
+            WeaponKind::Twins,
+            &f.w,
+            md,
+            &f.world,
+            &mut ps,
+        );
+        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
+    }
+    assert!(r.dodge_t > 0.0, "the queued roll chained on");
+    assert_eq!(r.rolls_used, 0, "both charges spent");
+    assert!(
+        (r.roll_lock - f.w.twins.roll_lockout).abs() < 0.05,
+        "chain lockout armed"
+    );
+    // Locked out: no third roll.
+    assert!(!r.try_dodge(WeaponKind::Twins, &mut a, &f.w, md, true));
+    // Idle past the lockout + the reset window → the chain refills.
+    for _ in 0..300 {
+        r.update(
+            DT,
+            &FireGate::default(),
+            &mut a,
+            WeaponKind::Twins,
+            &f.w,
+            Vec3::ZERO,
+            &f.world,
+            &mut ps,
+        );
+        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
+    }
+    assert_eq!(r.rolls_used, 0);
+    assert!(r.roll_lock <= 0.0);
+    assert!(
+        r.try_dodge(WeaponKind::Twins, &mut a, &f.w, md, true),
+        "chain refilled"
+    );
+    // A dry tank refuses the roll.
+    a.ink = 0.0;
+    r.roll_lock = 0.0;
+    r.rolls_used = 0;
+    r.dodge_t = 0.0;
+    assert!(
+        !r.try_dodge(WeaponKind::Twins, &mut a, &f.w, md, true),
+        "needs rollInk"
+    );
+}
+
+// =========================================================== Task 30: blaster
+// TR-30.1 — cadence / ink and the blast round's own physics fields.
+#[test]
+fn tr30_1_blaster_cadence_ink_and_fields() {
+    let f = fix();
+    let mut pg = PaintGrid::new(&f.world);
+    let mut a = Actor::new(0, 0, &f.t);
+    a.spawn_at(vec3(0.0, 0.05, 0.0), 0.0, &f.sim(), &f.t);
+    let mut ps = ProjectileSim::new(0x0005_1507);
+    let mut r = WeaponRunner::new();
+    let gate = FireGate {
+        fire: true,
+        ..Default::default()
+    };
+    let mut shots = 0usize;
+    for _ in 0..60 {
+        r.update(
+            DT,
+            &gate,
+            &mut a,
+            WeaponKind::Blaster,
+            &f.w,
+            Vec3::ZERO,
+            &f.world,
+            &mut ps,
+        );
+        shots += ps
+            .drain_events()
+            .into_iter()
+            .filter(|e| matches!(e, SimEvent::Fire { .. }))
+            .count();
+        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
+    }
+    assert_eq!(shots, 2, "fireInterval 0.78 → two shots in a second");
+    assert!((a.ink - (f.t.ink_max - 18.0)).abs() < MM, "inkPerShot 9");
+    assert!(
+        (r.move_speed(WeaponKind::Blaster, &f.t, &f.w) - f.w.blaster.move_speed_firing).abs() < MM
+    );
+
+    // The blast round's fields (JS `fireBlaster` L1173-1192).
+    let mut ps2 = ProjectileSim::new(1);
+    ps2.fire_blaster(&a, &f.w.blaster, 0.0);
+    let p = &ps2.list[0];
+    assert!(p.blast, "blaster rounds are blasts");
+    assert!(p.pellet.is_none());
+    assert_eq!(p.damage, f.w.blaster.direct_damage);
+    assert_eq!(p.straight, 99.0);
+    assert_eq!(p.grav, 0.0);
+    assert_eq!(p.drag, 0.0);
+    assert_eq!(p.size, 0.26);
+    assert_eq!(p.trail, -1.5);
+    assert_eq!(p.trail_every, 2.2);
+    assert_eq!(p.trail_radius, 0.45);
+    assert!(
+        (p.life - f.w.blaster.range / f.w.blaster.proj_speed).abs() < MM,
+        "life = range / projSpeed"
+    );
+}
+
+// TR-30.1 — a direct hit splats outright (125 ≥ 100 hp) and the burst still
+// detonates at the body.
+#[test]
+fn tr30_1_blaster_direct_hit_kills() {
+    let f = fix();
+    let mut pg = PaintGrid::new(&f.world);
+    let mut a = Actor::new(0, 0, &f.t);
+    a.spawn_at(vec3(0.0, 0.05, 0.0), 0.0, &f.sim(), &f.t);
+    let mut victim = Actor::new(1, 4, &f.t);
+    victim.spawn_at(vec3(0.0, 0.05, 3.0), std::f32::consts::PI, &f.sim(), &f.t);
+    victim.set_invuln(0.0);
+    let mut actors = vec![a.clone(), victim];
+    let mut ps = ProjectileSim::new(11);
+    ps.fire_blaster(&actors[0], &f.w.blaster, 0.0);
+    let mut hit = None;
+    let mut burst = None;
+    for _ in 0..30 {
+        ps.step(DT, &f.world, &mut actors, &mut pg, &f.t, &f.w);
+        for e in ps.drain_events() {
+            if let SimEvent::Hit {
+                victim_slot,
+                damage,
+                killed,
+                ..
+            } = e
+            {
+                hit = Some((victim_slot, damage, killed));
+            }
+            if let SimEvent::Impact { radius, .. } = e {
+                burst = Some(radius);
+            }
+        }
+        if hit.is_some() {
+            break;
+        }
+    }
+    assert_eq!(
+        hit,
+        Some((4usize, f.w.blaster.direct_damage, true)),
+        "direct hit = 125 = splat"
+    );
+    assert_eq!(
+        burst,
+        Some(f.w.blaster.burst_radius),
+        "the blast detonated (burstRadius)"
+    );
+    assert!(!actors[1].alive);
+}
+
+// TR-30.1 — the mid-air burst: a blast that expires at `range` detonates and
+// splash-damages a nearby enemy with `lerp(splashMax, splashMin, d/splashR)`.
+#[test]
+fn tr30_1_blaster_airburst_splash_falloff() {
+    let f = fix();
+    let mut pg = PaintGrid::new(&f.world);
+    let mut a = Actor::new(0, 0, &f.t);
+    a.spawn_at(vec3(0.0, 0.05, 0.0), 0.0, &f.sim(), &f.t);
+    // Off the shot line (x = 1.5) so the round never touches the capsule, but
+    // inside the burst radius when the blast expires at full range.
+    let mut victim = Actor::new(1, 4, &f.t);
+    victim.spawn_at(vec3(1.5, 0.05, 9.5), std::f32::consts::PI, &f.sim(), &f.t);
+    victim.set_invuln(0.0);
+    let mut actors = vec![a.clone(), victim];
+    let mut ps = ProjectileSim::new(0xB1A57);
+    ps.fire_blaster(&actors[0], &f.w.blaster, 0.0);
+    let mut burst_pos = None;
+    let mut hit = None;
+    for _ in 0..45 {
+        ps.step(DT, &f.world, &mut actors, &mut pg, &f.t, &f.w);
+        for e in ps.drain_events() {
+            match e {
+                SimEvent::Impact { pos, radius, .. } => {
+                    assert_eq!(radius, f.w.blaster.burst_radius);
+                    burst_pos = Some(pos);
+                }
+                SimEvent::Hit {
+                    victim_slot,
+                    damage,
+                    ..
+                } => {
+                    assert_eq!(victim_slot, 4);
+                    hit = Some(damage);
+                }
+                _ => {}
+            }
+        }
+    }
+    let at = burst_pos.expect("the blast burst in mid-air at range");
+    assert!(at.y > 0.5, "air-burst, not a ground impact");
+    let d = actors[1].pos + vec3(0.0, 0.7, 0.0);
+    let dist = d.distance(at);
+    assert!(
+        dist < f.w.blaster.splash_radius,
+        "victim inside the splash cone"
+    );
+    let expect = f.w.blaster.splash_damage_max
+        + (f.w.blaster.splash_damage_min - f.w.blaster.splash_damage_max)
+            * (dist / f.w.blaster.splash_radius);
+    assert!(
+        (hit.expect("splash damage landed") - expect).abs() < MM,
+        "splash = lerp(70, 30, d/splashRadius)"
+    );
+    assert!(actors[1].alive, "splash alone does not splat");
+}
+
+// TR-30.1 — a blast that detonates on the deck paints under the burst.
+#[test]
+fn tr30_1_blaster_burst_paints_the_deck() {
+    let f = fix();
+    let mut pg = PaintGrid::new(&f.world);
+    let mut a = Actor::new(0, 0, &f.t);
+    a.spawn_at(vec3(0.0, 0.05, 0.0), 0.0, &f.sim(), &f.t);
+    a.aim_pitch = -0.6; // dig the shot into the deck a couple of metres out
+    let mut ps = ProjectileSim::new(0x9E37);
+    ps.fire_blaster(&a, &f.w.blaster, 0.0);
+    let mut painted = 0.0f32;
+    for _ in 0..30 {
+        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
+        for e in ps.drain_events() {
+            if let SimEvent::Impact { area, radius, .. } = e {
+                assert_eq!(radius, f.w.blaster.burst_radius);
+                painted += area;
+            }
+        }
+    }
+    assert!(painted > 0.0, "the under-burst splat claimed turf");
+    assert!(pg.coverage()[0] > 0.0, "team ink on the deck");
 }

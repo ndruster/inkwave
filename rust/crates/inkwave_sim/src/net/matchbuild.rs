@@ -15,7 +15,7 @@ use crate::actor::{Actor, SimWorld};
 use crate::match_::{Match, SPAWN_RING_N, SPAWN_RING_PHI, SPAWN_RING_R};
 use crate::net::session::{RosterEntry, StartCfg};
 use crate::tuning::{MatchConfig, PlayerTuning};
-use crate::weapon::WeaponRunner;
+use crate::weapon::{WeaponKind, WeaponRunner};
 
 /// FNV-1a 64-bit over the match id (deviation ⑤).
 pub fn fnv1a(s: &str) -> u64 {
@@ -67,6 +67,14 @@ pub fn build_net_match(
         })
         .collect();
     m.runners = (0..m.actors.len()).map(|_| WeaponRunner::new()).collect();
+    // Spec D-2: the per-actor loadout comes from the roster weapon string
+    // (JS `new Actor({weapon})` → `WEAPONS[weapon].kind`); unknown / retired
+    // ids fall back to the Spritzer (spec Assumptions).
+    m.kinds = cfg
+        .roster
+        .iter()
+        .map(|r| WeaponKind::from_kind_str(&r.weapon).unwrap_or(WeaponKind::Shooter))
+        .collect();
     m
 }
 

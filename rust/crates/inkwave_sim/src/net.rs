@@ -175,7 +175,8 @@ pub struct ActorSample {
     /// Special gauge `sp` (s[13]): M1 has no specials — constant 0.
     pub sp: f32,
     /// Weapon charge `ch` (s[14], `wr.streaming ? burstFrac : charge`,
-    /// linearly interpolated on playback): Spritzer never charges — 0.
+    /// linearly interpolated on playback; JS L748): Task 31 leaves every
+    /// wired weapon non-streaming, so twins/blaster/brolly all pack 0 here.
     pub ch: f32,
     /// Turf credited to this actor (JS `Math.round(a.stats.turf)` →
     /// [`crate::actor::Actor::turf`]).
@@ -194,11 +195,12 @@ pub struct ActorSample {
     /// `n ? r2(n.z) : 0`); M1 has no climb — 0. (The `1` you see in JS is
     /// only `blankSample`'s playback-side default, L757.)
     pub wz: f32,
-    /// Weapon lock timer `lock` (s[20], `r2(wr.lockT)`): M1 Spritzer has no
-    /// lock state — 0.
+    /// Weapon lock timer `lock` (s[20], `r2(wr.lockT)`): `lockT` is a
+    /// dualies-only field (spec D-5) — twins/blaster/brolly all pack 0.
     pub lock: f32,
-    /// Kit pose word `ks` (s[21], `MAIN_KITS[kind].netState(wr)`): no kits in
-    /// M1 — 0.
+    /// Kit pose word `ks` (s[21], `MAIN_KITS[kind].netState(wr)`): the brolly
+    /// canopy pose (`brolly_net_state`, brolly.js L636-641); every other kind
+    /// — and every kit without a `netState` — packs 0.
     pub ks: u32,
     /// Special extra state `spx` (s[22]): M1 — 0.
     pub spx: f32,
@@ -210,11 +212,14 @@ impl ActorSample {
     /// Build the tick view from sim state — the `packActor` mapping
     /// (netmatch.js L723-751), lossless (no `r2`/`r3` rounding; that belongs
     /// to the wire layer). `teleport_count` is the `netTp` counter (see the
-    /// [`ActorSample::tp`] field doc).
+    /// [`ActorSample::tp`] field doc). `kind` is the actor's main weapon kind
+    /// (JS `MAIN_KITS[a.weapon?.kind]?.netState?.(wr)`, L750): it selects the
+    /// `ks` kit-pose slot (brolly only; spec D-1).
     #[must_use]
     pub fn from_actor(
         a: &crate::actor::Actor,
         wr: &crate::weapon::WeaponRunner,
+        kind: crate::weapon::WeaponKind,
         teleport_count: u32,
         t: f32,
     ) -> Self {
@@ -265,14 +270,28 @@ impl ActorSample {
             hp: a.hp,
             ink: a.ink,
             sp: 0.0,
-            ch: 0.0,
+            // JS L748 `wr.streaming ? wr.burstFrac : wr.charge` — every wired
+            // weapon is non-streaming until Task 31.
+            ch: if wr.streaming() {
+                wr.burst_frac()
+            } else {
+                wr.charge()
+            },
             turf: a.turf,
             tp: teleport_count,
             wx: 0.0,
             wy: 0.0,
             wz: 0.0,
-            lock: 0.0,
-            ks: 0,
+            // JS L750 `r2(wr.lockT || 0)` — `lockT` is dualies-only (spec
+            // D-5): twins/blaster/brolly read 0; the wire layer applies `r2`.
+            lock: wr.lock_t(),
+            // JS L750 `MAIN_KITS[a.weapon?.kind]?.netState?.(wr) | 0`
+            // (brolly.js L636-641); no other wired kind has a `netState`.
+            ks: if kind == crate::weapon::WeaponKind::Brolly {
+                wr.brolly_net_state()
+            } else {
+                0
+            },
             spx: 0.0,
             spst: 0,
         }
@@ -836,11 +855,13 @@ mod tests {
             &mut a,
             crate::weapon::WeaponKind::Shooter,
             &f.tuning.weapons,
+            glam::Vec3::ZERO,
+            &f.world,
             &mut proj,
         );
         assert!(wr.firing(), "a shot must open the firing window");
 
-        let s = ActorSample::from_actor(&a, &wr, 7, 12.345);
+        let s = ActorSample::from_actor(&a, &wr, crate::weapon::WeaponKind::Shooter, 7, 12.345);
         // Bit-exact float mapping (TR-15.2 "lossless").
         assert_eq!(s.x, a.pos.x);
         assert_eq!(s.y, a.visual_y());
@@ -890,7 +911,7 @@ mod tests {
         }
         let mut firing_seen = 0;
         for (i, (a, wr)) in m.actors.iter().zip(&m.runners).enumerate() {
-            let s = ActorSample::from_actor(a, wr, i as u32, m.time);
+            let s = ActorSample::from_actor(a, wr, m.kinds[i], i as u32, m.time);
             firing_seen += usize::from(s.flag(flags::FIRING));
             let json = serde_json::to_string(&s).unwrap();
             let back: ActorSample = serde_json::from_str(&json).unwrap();
@@ -910,7 +931,7 @@ mod tests {
             .iter()
             .zip(&m.runners)
             .enumerate()
-            .map(|(i, (a, wr))| (i as u8, ActorSample::from_actor(a, wr, 0, 0.0)))
+            .map(|(i, (a, wr))| (i as u8, ActorSample::from_actor(a, wr, m.kinds[i], 0, 0.0)))
             .collect();
         let tick = Tick {
             ts: 1.5,

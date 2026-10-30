@@ -67,12 +67,17 @@
 //!     is the Task 8 match layer's job — the claimed m² rides the
 //!     [`SimEvent::Impact`] / [`SimEvent::Turf`] payloads to it.
 
+pub mod brolly;
+
+use std::collections::BTreeMap;
+
 use glam::{Vec3, vec3};
 
 use crate::actor::{Actor, FireGate, Form};
 use crate::collision::CollisionWorld;
 use crate::paint::{PaintGrid, SplatOpts};
-use crate::tuning::{PlayerTuning, Spritzer, WeaponSet};
+use crate::tuning::{Blaster, PlayerTuning, Spritzer, Twins, WeaponSet};
+use crate::weapon::brolly::{BrollyKit, CanopyState, LaunchedCanopy};
 
 /// Upstream projectile gravity for shooter-family rounds (weapons.js
 /// `fireShooter`: `grav: 28`), distinct from the player's `gravity: 25`.
@@ -137,7 +142,8 @@ fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
 /// `MAIN_KITS[w.kind]`) are deliberately absent — `Brolly` / `Bow` /
 /// `Blade` / `Mitts` are the JS kit kinds whose behaviour lands in
 /// Tasks 30-33.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum WeaponKind {
     /// `shooter` — Spritzer stream rounds (wired, M1).
     Shooter,
@@ -203,11 +209,14 @@ impl WeaponKind {
         })
     }
 
-    /// Whether this kind's update branch is wired (Task 29: only `Shooter`;
-    /// Tasks 30-33 flip the rest).
+    /// Whether this kind's update branch is wired (Task 29: `Shooter`;
+    /// Task 30: `Twins` / `Blaster` / `Brolly`; Tasks 31-33 flip the rest).
     #[must_use]
     pub fn is_wired(self) -> bool {
-        matches!(self, Self::Shooter)
+        matches!(
+            self,
+            Self::Shooter | Self::Twins | Self::Blaster | Self::Brolly
+        )
     }
 }
 
@@ -230,6 +239,10 @@ pub struct RoundSpec {
     pub damage: f32,
     pub trail_every: f32,
     pub trail_radius: f32,
+    /// Drip accumulator start (JS `p.trail` at spawn: shooter `-(2.5 −
+    /// trailEvery)` L1034, blaster blast `-1.5` L1178, twin `-(2.4 −
+    /// trailEvery)` L1381, brolly pellet `-1.5` via `fireCustom` L1204).
+    pub trail_start: f32,
 }
 
 impl RoundSpec {
@@ -249,7 +262,42 @@ impl RoundSpec {
             damage: w.damage,
             trail_every: w.trail_every,
             trail_radius: w.trail_radius,
+            trail_start: -(TRAIL_START_BACK - w.trail_every),
         }
+    }
+}
+
+/// Distance-falloff mark carried by a brolly pellet (JS `p._bid` + the
+/// kit's per-pellet `pelletDamage(p.start.distanceTo(at))`, brolly.js
+/// L64-68 / L471). `blast` is the blast group id: pellets of one blast that
+/// reach the same victim within [`MERGE`] sum into one hit (brolly.js L468,
+/// key `blast * 64 + victimIdx`).
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PelletMark {
+    pub blast: u32,
+    pub falloff_start: f32,
+    pub falloff_end: f32,
+    pub dmg_near: f32,
+    pub dmg_far: f32,
+}
+
+impl PelletMark {
+    /// JS `pelletDamage(d)` (brolly.js L64-68): full damage up to
+    /// `falloff_start`, then a linear lerp to `dmg_far` at `falloff_end`.
+    #[must_use]
+    pub fn pellet_damage(&self, d: f32) -> f32 {
+        if d <= self.falloff_start {
+            return self.dmg_near;
+        }
+        lerp(
+            self.dmg_near,
+            self.dmg_far,
+            clamp_f(
+                (d - self.falloff_start) / (self.falloff_end - self.falloff_start),
+                0.0,
+                1.0,
+            ),
+        )
     }
 }
 
@@ -347,11 +395,22 @@ pub struct Projectile {
     /// motion and despawns on the same hit/life/water expiry as a live round.
     #[serde(default)]
     pub ghost: bool,
+    /// Blaster blast (JS `type: 'blast'`, weapons.js L1178): on any death it
+    /// detonates [`ProjectileSim::blast_burst`] (JS `_blastBurst` L1689-1709)
+    /// instead of the plain `weapon:impact`.
+    #[serde(default)]
+    pub blast: bool,
+    /// Brolly pellet mark (JS `p._bid` + the kit's `PELLETS` side table,
+    /// brolly.js L72/L105): body hits merge per blast+victim and score with
+    /// distance falloff instead of the round's `damage` (which is 0 — the
+    /// core pass never applies it, JS L1608 `if (dmg > 0)`).
+    #[serde(default)]
+    pub pellet: Option<PelletMark>,
 }
 
 /// Gameplay events produced by the weapon layer (JS `emit(...)`). The match
 /// layer drains these for scoring/FX/netcode (Task 8, [`crate::match_`]).
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SimEvent {
     /// A round left the muzzle (JS `weapon:fire`). `team` joins `owner_slot`
     /// into the full firing identity (slots repeat per team), needed by the
@@ -414,6 +473,18 @@ pub enum SimEvent {
     /// Trigger held but the reservoir is below `ink_per_shot` (JS
     /// `_empty()` → `emit('lowink')` + `empty_click`).
     LowInk { owner_slot: usize },
+    /// A kit object entered the world (JS `netRec(a, 'brolly', [...])`,
+    /// brolly.js L266 → netmatch `recKit` L134-137 `['k', nid, kind, data]`).
+    /// `owner_slot` + `team` carry the owner identity like [`Self::Fire`]
+    /// (the replication layer maps the roster index to the wire `nid` byte —
+    /// Task 30 §4). `data` is the launch payload: `[x, y, z, dx, dz, hp, h0]`
+    /// with the JS `r2`/`r3`/`round` quantisation applied (brolly.js L266).
+    Kit {
+        owner_slot: usize,
+        team: usize,
+        kind: String,
+        data: Vec<f32>,
+    },
 }
 
 /// Per-actor weapon state machine (JS `WeaponRunner` L32): the common
@@ -450,6 +521,34 @@ pub struct WeaponRunner {
     lock_t: f32,
     /// JS `dodgeT` — dodge-roll timer.
     dodge_t: f32,
+    // ---- Task 30: twins dodge-roll chain (JS `reset()` L47-51).
+    /// JS `rollLock` — chain lockout timer.
+    roll_lock: f32,
+    /// JS `sinceRoll` — seconds since the last roll (reset to 9).
+    since_roll: f32,
+    /// JS `rollsUsed` — rolls used in the current chain.
+    rolls_used: u32,
+    /// JS `rollQueued` — a second roll tapped mid-roll chains on.
+    roll_queued: bool,
+    /// JS `twinSide` — alternating hand (reset to 1).
+    twin_side: i32,
+    /// JS `sinceHand` — per-hand shot clocks, seconds (reset to `[99, 99]`).
+    since_hand: [f32; 2],
+    /// JS `dodgeDir` — the twins roll direction (unit XZ).
+    dodge_dir: Vec3,
+    /// JS `streaming` — splatling stream in progress (net flag; written by
+    /// the splatling branch, Task 33).
+    streaming: bool,
+    /// JS `burstFrac` — stream left fraction (the `ch` tick slot while
+    /// streaming, Task 33).
+    burst_frac: f32,
+    // ---- Task 30: brolly kit state (JS `this.kit`, weapons.js L57; the
+    // `kit = null` on reset is modelled by `brolly: None` — a dead/respawned
+    // kid regrows a full canopy, matching JS `reset` + `kitOf`).
+    pub(crate) brolly: Option<Box<BrollyKit>>,
+    /// A canopy launched this frame (JS `addLaunched` → the world `LAUNCHED`
+    /// list, brolly.js L265/L285): the match takes it into its registry.
+    pub(crate) brolly_launch: Option<LaunchedCanopy>,
 }
 
 impl Default for WeaponRunner {
@@ -470,6 +569,17 @@ impl Default for WeaponRunner {
             turret: false,
             lock_t: 0.0,
             dodge_t: 0.0,
+            roll_lock: 0.0,
+            since_roll: 9.0,
+            rolls_used: 0,
+            roll_queued: false,
+            twin_side: 1,
+            since_hand: [99.0, 99.0],
+            dodge_dir: Vec3::ZERO,
+            streaming: false,
+            burst_frac: 0.0,
+            brolly: None,
+            brolly_launch: None,
         }
     }
 }
@@ -624,11 +734,25 @@ impl WeaponRunner {
                     run
                 }
             }
-            // JS L64: the kit weapons own their move-speed curve (kits/*.js).
-            // Without a kit `moveSpeed` JS falls through to the tail chain
-            // (L89-90: `firingT > 0 ? moveSpeedFiring : runSpeed`); the kits
-            // are unwired until Tasks 30/32/33, so the sim returns `runSpeed`.
-            WeaponKind::Brolly | WeaponKind::Bow | WeaponKind::Blade | WeaponKind::Mitts => run,
+            // JS L64 `MAIN_KITS.brolly.moveSpeed` (brolly.js L664):
+            // `open > 0.2 ? moveSpeedShield : 0` — the falsy `0` falls
+            // through to the general tail (L89-90: `firingT > 0 ?
+            // moveSpeedFiring : runSpeed`).
+            WeaponKind::Brolly => {
+                if self.brolly.as_ref().is_some_and(|k| k.open > 0.2) {
+                    w.brolly.move_speed_shield
+                } else if self.firing_t > 0.0 {
+                    w.brolly.move_speed_firing
+                } else {
+                    run
+                }
+            }
+            // JS L64: the remaining kit weapons own their move-speed curve
+            // (kits/*.js). Without a kit `moveSpeed` JS falls through to the
+            // tail chain (L89-90: `firingT > 0 ? moveSpeedFiring : runSpeed`);
+            // the kits are unwired until Tasks 32/33, so the sim returns
+            // `runSpeed`.
+            WeaponKind::Bow | WeaponKind::Blade | WeaponKind::Mitts => run,
         }
     }
 
@@ -675,6 +799,15 @@ impl WeaponRunner {
                     w.spinner.spread_air
                 }
             }
+            // JS L95 `MAIN_KITS.brolly.spreadDeg` (brolly.js L665):
+            // `grounded ? spreadDeg : spreadAir` (no bloom).
+            WeaponKind::Brolly => {
+                if grounded {
+                    w.brolly.spread_deg
+                } else {
+                    w.brolly.spread_air
+                }
+            }
             _ => 0.0,
         }
     }
@@ -683,8 +816,10 @@ impl WeaponRunner {
     /// (L110-116) + the kind dispatch (L117-129). JS's `inp` is the gated
     /// `winp` (actor.js L370-373), which [`Actor::fire_gate`] already
     /// resolves (emerge delay + fire buffer) — hence the `gate` parameter
-    /// alone; `gate.pressed` is kept for the semi-auto kinds (Task 30+).
+    /// alone; `move_dir` is the raw intent's move vector (JS reads
+    /// `a.intent.move` in `_twins`, L493/L499/L534 — *not* the gated one).
     /// The sub-weapon block (JS L130-155) is Task 34.
+    #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
         dt: f32,
@@ -692,6 +827,8 @@ impl WeaponRunner {
         actor: &mut Actor,
         kind: WeaponKind,
         w: &WeaponSet,
+        move_dir: Vec3,
+        world: &CollisionWorld,
         projectiles: &mut ProjectileSim,
     ) {
         // ---- JS L110-116 common decay. JS `inp` here is the *gated* `winp`
@@ -706,27 +843,27 @@ impl WeaponRunner {
             self.bloom = (self.bloom - dt / BLOOM_RECOVER).max(0.0);
         }
         self.spread = self.spread_deg(actor.grounded, kind, w);
+        // JS L116: per-hand shot clocks (dualies / twins HUD).
+        self.since_hand[0] += dt;
+        self.since_hand[1] += dt;
 
-        // ---- JS L117-129 kind dispatch. Only `shooter` fires for real
-        // (Task 29); the other arms are the JS structure kept 1:1 so the
-        // common path above is never skipped per kind:
-        //   L118 `shooter`/`blaster` → `_auto`; blaster's `fireBlaster`
-        //     muzzle call lands in Task 30 (its ink path would spend ink
-        //     for an unported blast, so the whole arm waits).
-        //   L119-124 `charger`/`roller`/`bucket`/`spinner`/`twins`/`brush`
-        //     → Tasks 31/32/31/31/30/32.
-        //   L128 `default` → `MAIN_KITS` (brolly/bow/blade/mitts,
-        //     Tasks 30/33/32/33).
+        // ---- JS L117-129 kind dispatch. Task 30 wires `shooter`/`blaster`
+        // (`_auto`), `twins` (`_twins`) and `brolly` (`MAIN_KITS.brolly.
+        // update`); the remaining arms land in Tasks 31-33:
+        //   L119-124 `charger`/`roller`/`bucket`/`spinner`/`brush`
+        //     → Tasks 31/32/31/31/32.
+        //   L128 `default` → `MAIN_KITS` (bow/blade/mitts, Tasks 33/32/33).
         match kind {
-            WeaponKind::Shooter => self.auto_fire(gate, actor, kind, w, projectiles),
-            WeaponKind::Blaster
-            | WeaponKind::Charger
+            WeaponKind::Shooter | WeaponKind::Blaster => {
+                self.auto_fire(gate, actor, kind, w, projectiles)
+            }
+            WeaponKind::Twins => self.twins(gate, actor, w, dt, move_dir, world, projectiles),
+            WeaponKind::Brolly => brolly::update(self, dt, gate, actor, w, world, projectiles),
+            WeaponKind::Charger
             | WeaponKind::Roller
             | WeaponKind::Bucket
             | WeaponKind::Spinner
-            | WeaponKind::Twins
             | WeaponKind::Brush
-            | WeaponKind::Brolly
             | WeaponKind::Bow
             | WeaponKind::Blade
             | WeaponKind::Mitts => {}
@@ -749,7 +886,9 @@ impl WeaponRunner {
     ) {
         let (fire_interval, ink_per_shot) = match kind {
             WeaponKind::Shooter => (w.shooter.fire_interval, w.shooter.ink_per_shot),
-            // Task 30: blaster joins with its own def fields.
+            // JS L118: blaster shares the `_auto` ink path with its own def
+            // fields (config.js L126-135).
+            WeaponKind::Blaster => (w.blaster.fire_interval, w.blaster.ink_per_shot),
             _ => return,
         };
         if !gate.fire {
@@ -784,8 +923,7 @@ impl WeaponRunner {
         }
     }
 
-    /// JS `_auto` L176-177: the per-kind muzzle call. Only the shooter
-    /// stream round is ported (Task 29); `fireBlaster` lands in Task 30.
+    /// JS `_auto` L176-177: the per-kind muzzle call.
     fn fire_kind_round(
         &self,
         actor: &Actor,
@@ -793,15 +931,310 @@ impl WeaponRunner {
         w: &WeaponSet,
         projectiles: &mut ProjectileSim,
     ) {
-        if kind == WeaponKind::Shooter {
-            projectiles.fire_shooter(actor, &w.shooter, self.spread, None);
+        match kind {
+            WeaponKind::Shooter => projectiles.fire_shooter(actor, &w.shooter, self.spread, None),
+            WeaponKind::Blaster => projectiles.fire_blaster(actor, &w.blaster, self.spread),
+            _ => {}
         }
+    }
+
+    /// JS `_twins` (weapons.js L489-517): rapid alternating fire; after a
+    /// dodge roll, holding fire plants you with both guns together (faster,
+    /// tighter `turret*` group). `move_dir` is the raw intent move (JS L493
+    /// reads `a.intent.move`).
+    #[allow(clippy::too_many_arguments)]
+    fn twins(
+        &mut self,
+        gate: &FireGate,
+        a: &mut Actor,
+        w: &WeaponSet,
+        dt: f32,
+        move_dir: Vec3,
+        world: &CollisionWorld,
+        ps: &mut ProjectileSim,
+    ) {
+        let tw = &w.twins;
+        // JS L491: lockout decay + roll-chain idle clock.
+        self.roll_lock = (self.roll_lock - dt).max(0.0);
+        self.since_roll += dt;
+        // JS L492: a quiet spell refills the chain.
+        if self.roll_lock <= 0.0 && self.since_roll > tw.roll_reset && self.dodge_t <= 0.0 {
+            self.rolls_used = 0;
+        }
+        // JS L493: walking (or releasing the trigger) un-plants the turret.
+        let mh = move_dir.x.hypot(move_dir.z);
+        if self.turret && (!gate.fire || mh > 0.3) {
+            self.turret = false;
+        }
+        if self.dodge_t > 0.0 {
+            self.dodge_t -= dt;
+            if self.dodge_t <= 0.0 {
+                self.dodge_t = 0.0;
+                // JS L497: the roll ends planted if the trigger is still held.
+                self.turret = gate.fire;
+                // JS L499: a roll tapped during this one chains straight on.
+                if self.roll_queued {
+                    self.roll_queued = false;
+                    if self.twin_dodge(a, tw, move_dir, gate.fire) {
+                        return;
+                    }
+                }
+            }
+            return;
+        }
+        if !gate.fire {
+            if self.cooldown < 0.0 {
+                self.cooldown = 0.0;
+            }
+            return;
+        }
+        self.firing_t = FIRING_T;
+        let mut guard = 0usize;
+        while self.cooldown <= 0.0 && guard < 3 {
+            guard += 1;
+            if a.ink < tw.ink_per_shot {
+                // JS `_empty()` + `cooldown += fireInterval; break`.
+                if self.empty_cd <= 0.0 {
+                    self.empty_cd = EMPTY_CD;
+                    ps.push_event(SimEvent::LowInk { owner_slot: a.slot });
+                }
+                self.cooldown += tw.fire_interval;
+                break;
+            }
+            a.ink -= tw.ink_per_shot;
+            a.note_fired();
+            // JS L509-510: alternate hands; the planted turret fires both
+            // guns together (`side = 0`).
+            self.twin_side = -self.twin_side;
+            let side = if self.turret { 0 } else { self.twin_side };
+            let sd = self.spread_deg(a.grounded, WeaponKind::Twins, w);
+            ps.fire_twin(a, tw, sd, side, world);
+            // Deviation D-4: JS L511 hardcodes `bloom + 0.25` (no
+            // `bloomPerShot` in the twins def) — kept verbatim.
+            self.bloom = (self.bloom + 0.25).min(1.0);
+            // JS L513-514: side +1 = the left gun, -1 = the right.
+            let hand = if self.twin_side > 0 { 1 } else { 0 };
+            self.since_hand[hand] = 0.0;
+            self.cooldown += if self.turret {
+                tw.turret_interval
+            } else {
+                tw.fire_interval
+            };
+        }
+    }
+
+    /// JS `_twinDodge` (weapons.js L529-548): jump tapped while firing and
+    /// moving → a dodge roll instead. Returns true when a roll started (or
+    /// was queued), which the caller uses to swallow the jump press.
+    fn twin_dodge(&mut self, a: &mut Actor, tw: &Twins, move_dir: Vec3, fire: bool) -> bool {
+        // JS L532: a tap mid-roll with a roll left in the chain queues it.
+        if self.dodge_t > 0.0
+            && fire
+            && self.roll_lock <= 0.0
+            && self.rolls_used > 0
+            && self.rolls_used < tw.roll_charges
+        {
+            self.roll_queued = true;
+            return true;
+        }
+        // JS L533: needs fire held, no roll running / locked, grounded, kid.
+        if !fire || self.dodge_t > 0.0 || self.roll_lock > 0.0 || !a.grounded || a.form != Form::Kid
+        {
+            return false;
+        }
+        let mh = move_dir.x.hypot(move_dir.z);
+        if mh < 0.3 || a.ink < tw.roll_ink {
+            return false;
+        }
+        a.ink -= tw.roll_ink;
+        self.dodge_dir = vec3(move_dir.x / mh, 0.0, move_dir.z / mh);
+        self.dodge_t = tw.roll_time;
+        self.turret = false;
+        self.since_roll = 0.0;
+        // JS L540: two rolls in a row, then a lockout before the next.
+        self.rolls_used += 1;
+        if self.rolls_used >= tw.roll_charges {
+            self.roll_lock = tw.roll_lockout;
+            self.rolls_used = 0;
+        }
+        true
+    }
+
+    /// JS `tryDodge` (weapons.js L522-527): the jump-press dispatcher. The
+    /// retired `dualies` branch is absent (config.js L266-299).
+    pub fn try_dodge(
+        &mut self,
+        kind: WeaponKind,
+        a: &mut Actor,
+        w: &WeaponSet,
+        move_dir: Vec3,
+        fire: bool,
+    ) -> bool {
+        match kind {
+            WeaponKind::Twins => self.twin_dodge(a, &w.twins, move_dir, fire),
+            _ => false,
+        }
+    }
+
+    /// JS `dodgeVelocity` (weapons.js L550-555): the twins roll's horizontal
+    /// velocity — fast start easing out — sampled at the *start* of the
+    /// frame and written to [`crate::actor::Actor::dodge_vel`] by the match
+    /// layer (actor.js L305-306). `None` when not rolling.
+    #[must_use]
+    pub fn dodge_velocity(&self, kind: WeaponKind, w: &WeaponSet) -> Option<Vec3> {
+        if kind != WeaponKind::Twins || self.dodge_t <= 0.0 {
+            return None;
+        }
+        let tw = &w.twins;
+        // JS L552-554: `u = 1 - dodgeT/rollTime`, `v0 = rollDist/(0.7·
+        // rollTime)`, `v = dodgeDir · v0(1 − 0.6u)`.
+        let u = 1.0 - self.dodge_t / tw.roll_time;
+        let v0 = tw.roll_dist / (0.7 * tw.roll_time);
+        Some(self.dodge_dir * (v0 * (1.0 - 0.6 * u)))
+    }
+
+    /// JS `this.charge` (the `ch` tick slot is `streaming ? burstFrac :
+    /// charge`, netmatch.js L744): read-only accessors for the net layer.
+    #[must_use]
+    pub fn charge(&self) -> f32 {
+        self.charge
+    }
+
+    /// JS `this.lockT` (the `lock` tick slot, netmatch.js L751).
+    #[must_use]
+    pub fn lock_t(&self) -> f32 {
+        self.lock_t
+    }
+
+    /// JS `this.streaming` (the `F.streaming` flag, netmatch.js L737).
+    #[must_use]
+    pub fn streaming(&self) -> bool {
+        self.streaming
+    }
+
+    /// JS `this.burstFrac` (the `ch` slot while streaming, netmatch.js L744).
+    #[must_use]
+    pub fn burst_frac(&self) -> f32 {
+        self.burst_frac
+    }
+
+    /// The brolly kit, created lazily like JS `kitOf` (brolly.js L48-61).
+    pub(crate) fn ensure_brolly(&mut self, w: &WeaponSet) -> &mut BrollyKit {
+        if self.brolly.is_none() {
+            self.brolly = Some(Box::new(BrollyKit::new(w.brolly.canopy_hp as f32)));
+        }
+        self.brolly.as_mut().unwrap()
+    }
+
+    /// JS `MAIN_KITS.brolly.netState` (brolly.js L636-641): the canopy pose
+    /// packed into one word — `state` bits 0-1, `open` 0-15 bits 2-5,
+    /// `grow` 0-7 bits 6-8, `hp/hpMax` 0-31 bits 9-13, `regrowK` 0-7 bits
+    /// 14-16. 0 when the runner carries no kit.
+    #[must_use]
+    pub fn brolly_net_state(&self) -> u32 {
+        let Some(k) = self.brolly.as_deref() else {
+            return 0;
+        };
+        // JS `q(v, n) = max(0, min(n, round(clamp(v, 0, 1) · n)))`.
+        let q = |v: f32, n: u32| ((clamp_f(v, 0.0, 1.0) * n as f32 + 0.5) as u32).min(n);
+        let st = match k.state {
+            CanopyState::Ready => 0,
+            CanopyState::Broken => 1,
+            CanopyState::Launched => 2,
+        };
+        st | (q(k.open, 15) << 2)
+            | (q(k.grow, 7) << 6)
+            | (q(k.hp / k.hp_max, 31) << 9)
+            | (q(k.regrow_k, 7) << 14)
+    }
+
+    /// JS `MAIN_KITS.brolly.netApply` (brolly.js L642-649): rebuild the kit
+    /// pose from a [`Self::brolly_net_state`] word. The hit-flash side
+    /// effect (L646) is presentation-only and dropped (deviation D-7).
+    pub fn net_apply_brolly(&mut self, bits: u32, w: &WeaponSet) {
+        let k = self.ensure_brolly(w);
+        k.state = match bits & 3 {
+            1 => CanopyState::Broken,
+            2 => CanopyState::Launched,
+            _ => CanopyState::Ready,
+        };
+        k.hp = ((bits >> 9) & 31) as f32 / 31.0 * k.hp_max;
+        k.open = ((bits >> 2) & 15) as f32 / 15.0;
+        k.grow = ((bits >> 6) & 7) as f32 / 7.0;
+        k.regrow_k = ((bits >> 14) & 7) as f32 / 7.0;
     }
 }
 
 /// JS `clamp` (ctx.js).
 fn clamp_f(v: f32, a: f32, b: f32) -> f32 {
     v.max(a).min(b)
+}
+
+/// Pellet-merge window (JS `MERGE = 1/30`, brolly.js L389): pellets of one
+/// blast reaching the same victim within this many seconds sum into one hit.
+pub const MERGE: f32 = 1.0 / 30.0;
+
+/// A swept canopy plane a round may be blocked by this frame (JS shield `s`
+/// in `segShield`, brolly.js L195-200). `cp`/`np` are the *previous* frame's
+/// pose (the swept test's start), `c`/`n` the current one.
+#[derive(Debug, Clone, Copy)]
+pub struct Shield {
+    pub team: usize,
+    pub c: Vec3,
+    pub n: Vec3,
+    pub r: f32,
+    pub cp: Vec3,
+    pub np: Vec3,
+    /// `WEAPONS.brolly.regrowTime` — the held kit needs it when the canopy
+    /// breaks (brolly.js L235).
+    pub regrow_time: f32,
+    pub target: ShieldTarget,
+}
+
+/// Which registry a shield's hp lives in (JS `hpOf(s)`, brolly.js L202:
+/// `s.held ? s.kit : s.ref`).
+#[derive(Debug, Clone, Copy)]
+pub enum ShieldTarget {
+    /// A held canopy: [`WeaponRunner::brolly`] of the runner at this actor
+    /// index.
+    Held(usize),
+    /// A launched canopy: [`crate::match_::Match::launched`] at this index.
+    Launched(usize),
+}
+
+/// The hp owners [`ProjectileSim::step_masked` may deduct canopy damage
+/// from (JS `hitShield`/`breakShield`, brolly.js L203-239).
+pub struct ShieldOwner<'a> {
+    pub runners: &'a mut [WeaponRunner],
+    pub launched: &'a mut [LaunchedCanopy],
+}
+
+/// JS `segShield(prev, pos, s, out)` (brolly.js L195-200): signed-distance
+/// crossing of the swept disc, either direction. Some = the crossing point.
+#[must_use]
+fn seg_shield(prev: Vec3, pos: Vec3, s: &Shield) -> Option<Vec3> {
+    let a = (prev - s.cp).dot(s.np);
+    let b = (pos - s.c).dot(s.n);
+    if (a > 0.0) == (b > 0.0) || a == b || a == 0.0 {
+        return None;
+    }
+    let at = prev.lerp(pos, a / (a - b));
+    if at.distance_squared(s.c) < s.r * s.r {
+        Some(at)
+    } else {
+        None
+    }
+}
+
+/// JS `PEND` record (brolly.js L468-471): the merged pellet hit waiting to
+/// land. Private to the projectile sim.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct PendingHit {
+    owner_slot: usize,
+    team: usize,
+    victim: usize,
+    dmg: f32,
+    at: f32,
 }
 
 /// Global projectile system (JS `Projectiles`): owns the live rounds, the
@@ -811,6 +1244,19 @@ pub struct ProjectileSim {
     pub list: Vec<Projectile>,
     events: Vec<SimEvent>,
     pub rng: Rng,
+    /// Accumulated stepped time — the kit's clock (JS `G.time`, used by the
+    /// pellet-merge flush, brolly.js L477-481, and the canopy idle check).
+    #[serde(default)]
+    pub time: f32,
+    /// Blast group counter (JS module-global `BLAST`, brolly.js L72/L91):
+    /// ids start at 1. Deviation: JS keeps it module-level; the sim hangs it
+    /// on the projectile stream so snapshots restore it.
+    #[serde(default)]
+    pub blast_seq: u32,
+    /// Pending merged pellet hits, keyed `blast * 64 + victim_idx` (JS L468;
+    /// `BTreeMap` for deterministic snapshot serialisation).
+    #[serde(default)]
+    pending: BTreeMap<u64, PendingHit>,
 }
 
 impl ProjectileSim {
@@ -820,6 +1266,9 @@ impl ProjectileSim {
             list: Vec::new(),
             events: Vec::new(),
             rng: Rng::new(seed),
+            time: 0.0,
+            blast_seq: 0,
+            pending: BTreeMap::new(),
         }
     }
 
@@ -910,6 +1359,132 @@ impl ProjectileSim {
             None => dir0,
         };
         let dir = self.rng.spread(dir, spread_deg);
+        // Deviation: range-enforced life (see module docs). JS: 1.2 s.
+        let life = (spec.range / spec.proj_speed).min(spec.life);
+        self.push_round(a, spec, m, dir, life, false, None, true);
+    }
+
+    /// JS `Projectiles.fireBlaster` (weapons.js L1173-1192): the ammo-segment
+    /// blast — a straight, gravity-free `type: 'blast'` round that detonates
+    /// [`Self::blast_burst`] on any death. `life` is the range cap
+    /// (`range / projSpeed`, JS L1178), `straight: 99` never expires.
+    pub fn fire_blaster(&mut self, a: &Actor, w: &Blaster, spread_deg: f32) {
+        let m = Self::muzzle(a);
+        let dir0 = Self::aim_from(a, m, None);
+        let dir = self.rng.spread(dir0, spread_deg);
+        let spec = RoundSpec {
+            proj_speed: w.proj_speed,
+            straight_time: 99.0, // JS L1178 `straight: 99`
+            range: w.range,
+            grav: 0.0,
+            drag: 0.0,
+            size: 0.26, // JS L1178 `size: 0.26`
+            life: f32::INFINITY,
+            impact_radius: w.impact_radius,
+            damage: w.direct_damage,
+            trail_every: 2.2, // JS L1178 `trailEvery: 2.2`
+            trail_radius: 0.45,
+            trail_start: -1.5, // JS L1178 `trail: -1.5`
+        };
+        let life = (spec.range / spec.proj_speed).min(spec.life);
+        self.push_round(a, &spec, m, dir, life, true, None, true);
+    }
+
+    /// JS `Projectiles.fireTwin` (weapons.js L1356-1392), the no-dual-rig
+    /// fallback branch (L1360-1373): the sim has no character rig, so every
+    /// twin shot takes the offset-muzzle path — the firing side's muzzle is
+    /// the base muzzle nudged along the aim-perpendicular, `side > 0`
+    /// averaging in the midline-mirrored position, `side < 0` pushing back
+    /// half as far; a muzzle that fails the eye→muzzle LOS check falls back
+    /// to the generic eye + aim push. `side = 0` (planted turret) fires from
+    /// the plain muzzle with the faster, straighter, longer-reaching
+    /// `turret*` shot group.
+    pub fn fire_twin(
+        &mut self,
+        a: &Actor,
+        w: &Twins,
+        spread_deg: f32,
+        side: i32,
+        world: &CollisionWorld,
+    ) {
+        let m0 = Self::muzzle(a);
+        let m = if side == 0 {
+            m0
+        } else {
+            let aim = a.aim_dir();
+            // JS L1365: aim-perpendicular in the horizontal plane.
+            let mut perp = vec3(aim.z, 0.0, -aim.x);
+            if perp.length_squared() > 1e-12 {
+                perp = perp.normalize();
+            }
+            // JS L1366-1368: the mirrored (left-pistol) muzzle across the
+            // kid's midline, in the body-local frame.
+            let (cy, sy) = (a.yaw.cos(), a.yaw.sin());
+            let (dx, dz) = (m0.x - a.pos.x, m0.z - a.pos.z);
+            let lx = dx * cy - dz * sy;
+            let lz = dx * sy + dz * cy;
+            let mirror = vec3(
+                a.pos.x - lx * cy + lz * sy,
+                m0.y,
+                a.pos.z + lx * sy + lz * cy,
+            );
+            let mut m = if side > 0 {
+                // JS L1369: half-way between the +17 cm offset and the mirror.
+                (m0 + perp * 0.17 + mirror) * 0.5
+            } else {
+                // JS L1370.
+                m0 + perp * (-0.085)
+            };
+            // JS L1371-1372: a muzzle inside geometry falls back to the eye.
+            let eye = vec3(a.pos.x, a.pos.y + MUZZLE_EYE_Y, a.pos.z);
+            if !world.los(eye, m) {
+                m = eye + aim * MUZZLE_FALLBACK_DIST;
+            }
+            m
+        };
+        let dir0 = Self::aim_from(a, m, None);
+        // JS L1377: planted mode fires the tighter `turret*` group.
+        let (speed, straight, range) = if side != 0 {
+            (w.proj_speed, w.straight_time, w.range)
+        } else {
+            (w.turret_proj_speed, w.turret_straight, w.turret_range)
+        };
+        let dir = self.rng.spread(dir0, spread_deg);
+        let spec = RoundSpec {
+            proj_speed: speed,
+            straight_time: straight,
+            range,
+            grav: PROJ_GRAV,
+            drag: PROJ_DRAG,
+            size: 0.13, // JS L1381 `size: 0.13`
+            life: SHOT_LIFE,
+            impact_radius: w.impact_radius,
+            damage: w.damage,
+            trail_every: w.trail_every,
+            trail_radius: w.trail_radius,
+            trail_start: -(2.4 - w.trail_every), // JS L1381
+        };
+        // JS L1381 lives 1.2 s; the sim keeps its range-cap deviation.
+        let life = (range / speed).min(SHOT_LIFE);
+        self.push_round(a, &spec, m, dir, life, false, None, true);
+    }
+
+    /// Shared spawn tail of [`Self::fire_round`] / [`Self::fire_blaster`] /
+    /// [`Self::fire_twin`] / the brolly pellets (JS `_new`, `Object.assign`,
+    /// `_push` and the `weapon:fire` emit): draw the blob seed, push the
+    /// round, optionally emit the fire event.
+    #[allow(clippy::too_many_arguments)]
+    fn push_round(
+        &mut self,
+        a: &Actor,
+        spec: &RoundSpec,
+        m: Vec3,
+        dir: Vec3,
+        life: f32,
+        blast: bool,
+        pellet: Option<PelletMark>,
+        emit_fire: bool,
+    ) {
         let seed = self.rng.next_f32();
         self.list.push(Projectile {
             pos: m,
@@ -919,26 +1494,29 @@ impl ProjectileSim {
             team: a.team,
             owner_slot: a.slot,
             age: 0.0,
-            // Deviation: range-enforced life (see module docs). JS: 1.2 s.
-            life: (spec.range / spec.proj_speed).min(spec.life),
+            life,
             straight: spec.straight_time,
             radius: spec.impact_radius,
             size: spec.size,
             damage: spec.damage,
             grav: spec.grav,
             drag: spec.drag,
-            trail: -(TRAIL_START_BACK - spec.trail_every),
+            trail: spec.trail_start,
             trail_every: spec.trail_every,
             trail_radius: spec.trail_radius,
             seed,
+            blast,
+            pellet,
             ghost: false,
         });
-        self.push_event(SimEvent::Fire {
-            owner_slot: a.slot,
-            team: a.team,
-            muzzle: m,
-            dir,
-        });
+        if emit_fire {
+            self.push_event(SimEvent::Fire {
+                owner_slot: a.slot,
+                team: a.team,
+                muzzle: m,
+                dir,
+            });
+        }
     }
 
     /// Live round count against the JS `MAX_BLOBS` presentation cap
@@ -960,8 +1538,13 @@ impl ProjectileSim {
         actors: &mut [Actor],
         paint: &mut PaintGrid,
         t: &PlayerTuning,
+        w: &WeaponSet,
     ) {
-        self.step_masked(dt, world, actors, paint, t, None);
+        let mut owner = ShieldOwner {
+            runners: &mut [],
+            launched: &mut [],
+        };
+        self.step_masked(dt, world, actors, paint, t, w, None, &[], &mut owner);
     }
 
     /// [`Self::step`] with the online actor mask (Task 21): `remote[i]`
@@ -970,6 +1553,7 @@ impl ProjectileSim {
     /// (weapons.js L1551, netmatch.js L711-717): the shooter's client
     /// streams the damage to the victim's owner over `{k:'hit'}`, which we
     /// surface as [`SimEvent::HitSend`]. `None` = offline (every hit local).
+    #[allow(clippy::too_many_arguments)]
     pub fn step_masked(
         &mut self,
         dt: f32,
@@ -977,18 +1561,82 @@ impl ProjectileSim {
         actors: &mut [Actor],
         paint: &mut PaintGrid,
         t: &PlayerTuning,
+        w: &WeaponSet,
         remote: Option<&[bool]>,
+        shields: &[Shield],
+        owner: &mut ShieldOwner,
     ) {
+        // JS `tick` clock: the kit's merge window and canopy idle checks run
+        // on the projectile time (brolly.js L477-481 / L397).
+        self.time += dt;
+        // JS `tick` step 2 tail (brolly.js L477-481): due merged pellet hits
+        // land before the rounds step. (A record is created with `at = time +
+        // MERGE`, so one can never come due in its own frame — flushing here
+        // instead of after the step is equivalent.)
+        self.flush_pending(actors, t, remote);
         let mut i = self.list.len();
         while i > 0 {
             i -= 1;
-            if self.step_one(dt, world, actors, paint, t, i, remote) {
+            if self.step_one(dt, world, actors, paint, t, w, i, remote, shields, owner) {
                 self.list.swap_remove(i);
             }
         }
     }
 
-    /// JS `Projectiles._step(p, dt)` for `type === 'shot'`. True = despawn.
+    /// JS `tick` PEND flush (brolly.js L477-481): a merged pellet hit whose
+    /// window elapsed lands as one `applyHit` on its victim. A victim that
+    /// died inside the window is skipped (JS `applyHit` L1546 early return).
+    fn flush_pending(&mut self, actors: &mut [Actor], t: &PlayerTuning, remote: Option<&[bool]>) {
+        if self.pending.is_empty() {
+            return;
+        }
+        let due: Vec<u64> = self
+            .pending
+            .iter()
+            .filter(|(_, r)| self.time >= r.at - 1e-6)
+            .map(|(k, _)| *k)
+            .collect();
+        for key in due {
+            let Some(rec) = self.pending.remove(&key) else {
+                continue;
+            };
+            let Some(v) = actors.get(rec.victim) else {
+                continue;
+            };
+            if !v.alive || v.team == rec.team {
+                continue;
+            }
+            let (victim_slot, victim_team) = (v.slot, v.team);
+            let send = remote.is_some_and(|m| m.get(rec.victim).copied().unwrap_or(false));
+            if send {
+                self.push_event(SimEvent::HitSend {
+                    attacker_slot: rec.owner_slot,
+                    victim_slot,
+                    victim_team,
+                    team: rec.team,
+                    damage: rec.dmg,
+                });
+            } else {
+                let outcome = apply_hit(
+                    actors,
+                    rec.victim,
+                    rec.dmg,
+                    Some((rec.team, rec.owner_slot)),
+                    t,
+                );
+                self.push_event(SimEvent::Hit {
+                    attacker_slot: rec.owner_slot,
+                    victim_slot,
+                    team: rec.team,
+                    damage: rec.dmg,
+                    killed: outcome.killed,
+                });
+            }
+        }
+    }
+
+    /// JS `Projectiles._step(p, dt)` for `type === 'shot'` (plus the brolly
+    /// canopy pre-scan of `tick` step 1, brolly.js L426-438). True = despawn.
     #[allow(clippy::too_many_arguments)]
     fn step_one(
         &mut self,
@@ -997,8 +1645,11 @@ impl ProjectileSim {
         actors: &mut [Actor],
         paint: &mut PaintGrid,
         t: &PlayerTuning,
+        w: &WeaponSet,
         idx: usize,
         remote: Option<&[bool]>,
+        shields: &[Shield],
+        owner: &mut ShieldOwner,
     ) -> bool {
         // ---- integrate (JS order: gravity/drag, then position)
         {
@@ -1015,6 +1666,59 @@ impl ProjectileSim {
             p.pos += p.vel * dt;
         }
         let mut dead = false;
+
+        // ---- enemy canopy block (JS `tick` step 1, brolly.js L426-438): the
+        // swept disc is tested against the round's *actual* segment this frame
+        // — `predict` (L249-255) replays the exact integrator above, so the
+        // real prev→pos segment is equivalent. A blocked round dies on the
+        // canopy before the body behind it.
+        if !shields.is_empty() {
+            let (prev, pos, team, damage, pellet, start) = {
+                let p = &self.list[idx];
+                (p.prev, p.pos, p.team, p.damage, p.pellet, p.start)
+            };
+            for s in shields {
+                if s.team == team {
+                    continue;
+                }
+                if seg_shield(prev, pos, s).is_none() {
+                    continue;
+                }
+                // JS `projDamage(p)` (brolly.js L242-247): a brolly pellet
+                // uses the falloff measured from the segment start; anything
+                // else takes `damage || 10` (CANOPY_MUL only scales drop /
+                // slosh types, not modelled yet). The ghost `mute` does not
+                // exempt canopy damage — JS runs `hitShield` unguarded.
+                let dmg = if let Some(pm) = pellet {
+                    pm.pellet_damage(start.distance(prev))
+                } else if damage != 0.0 {
+                    damage
+                } else {
+                    10.0
+                };
+                match s.target {
+                    ShieldTarget::Held(ai) => {
+                        if let Some(k) = owner.runners.get_mut(ai).and_then(|r| r.brolly.as_mut()) {
+                            brolly::hit_kit(k, dmg, self.time, s.regrow_time);
+                        }
+                    }
+                    ShieldTarget::Launched(li) => {
+                        if let Some(c) = owner.launched.get_mut(li) {
+                            // JS `hitShield`/`breakShield` on a launched ref
+                            // (brolly.js L205/L237): hp gate, then `alive = false`.
+                            if c.hp > 0.0 && dmg > 0.0 {
+                                c.hp -= dmg;
+                                c.last_hit = self.time;
+                                if c.hp <= 0.0 {
+                                    c.alive = false;
+                                }
+                            }
+                        }
+                    }
+                }
+                return true;
+            }
+        }
         // JS wraps a ghost round's whole `_step` in `nm.mute++/--`
         // (weapons.js L1572-1574): every `paint.splat` it would make returns
         // 0 before rasterising (paint.js L470), and `damage: 0` skips
@@ -1053,8 +1757,18 @@ impl ProjectileSim {
             }
         }
         if let Some((si, at, n, r)) = body_hit {
-            let p = &self.list[idx];
-            let (owner_slot, dmg, team) = (p.owner_slot, p.damage, p.team);
+            let (owner_slot, dmg, team, blast, pellet, start, ghost) = {
+                let p = &self.list[idx];
+                (
+                    p.owner_slot,
+                    p.damage,
+                    p.team,
+                    p.blast,
+                    p.pellet,
+                    p.start,
+                    p.ghost,
+                )
+            };
             let victim_slot = actors[si].slot;
             let victim_team = actors[si].team;
             // JS `applyHit` route (weapons.js L1549-1552): a proxy victim is
@@ -1066,7 +1780,21 @@ impl ProjectileSim {
             // `ghostProjectile` L871) never reaches `applyHit`, so it neither
             // damages nor decides a hit on any victim.
             let send = remote.is_some_and(|m| m.get(si).copied().unwrap_or(false));
-            if dmg > 0.0 {
+            if let Some(pm) = pellet {
+                // JS `tick` step 2 (brolly.js L460-475): a pellet scores no
+                // core damage (`damage: 0`); the kit accumulates one merged
+                // hit per blast per victim over the falloff distance from the
+                // round's start to the hit point, landing after `MERGE` s.
+                let key = (pm.blast as u64) * 64 + (si as u64 & 63);
+                let rec = self.pending.entry(key).or_insert(PendingHit {
+                    owner_slot,
+                    team,
+                    victim: si,
+                    dmg: 0.0,
+                    at: self.time + MERGE,
+                });
+                rec.dmg += pm.pellet_damage(start.distance(at));
+            } else if dmg > 0.0 {
                 if send {
                     self.push_event(SimEvent::HitSend {
                         attacker_slot: owner_slot,
@@ -1090,15 +1818,34 @@ impl ProjectileSim {
                     });
                 }
             }
-            self.push_event(SimEvent::Impact {
-                pos: at,
-                normal: n,
-                team,
-                radius: r,
-                victim_slot: Some(victim_slot),
-                owner_slot,
-                area: 0.0,
-            });
+            if blast {
+                // JS L1610-1611: a blast suppresses the plain `weapon:impact`
+                // and detonates instead (the victim of the direct hit is
+                // excluded from its own splash, L1700).
+                self.blast_burst(
+                    at,
+                    Some(si),
+                    team,
+                    owner_slot,
+                    ghost,
+                    world,
+                    actors,
+                    paint,
+                    w,
+                    t,
+                    remote,
+                );
+            } else {
+                self.push_event(SimEvent::Impact {
+                    pos: at,
+                    normal: n,
+                    team,
+                    radius: r,
+                    victim_slot: Some(victim_slot),
+                    owner_slot,
+                    area: 0.0,
+                });
+            }
             dead = true;
         }
 
@@ -1113,9 +1860,9 @@ impl ProjectileSim {
                 // JS `_impact` non-slosh branch: splat lifted 0.14 m along the
                 // face normal, stretched along the travel direction
                 // (`stretchAmt: 0.7`), radius jittered `0.85 + random*0.3`.
-                let (rad_base, seed, team, vel) = {
+                let (rad_base, seed, team, vel, blast, owner_slot) = {
                     let p = &self.list[idx];
-                    (p.radius, p.seed, p.team, p.vel)
+                    (p.radius, p.seed, p.team, p.vel, p.blast, p.owner_slot)
                 };
                 let at = hit.point + hit.normal * 0.14;
                 let mut stretch = vel.normalize_or_zero();
@@ -1140,16 +1887,34 @@ impl ProjectileSim {
                 } else {
                     paint.splat(world, at, rad, team, &opts)
                 };
-                let owner_slot = self.list[idx].owner_slot;
-                self.push_event(SimEvent::Impact {
-                    pos: hit.point,
-                    normal: hit.normal,
-                    team,
-                    radius: rad,
-                    victim_slot: None,
-                    owner_slot,
-                    area,
-                });
+                if blast {
+                    // JS L1680/L1686: a blast suppresses the plain
+                    // `weapon:impact`; its own impact (with the under-burst
+                    // paint area) is emitted by `blast_burst`. The round's
+                    // direct splat still credits turf (JS `_credit` L1679) —
+                    // carried as a `Turf` event.
+                    if area > 0.0 {
+                        self.push_event(SimEvent::Turf {
+                            owner_slot,
+                            team,
+                            area,
+                        });
+                    }
+                    self.blast_burst(
+                        hit.point, None, team, owner_slot, ghost, world, actors, paint, w, t,
+                        remote,
+                    );
+                } else {
+                    self.push_event(SimEvent::Impact {
+                        pos: hit.point,
+                        normal: hit.normal,
+                        team,
+                        radius: rad,
+                        victim_slot: None,
+                        owner_slot,
+                        area,
+                    });
+                }
                 dead = true;
             }
         }
@@ -1209,13 +1974,128 @@ impl ProjectileSim {
         }
 
         // ---- life / sea expiry (JS `p.age > p.life`, `pos.y < waterY - 1.8`).
+        // A blast detonates on life expiry (L1641-1644); the sea only kills
+        // silently (L1645).
         if !dead {
-            let p = &self.list[idx];
-            if p.age > p.life || p.pos.y < t.water_y - 1.8 {
+            let (age, life, y, blast, at, team, owner_slot, ghost) = {
+                let p = &self.list[idx];
+                (
+                    p.age,
+                    p.life,
+                    p.pos.y,
+                    p.blast,
+                    p.pos,
+                    p.team,
+                    p.owner_slot,
+                    p.ghost,
+                )
+            };
+            if age > life {
+                if blast {
+                    self.blast_burst(
+                        at, None, team, owner_slot, ghost, world, actors, paint, w, t, remote,
+                    );
+                }
+                dead = true;
+            } else if y < t.water_y - 1.8 {
                 dead = true;
             }
         }
         dead
+    }
+
+    /// JS `Projectiles._blastBurst(p, at, direct)` (weapons.js L1689-1709).
+    /// The sim's only blast weapon is the Blaster, so the `p.burst` override
+    /// branch (L1691) collapses to `WEAPONS.blaster` defaults. `direct` is
+    /// the actor index that took the point-blank hit (excluded from the
+    /// splash, L1700); `None` for world / life-expiry detonations.
+    #[allow(clippy::too_many_arguments)]
+    fn blast_burst(
+        &mut self,
+        at: Vec3,
+        direct: Option<usize>,
+        team: usize,
+        owner_slot: usize,
+        ghost: bool,
+        world: &CollisionWorld,
+        actors: &mut [Actor],
+        paint: &mut PaintGrid,
+        w: &WeaponSet,
+        t: &PlayerTuning,
+        remote: Option<&[bool]>,
+    ) {
+        let burst_r = w.blaster.burst_radius;
+        let paint_r = w.blaster.impact_radius;
+        let splash_r = w.blaster.splash_radius;
+        let (dmax, dmin) = (w.blaster.splash_damage_max, w.blaster.splash_damage_min);
+        // JS L1695: the blast's own `weapon:impact` (normal up, burst radius).
+        // The under-burst paint area rides the event for the match's credit
+        // (JS `_credit`, L1698 — deviating from the event-less upstream route).
+        let mut area = 0.0;
+        let g = world.raycast(vec3(at.x, at.y + 0.2, at.z), -Vec3::Y, 3.5, false);
+        if g.hit {
+            // JS L1698: the seed is drawn *only* when the raycast hits; under
+            // the ghost `mute` the splat returns 0 but the draw still happens.
+            let seed = self.rng.next_f32();
+            if !ghost {
+                area = paint.splat(
+                    world,
+                    g.point + g.normal * 0.1,
+                    paint_r,
+                    team,
+                    &SplatOpts {
+                        seed,
+                        ..SplatOpts::default()
+                    },
+                );
+            }
+        }
+        self.push_event(SimEvent::Impact {
+            pos: at,
+            normal: Vec3::Y,
+            team,
+            radius: burst_r,
+            victim_slot: None,
+            owner_slot,
+            area,
+        });
+        // JS L1699-1706 splash loop: gather first (the `los` test and the
+        // damage application need disjoint borrows), then route like
+        // `applyHit` — proxies decide via `HitSend`, locals take damage.
+        let mut splash: Vec<(usize, f32)> = Vec::new();
+        for (ei, e) in actors.iter().enumerate() {
+            if e.team == team || !e.alive || Some(ei) == direct {
+                continue;
+            }
+            let c = e.pos + vec3(0.0, 0.7, 0.0);
+            let d = c.distance(at);
+            if d > splash_r || !world.los(at, c) {
+                continue;
+            }
+            splash.push((ei, lerp(dmax, dmin, d / splash_r)));
+        }
+        for (ei, dmg) in splash {
+            let (victim_slot, victim_team) = (actors[ei].slot, actors[ei].team);
+            let send = remote.is_some_and(|m| m.get(ei).copied().unwrap_or(false));
+            if send {
+                self.push_event(SimEvent::HitSend {
+                    attacker_slot: owner_slot,
+                    victim_slot,
+                    victim_team,
+                    team,
+                    damage: dmg,
+                });
+            } else {
+                let outcome = apply_hit(actors, ei, dmg, Some((team, owner_slot)), t);
+                self.push_event(SimEvent::Hit {
+                    attacker_slot: owner_slot,
+                    victim_slot,
+                    team,
+                    damage: dmg,
+                    killed: outcome.killed,
+                });
+            }
+        }
     }
 }
 
@@ -1399,3 +2279,6 @@ pub fn ballistic(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod brolly_tests;

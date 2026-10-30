@@ -381,6 +381,15 @@ impl Playback {
         self.actors.get(idx).is_some_and(|n| n.spawn_pending)
     }
 
+    /// The kit pose word of the *shown* sample (`S.ks`, netmatch.js L754) —
+    /// the input of the `netApply` call JS runs in `applyRemote` (L398).
+    /// `None` before the first ready tick (JS never reaches L398 while
+    /// `!n.ready`, L352).
+    #[must_use]
+    pub fn cur_ks(&self, idx: usize) -> Option<u32> {
+        self.actors.get(idx).filter(|n| n.ready).map(|n| n.cur.ks)
+    }
+
     /// Whether the app should draw this proxy (JS `character.root.visible`
     /// outcomes in `applyRemote` L352 / L354 / L421 / L427): hidden until
     /// the path is ready, while dead, and while a pending respawn still

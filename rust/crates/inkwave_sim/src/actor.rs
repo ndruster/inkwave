@@ -208,6 +208,16 @@ pub struct Actor {
     /// tick's `tp` slot (netmatch.js L748 `a.netTp || 0`).
     #[serde(default)]
     pub net_tp: u32,
+    /// JS `dodgeVelocity` override (actor.js L305-306): the twins' roll owns
+    /// the horizontal velocity while the dodge runs. Written by the match
+    /// each frame from the runner, applied by `step` after `horizontal`.
+    #[serde(default)]
+    pub dodge_vel: Option<Vec3>,
+    /// The dodge intercepted this frame's jump press (JS `tryDodge` →
+    /// `jumpBuffer = 0`, actor.js L310): `step` zeroes the buffer before the
+    /// jump block instead of jumping.
+    #[serde(default)]
+    pub jump_swallowed: bool,
     events: Vec<ActorEvent>,
 }
 
@@ -258,6 +268,8 @@ impl Actor {
             turf: 0.0,
             splats: 0,
             net_tp: 0,
+            dodge_vel: None,
+            jump_swallowed: false,
             events: Vec::new(),
         };
         a.reset(t);
@@ -298,6 +310,8 @@ impl Actor {
         self.squid_press_t = -1.0;
         self.fire_press_t = -1.0;
         self.time = 0.0;
+        self.dodge_vel = None;
+        self.jump_swallowed = false;
     }
 
     /// JS `spawnAt(p, yaw)`: place on the ground (settle probe) with spawn
@@ -415,6 +429,14 @@ impl Actor {
     #[must_use]
     pub fn invuln(&self) -> f32 {
         self.invuln
+    }
+
+    /// Rising edge of the jump intent this frame (JS `actor.js` L310 gates the
+    /// twins' `tryDodge` on `jumpBuffer > 0`; Task 30 uses the exact-press
+    /// frame for the match-level dodge interception).
+    #[must_use]
+    pub fn jump_edge(&self, input: &ActorInput) -> bool {
+        input.jump && !self.prev.jump
     }
 
     /// Seconds since the last hit taken (JS `this.lastDamage`); 99 when never
@@ -564,6 +586,12 @@ impl Actor {
 
         // ---- horizontal movement
         self.horizontal(dt, is_squid, on_enemy, input, t);
+        // JS L305-306: a dodge roll owns the horizontal velocity while it
+        // lasts (the twins override; the runner wrote `dodge_vel` this frame).
+        if let Some(dv) = self.dodge_vel {
+            self.vel.x = dv.x;
+            self.vel.z = dv.z;
+        }
 
         // ---- jump (buffered, with coyote time)
         self.coyote = if self.grounded {
@@ -571,6 +599,12 @@ impl Actor {
         } else {
             self.coyote - dt
         };
+        // JS L310: the dodge intercepted the jump press before the buffer
+        // could fire the jump.
+        if self.jump_swallowed {
+            self.jump_buffer = 0.0;
+            self.jump_swallowed = false;
+        }
         let mut jumped = false;
         if self.jump_buffer > 0.0 && (self.grounded || self.coyote > 0.0) {
             let mut jv = if self.submerged {

@@ -59,7 +59,7 @@
 - 修复复验：全量门禁矩阵重跑全绿（303 passed），日志 `task29-gates-20261030T103218Z.log`。
 
 ## Task 30: 主武器批一——射击类（twins/blaster/brolly）
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 29
 - **Description**:
@@ -69,6 +69,21 @@
   - `rule` TR-30.1: 每武器射速/伤害/墨耗/散布逐值断言（锚 config 行号）。
   - `rule` TR-30.2: 联网 tick 中三武器 runner 状态槽（ch/lock 等）与 JS packer 语义一致（对照 packActor L723-757）。
 - **Notes**: brolly 的伞面挡弹是弹丸系统新交互，落 `Projectiles` 钩子。
+
+### Task 30 Completion Evidence（2026-10-31）
+- **TR-30.1 ✅**：15 个固定种子逐值测试全绿（`weapon/tests.rs` 8 个 + 新建 `weapon/brolly_tests.rs` 7 个）。twins：射速 0.085/发（guard<3 补发 12 发计数）、ink 0.85/发、damage 30 击杀、散布 ground 6°/air 11°、bloom +0.25/发（D-4 硬编码）、roll 种植 turret 组（0.058/1.6°/36/0.16/13.5）、roll 链（charges 2→lockout 2.6→refill 1.4、rollInk 7、dodgeVelocity 端点 v0=3.4/(0.7·0.3) 与 (1−0.6u) 衰减）、move_speed 5.2。blaster：0.78/发、ink 9、direct 125、blast 弹字段（straight 99/grav 0/drag 0/size 0.26/life 10.5/23）、world 命中下射 raycast 3.5 喷墨 + splash `lerp(70,30,d/2.6)`+LOS+direct 排除、寿终空中爆。brolly：0.45/发、ink 5.5、11 丸锥（PATTERN 半径 0/0.42/0.9、y×0.72、rng 消耗序）、pelletDamage 8→2.5@2.8→6.5（端点/中点/钳制）、canopy 时序（openDelay 0.12/openTime 0.14/closeTime 0.1/launchHold 0.9/regrowTime 5/regen 60@2s）、held 伞挡弹扣血→破伞→重长、发射伞 0.32 m 喷墨条 + blockActors 推挤（shoving 0.6 减速）+ 双高挡墙 + 入海死亡 + 重力 24、同 blast 同 victim 合并 ≤1 个 `Hit`、kit 惰性初始化。workspace **321 passed**（303→321：+15 TR-30.1、+3 TR-30.2）。
+- **TR-30.2 ✅**：`net/replication.rs` 三测试全绿——① `tr30_2_pack_slots_three_loadouts`：twins/blaster/brolly 三 loadout 的 `ch`(s[14] streaming?burstFrac:charge)/`lock`(s[20] lockT，D-5 恒 0)/`ks`(s[21] brolly 位包、其余 0) 逐槽对 JS packActor L723-751 手算断言（位包期望值 16380/16320/15868/131008 评审复核正确）；② `tr30_2_kit_record_ghost_blocks_local_shots`：JS→Rust 收 `['k',nid,'brolly',[x,y,z,dx,dz,hp,h0]]` 生 ghost 伞（`addLaunched(ghost=true)`：挡本地弹、不喷墨，JS mute L490 语义）；③ `tr30_2_brolly_pose_converges_rust_to_rust`：伞状态经 ks 槽 pack→unpack→`net_apply_brolly`（JS netApply L642-649/applyRemote L398）逐 tick 收敛一致。
+- **架构落地（spec §1–§4）**：`weapon.rs`——`RoundSpec.trail_start` 三式并存（shooter `-(2.5−every)`/twins `-(2.4−every)`/blaster −1.5）、`Projectile.blast/pellet(PelletMark)`（serde default 向后兼容）、`is_wired`=Shooter|Twins|Blaster|Brolly、update 分发臂（Blaster→auto_fire、Twins→twins、Brolly→brolly::update）、`fire_blaster`/`fire_twin`（fallback muzzle 镜像+LOS 回退）、`try_dodge`/`dodge_velocity`、`step_one` 伞面 shield 扫掠（predict L249-255 drag 仅 straight 后）+ `_blastBurst` + pellet pending 合并（BTreeMap 确定性、MERGE=1/30 D-6）、`move_speed`/`spread_deg` Brolly 臂、访问器 `charge/lock_t/streaming/burst_frac/brolly_net_state/net_apply_brolly`。新建 `weapon/brolly.rs`（686 行）——BrollyKit 全字段、update 开合/tap-blast/launch 触发、fire_blast 11 丸锥、LaunchedCanopy 滑行/挡人/喷墨/fade、伞维护（idle 折叠/regrow/grow/regen）、held_shield 成盾条件与帧间快照。`actor.rs`——`dodge_vel`（integrate 水平段后覆盖，actor.js L305-306）+`jump_swallowed`+`jump_edge`。`match_.rs`——`kinds`/`launched`/`kit_out` 平行注册表、dodge 拦截帧序、shield 装配、runner 分发读 `kinds[i]`。`net/matchbuild.rs`——roster.weapon→`WeaponKind::from_kind_str`（未知/retired 回退 Shooter）。`net.rs`——`ActorSample::from_actor` 增 kind 参（ch/lock/ks 实值化）、`SimEvent::Kit`；`net/replication.rs`——`kit_out`→`['k']` 记录（owner 且非 remote 守卫）、播放侧 `net_apply_brolly` + ghost 伞；wire `['k']` 编解码沿用 M1 占位形态（recKit L134-137 逐字节）。
+- **门禁**：全量九段矩阵全 exit 0，日志 `rust/tools/verify/logs/task30-gates-20261030T171102Z.log`（fmt/clippy/test/wasm32/cargo tree/trunk release/headless 600 帧/JS 树零改动；workspace 321 passed > 303 基线单调递增；`cargo tree -p inkwave_sim` 仅 glam/serde/serde_json）。
+
+### Task 30 Review 附录（独立评审：0 P0 / 0 P1 / 6 P2 → 全部为 spec 批准偏差或不可实际触发边界，无需修复 → 结论 PASS）
+- 评审员实核通过：twins 交替手/roll 链/turret 组/dodgeVelocity 逐值；blaster `_auto` 同路/blast 字段/下射 raycast/splash 公式/burstRadius 1.9；brolly 11 丸锥 rng 消耗序/pellet falloff/canopy 时序/破伞 regrow/launch 0.32 m 条+shoving 0.6+双高挡墙+水死+重力 24；ks 位包与 netState L636-641 逐位一致、`['k']` 形态与 recKit 一致、TR-30.2 手算值复核正确、旧 fixture serde default 兼容；twins `move_h`=`intent.move` 原始世界输入（JS L493 ✓）、dodge 用原始 fire/twins 用 gated fire 两路区分（L493/L532 ✓）、dodge_velocity→try_dodge→a.step 时序对齐 actor.js L305-310 ✓；BTreeMap 键序确定 ✓；ghost 伞不喷墨但消耗 rng、挡弹扣伞血与 JS mute/pre-scan 一致 ✓；tuning 逐值对 config 一致、生产代码无手抄（blaster 1.2/4.0 为 D-3 批准例外）；JS 树/server/ 零改动、sim 依赖面不变。
+- **P2-1（注记，不改）** `flush_pending` 置于 step_masked 顶部 vs JS tick 侧累积：同 blast+victim 第二丸恰在到期帧到达时 Rust 拆两击——同 blast 丸到达差 <1 帧而窗口 2 帧，几乎不可触发。
+- **P2-2（注记，不改）** `blockActors` 在 step_masked 后 vs JS 核心弹步前：被推玩家该帧受弹用推前位置，1 帧差。
+- **P2-3（批准）** `jump_edge` 精确按下帧 vs JS jumpBuffer 窗口——spec §3 明文批准且代码注释自报。
+- **P2-4（注记，不改）** `seg_shield` 多 `a==0.0` 分支：弹恰在旧帧盾面时 JS 挡/Rust 穿（浮点相等概率极低）。
+- **P2-5（Task 31 后移除）** `net-harness/match_e2e.rs` test-only shim 强制 bot kinds 回 Shooter（seed 77 抽到未实现武器致 e2e 零喷墨）——与 D-2「bot 驾驶仍 Spritzer、Task 39 接档位武器」一致，不掩盖生产 bug（生产 matchbuild 对未 wired kind 保留 kind、update 臂 no-op）。
+- **P2-6（注记，不改）** `CANOPY_MUL` drop/slosh 弹种未建模（本任务无此弹种，代码注释已标）。
 
 ## Task 31: 主武器批二——蓄力与流类（charger/spinner/bucket）
 - **Status**: `pending`

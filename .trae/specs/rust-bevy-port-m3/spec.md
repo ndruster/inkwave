@@ -23,7 +23,7 @@
 
 ## Non-Goals（M3 明确不做）
 - **视觉/音频完整度**：角色弹簧绑定（character.js 4062 行）、后处理链（GTAO/bloom/grade/SMAA/tilt-shift）、ink 湿润/光泽、黄昏/海况环境、过程化音效（audio.js 2505 行）、音乐、FX 完整移植、小地图、showcase 大厅——全部顺延 M4。新武器/副/特殊的**呈现**用 M1 风格体块/占位档（仅保证可辨识：弹道、zone 边界、特殊外形轮廓）。
-- **kit 系统**：`['k']` 事件（recKit L134-137 / case L486）、s[21] `ks` 槽维持恒 0；Rust 收帧**解码容忍**（忽略不报错），不产生。
+- **kit 系统**：`['k']` 事件（recKit L134-137 / case L486）、s[21] `ks` 槽维持恒 0；Rust 收帧**解码容忍**（忽略不报错），不产生。**Task 30 修订（待批准）**：brolly 为 12 主武器（G-1/AC-M3-1 范围）且其伞面是挡弹实体，跨端不对等会直接破坏对局——例外放开两条：① s[21] `ks` 对 `kind==='brolly'` 实值化（`kits/brolly.js` netState L636-641 位包 / netApply L642-649 解包，其余 kind 仍恒 0）；② `['k', nid, 'brolly', [x,y,z,dx,dz,hp,h0]]` 发射伞记录（netRec brolly.js L266 / ghost L650-653）Rust 产生并消费；`['k']` 其余 kind（`sp`/`subs`/`waddle` 等）维持解码容忍不产生。fixture 金标准扩展并入 Task 36。
 - **Boss 战**：`['bm']`/`['bc']`（L494/L496）解码容忍不处理；`mode:'boss'` 仍拒绝。
 - 不移植 retired 武器 dualies/slosher/splatling（config.js L265-305：已从 roster 退役，仅存档兼容；Rust 无存档包袱）。
 - 不改 `server/`、不改 `src/`、`tools/`、`docs/` 上游树（fixture 扩展脚本仍放 `rust/tools/`）。
@@ -135,3 +135,65 @@
 - [ ] 新地图最终选图：推荐 saltpan + crossmarket（layout 最小、均有 zones-data、无水面特殊机制）——若用户想验水面/高低差可换 kelpline（250 行 + 水面）。Task 37 实施前确认。
 - [ ] mitts 的 leap/wall cling 对 actor 状态机（`inkwave_sim::actor`）的扩展幅度——Task 33 实施时定，若需改物理则记 PORT_MAP 偏差。
 - [ ] 特殊武器 netGhost 远端呈现的占位档粒度（轮廓体块 vs 完全省略仅特效）——Task 35 实施时定。
+
+---
+
+# Task 30 实施设计（决策完备，2026-10-30）
+
+> 上游事实源（全部已实读核线）：`src/game/weapons.js`（`_auto` L165-182、`_twins` L489-517、`_twinDodge` L529-548、`dodgeVelocity` L550-555、`tryDodge` L522-527、`fireBlaster` L1173-1192、`fireTwin` L1356-1392、`fireCustom` L1198-1213、`_step` L1583-1648、`_blastBurst` L1689-1709）；`src/game/kits/brolly.js`（fireBlast L79-119、update L122-159、shields L166-255、launch/addLaunched/updateLaunched L258-367、blockActors L369-386、tick L390-485、blockShot/blockRay L493-520、netState/netApply/ghost L635-653、钩子表 L657-670）；`src/game/kits/brolly-model.js` L20-26（`RIM_R=0.7`、`TH=52°`、`DEPTH=RS(1−cos TH)≈0.3414`）；`src/game/actor.js` L305-313（dodgeVelocity 覆盖 + tryDodge 吞 jump）；`src/config.js` L126-135/L158-167/L180-198；`src/net/netmatch.js` packActor L723-751 / recKit L134-137。
+
+## 0. 决策记录
+- **D-1 spec 修订（见 Non-Goals L26）**：brolly 的 `ks` 槽与 `['k','brolly',…]` 发射伞记录实值化 + 产生/消费；其余 kit 语义不变。
+- **D-2 per-actor loadout**：`Match` 增 `pub kinds: Vec<WeaponKind>`（与 actors/runners 平行）；`Match::new` 默认全 `Shooter`；`build_net_match` 按 `RosterEntry.weapon` 经 `WeaponKind::from_kind_str` 映射（未知/retired 回退 `Shooter`，对齐 spec Assumptions L131）；`match_.rs` L502 硬编码 Shooter 改为 `self.kinds[i]`。bot 驾驶仍 `&Spritzer`（Task 39 接档位武器）。
+- **D-3 散布默认**：blaster 维持 `1.2/4.0` 硬编码（config L126-135 确无 spread 字段，Task 29 P2-5 注记闭环）。
+- **D-4 twins 的 `bloom += 0.25`**：JS L511 硬编码（非 `bloomPerShot`），twins 分支用 0.25。
+- **D-5 twins 闪避不出现在 F 位**：JS packActor 的 `F.dodge` 读 `wr.dodge`（dualies 对象），twins 只动 `dodgeT/rollLock`，均不入 s[20]（`lockT` 是 dualies 字段）——Rust 逐字保持：twins 局 `lock` 槽恒 0、`F.dodge` 恒 0。
+- **D-6 合并窗口**：brolly 弹丸 (blast,victim) 合并用 `ProjectileSim` 新增 `time`（`step` 累加 dt）+ `pending` 表，`MERGE=1/30`（L389）；跨端 hit 判定仍走既有 `Hit/HitSend` 路由。
+- **D-7 呈现字段**：`flash/shake/vis/tail*/wob/nose/sats` 等 GPU 字段继续丢弃；`brolly:break/launch` 的 FX emit 不产生 sim 事件。
+
+## 1. weapon.rs（核心改动）
+- `RoundSpec` 增 `trail_start: f32`（JS 三式并存：shooter `-(2.5−every)` L1034、twins `-(2.4−every)` L1381、blaster 固定 `-1.5` L1178）；`fire_round` 改读 `spec.trail_start`。
+- `Projectile` 增（serde default，向后兼容旧 fixture）：`blast: bool`、`pellet: Option<PelletMark>`；`PelletMark { blast: u32, falloff_start: f32, falloff_end: f32, dmg_near: f32, dmg_far: f32 }`（命中时按 `start.distanceTo(hit)` 走 `pelletDamage` L64-68，damage=0 的 JS 语义由合并器负责，不再依赖 kit 侧计分）。
+- `WeaponKind::is_wired` → `Shooter | Twins | Blaster | Brolly`。
+- `update` 分发臂：`Blaster => self.auto_fire(...)`（L118 与 shooter 同路）；`Twins => self.twins(...)`（L123）；`Brolly => brolly::update(self, ...)`（L128 `MAIN_KITS[kind].update`）。
+- `auto_fire`：`(interval, ink)` 匹配臂加 `Blaster => (w.blaster.fire_interval, w.blaster.ink_per_shot)`；`fire_kind_round` 加 `Blaster => projectiles.fire_blaster(actor, &w.blaster, self.spread, aim_point)`。
+- `fire_blaster`：`RoundSpec{ proj_speed 23, straight_time 99, range 10.5, grav 0, drag 0, size 0.26, life = range/proj_speed, impact_radius 1.5, damage = direct_damage, trail_start -1.5, trail_every 2.2, trail_radius 0.45 }` + `blast=true`（config L126-135 驱动，禁手抄）。
+- `twins` 分支（L489-517 逐行）：`roll_lock/since_roll/rolls_used/roll_queued/twin_side/since_hand` 新字段（`since_hand` 初值 `[99,99]`、`since_roll` 初值 9、`twin_side` 初值 1，JS reset L48-51）；`since_hand += dt` 移入公共段（JS L116）；turret 取消（`!fire || |move|>0.3`，move 来自 `Actor` 本帧 intent——`update` 增参 `move_h: f32`）；dodgeT 递减/链式 rollQueued；开火循环 guard<3、`bloom+0.25`、`twinSide=-twinSide`、`fire_twin(side = turret?0:twinSide)`、`cooldown += turret?turret_interval:fire_interval`。
+- `try_dodge(&mut self, kind, a, move_dir, fire) -> bool`（L529-548）+ `dodge_velocity(&self, kind) -> Option<Vec3>`（L550-555）：`v0=roll_dist/(0.7·roll_time)`、`v=v0(1−0.6u)`。
+- `fire_twin`（L1356-1392 的 fallback muzzle 分支 L1360-1373，sim 无 rig）：镜像 muzzle `_v4` 计算 + `los` 回退；`speed/straight/range = side ? (proj_speed, straight_time, range) : (turret_proj_speed, turret_straight, turret_range)`；`size 0.13, life 1.2, grav 28, drag 0.8, trail_start -(2.4−trail_every)`。
+- `step_one`：① 伞面挡弹钩子置于 body 扫描前——`shields: &[Shield]` 参数（`Shield{ team, c, n, r, cp, np, hp_mut_key }`），`predict`（L249-255：drag 仅 straight 后）+ `seg_shield` 扫掠（L195-200），命中 → canopy 扣 `proj_damage`（L242-247：pellet→falloff(行程)；`CANOPY_MUL{drop:.25}` 其余 ×1；sim 暂无 drop/slosh 弹种）→ 弹丸 `dead` 且不 emit Impact；② `blast` 弹：body/world/life 三类死亡都走 `_blastBurst`（L1689-1709：burst 落点下 raycast 3.5 喷墨 `impact_radius`、splash 敌 `lerp(splash_damage_max, min, d/splash_radius)` LOS 检查、direct 命中者跳过；emit `Impact{kind blast, radius burst_radius}`）；③ `pellet` body 命中 → 写 `pending[(blast, victim_slot)]` 合并（1/30 s），到期一次性 `apply_hit` + `Hit/HitSend`，弹丸即死。
+- `move_speed`：`Brolly` 臂接 kit 语义（L664：`open>0.2 → move_speed_shield`，否则落尾链 `firing_t>0 ? move_speed_firing : run`）。
+- `spread_deg`：`Brolly => grounded ? w.brolly.spread_deg : w.brolly.spread_air`（L665）。
+- 访问器（TR-30.2）：`charge()`、`lock_t()`（dualies 字段，保持 scaffold 语义）、`streaming()/burst_frac()`（Task 31 前恒 false/0，字段补齐）、`brolly_net_state() -> u32`（L636-641 位包）与 `net_apply_brolly(bits)`（L642-649：hp 降幅→flash 语义丢弃，仅 state/hp/open/grow/regrowK 重建）。
+
+## 2. weapon/brolly.rs（新文件）
+- `BrollyKit`：`hp/hp_max/state(Ready|Broken|Launched)/regrow_t/regrow_k/grow/open/opening/want/press_t/open_t/launch_k/shot/prev_fire/lock_release/last_hit`（L52-57，呈现字段删）；`WeaponRunner.brolly: Option<Box<BrollyKit>>` 惰性 `kit_of`。
+- `update`（L122-159）：`botHold` 分支删（bot 不持 brolly，Task 39）；tap-blast 条件 `!shot && cooldown<=0 && open<0.05 && press_t<=open_delay+0.06`；`want = press_t>=open_delay`；开合 `openTime/closeTime`；`open>=1 && want → open_t += dt ≥ launch_hold → launch`。
+- `fire_blast`（L79-119）：空墨 `_empty + cooldown=max(cd,0.2)`；`PATTERN` 11 点（1 心 + 4×0.42@i/4·2π+0.4 + 6×0.9@i/6·2π）；`cone=tan(spread)`、`turn=rng·2π`、抖动 `±0.09`、`oy×0.72`；每丸 `fire_round`（`speed·(0.985+rng·0.03)`、`radius=pellet_paint·(0.85+rng·0.3)`、`trail_every 0`、`pellet=Some(PelletMark{blast=SEQ++…})`、damage 0）。
+- `launch`（L258-273）：落点 raycast（`pos+dir·0.9, +1.2` 下 3.5）；`hp=max(k.hp, canopy_hp·0.5)`；`h0=eye+0.9−pos.y`；产出 `SimEvent::Kit{nid, 'brolly', [x,y,z,dx,dz,hp,h0]}`（r2/r3 量化同 JS）；`state=Launched, regrow_t=regrow_time, lock_release=true`。
+- `LaunchedCanopy`（L276-367）：`Match.launched: Vec<…>`；slide `launch_speed·(shoving?0.6:1)·min(1,0.35+t·3)`、双高 raycast 挡墙（0.3/1.0，`0.12+step`）、地面跟随/重力 24/入海 `waterY−0.4` 死亡、每 0.32 m `splat(launch_paint, stretch=dir)` + `Turf` 事件、`launch_life` 后 fade 0.45/0.18（hp≤0）移除；`block_actos`（L369-386：敌队推挤 `PLAYER.radius+0.18`、`|across|<rr` 推出、法向速度清零、`shoving` 标记）；盾盘 `C=pos+(LAUNCH_H+(h0−LAUNCH_H)·max(0,1−t/0.22))·ŷ + dir·(−DEPTH/2)`、`N=dir`、`R=0.8`。
+- 伞维护（tick L393-412）：idle 折叠（`!alive || form!=kid`）；`state!=ready` → regrow 递减→`Ready, hp=hp_max, grow=0.001`；`ready` → `grow += dt/0.32`、`open<=0 && time−last_hit>canopy_regen_delay → hp += canopy_regen·dt`；`hit_shield`（L203-222：hp 扣减、`last_hit=time`、hp≤0→`break_shield` L223-239：`state=Broken, regrow_t, lock_release=true`）。
+- `held_shield`（L172-177/L184）：`alive && kid && Ready && open>=0.55 && grow>=0.9` 才成盾；`N=(sin yaw·cos p, sin p, cos yaw·cos p)`、`p=clamp(aim_pitch,−0.5,0.45)`、`C=visual_pos+0.9ŷ+N·0.62`、`R=0.8`；`Cp/Np` 帧间快照（`prev/now` 扫掠 L193-200）。
+- `block_shot(prev,pos,team,dmg) -> bool`（L493-503，供 Task 31 charger 激光与副武器复用；本任务由 step_one 内联扫掠覆盖）。
+
+## 3. actor.rs（最小扩展）
+- `Actor` 增 `pub dodge_vel: Option<Vec3>`（`integrate` 的水平段后覆盖 `vel.xz`，镜像 actor.js L305-306）与 `pub jump_swallowed: bool`（step 顶部消费并清）；`pub fn jump_edge(&self, input) -> bool`（`input.jump && !self.prev.jump`）。
+- `Match::step` 在 `a.step` 前：`if a.jump_edge && !squid && r.try_dodge(kind, a, move, gate.fire) { a.jump_swallowed = true }`；每帧 `a.dodge_vel = r.dodge_velocity(kind)`（仅 Twins kind；brolly/其余 None）。既有直接 `Actor::step` 测试零回归（字段默认 None/false）。
+
+## 4. net 层（TR-30.2）
+- `ActorSample::from_actor` 增 `kind: WeaponKind` 参：`ch = wr.charge()`（`streaming` 前等价 JS L748）、`lock = wr.lock_t()`、`ks = (kind==Brolly).then(wr.brolly_net_state(), 0)`；调用点 replication.rs L889/L2203/L2214 与 wire 测试同步。
+- 播放侧：proxy actor 的 tick 应用时 `kind==Brolly → wr.net_apply_brolly(ks)`（JS netApply L642-649），使远端伞在本机 `refreshShields` 等价物中成盾挡本地弹；`['k'] brolly` 事件 → `addLaunched(ghost=true)`（JS ghost L650-653：ghost 伞滑行挡弹挡人、不喷墨——`mute` 语义即 `ghost` 弹丸既有规则）。
+- `SimEvent::Kit { nid, kind: String, data: Vec<f32> }` 新变体 + `wire.rs` `['k']` 编解码（recKit L136 形态 `['k',nid,kind,data]`；既有解码容忍路径保留，未知 kind 忽略）。
+
+## 5. 测试（workspace 总数 > 303）
+- **TR-30.1**（`weapon/tests.rs` + `weapon/brolly_tests.rs`，固定种子）：
+  - twins：射速 0.085/发（guard<3 补发）、`ink 0.85/发`、damage 30、散布 ground 6°/air 11°/bloom 系数 `lerp(0.5,1,bloom)`、bloom +0.25/发、turret 态（roll 结束仍按火→`turretInterval 0.058/turretSpread 1.6/turretProjSpeed 36/turretStraight 0.16/turretRange 13.5`）、roll 链（`rollInk 7/rollTime 0.3/rollDist 3.4/rollCharges 2/rollLockout 2.6/rollReset 1.4`，`dodgeVelocity` 端点值）、`move_speed` 5.2。
+  - blaster：0.78/发、ink 9、direct 125、blast 弹字段（straight 99/grav 0/drag 0/size 0.26/life 10.5/23）、burst：world 命中喷墨 + splash `lerp(70,30,d/2.6)` 逐值、寿终空中爆。
+  - brolly：0.45/发、ink 5.5、11 丸锥（PATTERN 半径 0/0.42/0.9、y×0.72）、`pelletDamage 8→2.5@2.8→6.5`、canopy 时序（openDelay 0.12/openTime 0.14/closeTime 0.1/launchHold 0.9/regrowTime 5/regen 60@2s）、伞挡弹扣血/破伞/重长、发射伞滑行 0.32 m 喷墨条 + 挡人、合并一击（同 blast 同 victim ≤1 个 `Hit`）。
+- **TR-30.2**：三武器 loadout 无头联网 tick：`from_actor` 的 ch/lock/ks 逐槽对 JS packActor 语义断言（twins/blaster ks=0、brolly ks 位包=手算期望、lock 恒 0、F 位无 dodge）；JS→Rust 收 `['k'] brolly` 生 ghost 伞且挡本地弹；Rust→Rust 伞状态经 ks 收敛一致。
+- 回归：TR-29.2 四组 + M1 武器测试不破（`trail_start` 重构后 shooter 逐值同前）。
+
+## 6. 门禁与落盘
+- 全量九段矩阵（`rust/tools/verify/logs/task30-gates-<UTC>.log`）；`cargo tree` 依赖面不变；JS 树/`server/` 零改动；测试总数 > 303。
+- `tasks.md` Task 30 段：Status completed + Completion Evidence + Review 附录；`PORT_MAP.md` 行更新；ndruster 身份提交（不 push）。
+
