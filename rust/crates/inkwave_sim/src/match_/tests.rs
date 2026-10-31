@@ -415,7 +415,10 @@ fn water_death_inherits_recent_attacker() {
         }
     }
     // Hit actor 4 (non-lethal), then drown it while `lastDamage < 4`.
-    assert!(!m.actors[4].damage(30.0, Some((0, 1)), t), "non-lethal hit");
+    assert!(
+        !m.actors[4].damage(30.0, Some((0, 1)), None, t),
+        "non-lethal hit"
+    );
     m.actors[4].pos = vec3(100.0, -2.0, 0.0);
     m.actors[4].vel = Vec3::ZERO;
     m.step(DT, &idle, &sim, t, w);

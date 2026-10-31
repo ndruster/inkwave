@@ -37,14 +37,14 @@ M1 渲染为**固定简化档**，唯一运行时可调项：
 |---|---|---|---|
 | `src/config.js`（PLAYER/WEAPONS/MATCH/SUBS/...） | `inkwave_sim::tuning` + `assets/tuning.json` | M1 | 仅提取 M1 所需字段；其余武器随里程碑扩充 |
 | `src/game/physics.js` | `inkwave_sim::physics` | M1 | 地面探测/胶囊 sweep/推出 |
-| `src/game/actor.js` | `inkwave_sim::actor` | M1 | 角色状态机；移动常量逐一对齐 PLAYER |
+| `src/game/actor.js` | `inkwave_sim::actor` | M1/Task 33 | 角色状态机；移动常量逐一对齐 PLAYER；Task 33 扩展 `Form::Cling/Hang` 贴墙态 + `KitArmor` 每帧快照（mitts guard 弧/leap 甲，JS `damageTaken` L883-903）；偏差声明：`busy()` 未接 squid dive（L282）/idle refill（L358）——`Actor::step` 无 runner 句柄，12 武器共性，留 follow-up |
 | `src/game/player.js` | `inkwave` crate 输入映射 + actor 驱动 | M1 | 键盘鼠标；手柄 M2+ |
-| `src/game/weapons.js`（WeaponRunner 分发 + Spritzer 分支） | `inkwave_sim::weapon` | M1/Tasks 29–32 | kind 枚举/分发骨架与弹丸泛化（Task 29）；twins/blaster/brolly 接线完成（Task 30，brolly 行为在 `kits/brolly.js`→`weapon/brolly.rs`，含伞挡弹/发射伞/合并一击）；charger hitscan+蓄力、spinner burst 流、bucket flick windup+抛洒弧 volley 接线完成（Task 31，含 `['ev']` charge/len、F.charging/F.flick、volley 穿透/belowFalloff）；roller 滚动带墨+flick 抛墨、brush 拖墨细线+侧扫泼溅接线完成，blade kit 行为在 `kits/blade.js`→`weapon/blade.rs`（Task 32，tap 新月/重击波/近战弧/ghost 波经 `SimEvent::Kit`→`TickEvent::Kit` 闭环）；其余 2 把 Task 33 |
+| `src/game/weapons.js`（WeaponRunner 分发 + Spritzer 分支） | `inkwave_sim::weapon` | M1/Tasks 29–32 | kind 枚举/分发骨架与弹丸泛化（Task 29）；twins/blaster/brolly 接线完成（Task 30，brolly 行为在 `kits/brolly.js`→`weapon/brolly.rs`，含伞挡弹/发射伞/合并一击）；charger hitscan+蓄力、spinner burst 流、bucket flick windup+抛洒弧 volley 接线完成（Task 31，含 `['ev']` charge/len、F.charging/F.flick、volley 穿透/belowFalloff）；roller 滚动带墨+flick 抛墨、brush 拖墨细线+侧扫泼溅接线完成，blade kit 行为在 `kits/blade.js`→`weapon/blade.rs`（Task 32，tap 新月/重击波/近战弧/ghost 波经 `SimEvent::Kit`→`TickEvent::Kit` 闭环）；bow/mitts kit 行为在 `kits/bow.js`→`weapon/bow.rs`、`kits/mitts.js`→`weapon/mitts.rs`（Task 33，12 把主武器全部 wired，net-harness Task 30 bot-kind shim 已移除） |
 | `src/game/match.js` | `inkwave_sim::match` | M1 | intro/active/end；涂地计分；zones M2+ |
 | `src/game/zones.js` | `inkwave_sim::match::zones` | M2+ | Zone Control 规则 |
 | `src/game/bots.js`（easy 参数） | `inkwave_sim::bot` | M1 | 仅 easy；normal/hard M2+ |
 | `src/game/nav.js` | `inkwave_sim::nav` | M1 | 顶面连通航点图的简化实现 |
-| `src/game/specials.js` / `subs.js` / `kits/*` | `inkwave_sim::weapon::{sub,special,kit}` | M2+ | 15 副 + 19 特殊 + kit 武器（`kits/blade.js` 已随 Task 32 落 `weapon/blade.rs`，`kits/brolly.js` 已随 Task 30 落 `weapon/brolly.rs`） |
+| `src/game/specials.js` / `subs.js` / `kits/*` | `inkwave_sim::weapon::{sub,special,kit}` | M2+ | 15 副 + 19 特殊 + kit 武器（`kits/brolly.js` 已随 Task 30 落 `weapon/brolly.rs`，`kits/blade.js` 已随 Task 32 落 `weapon/blade.rs`，`kits/bow.js`/`kits/mitts.js` 已随 Task 33 落 `weapon/bow.rs`/`weapon/mitts.rs`；余 subs/specials 随 Task 34/35） |
 | `src/game/cameraRig.js` | `inkwave::camera` | M1 | 简化第三人称；tilt-shift diorama M2+ |
 | `src/game/minimap.js` | `inkwave::ui::minimap` | M2+ | M1 HUD 只显百分比 |
 | `src/game/character.js`（4062 行，弹簧姿态系统） | `inkwave::render::character` | M1（占位） | M1 体块占位；完整过程化绑定 M2+ |

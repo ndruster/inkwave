@@ -918,20 +918,6 @@ fn build_side(
     let host = s.host_id().expect("host_id").to_string();
     let seed = fnv1a(&cfg.id);
     let mut m = build_net_match(cfg, seed, sim, tp, &tuning.match_config);
-    // Task 30 shim (test-only, remove after Task 33): bot loadouts now ride
-    // the real roster kinds (spec D-2), but five of the twelve weapons
-    // (roller/brush/bow/blade/mitts) are still Task 32/33 scaffolds that
-    // never fire — and the bot driver keeps aiming with the Spritzer until
-    // Task 39 (spec D-2 note). Left as drawn, a seed whose bots all pick up
-    // unimplemented weapons settles a 0%-turf match and breaks the "the
-    // bots actually painted turf" gate (e.g. seed 77). Force the bot slots
-    // back to the Spritzer here, identically on every side, so the harness
-    // keeps testing what it was built to test.
-    for (i, e) in cfg.roster.iter().enumerate() {
-        if e.bot {
-            m.kinds[i] = inkwave_sim::weapon::WeaponKind::Shooter;
-        }
-    }
     let mut r = Replication::new(cfg, &my, &host);
     r.bind_match(&mut m);
     for (i, e) in cfg.roster.iter().enumerate() {

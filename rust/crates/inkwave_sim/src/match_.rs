@@ -69,6 +69,7 @@ use crate::weapon::{
     FoeScan, ProjectileSim, Rng, Shield, ShieldOwner, ShieldTarget, SimEvent, WeaponKind,
     WeaponRunner,
 };
+use crate::weapon::{bow, mitts};
 use glam::{Vec3, vec3};
 
 /// JS intro length (match.js L193: `stateT > 4.2`).
@@ -233,6 +234,12 @@ pub struct Match {
     /// Blade ink waves (JS `WAVES` world list, blade.js L245): advanced every
     /// frame right after the launched canopies (kit `tick` order, Task 32 §6).
     pub waves: Vec<BladeWave>,
+    /// Bow arrows (JS `ARROWS` world list, bow.js L68): flying + lodged,
+    /// advanced right after the waves (kit `tick` order, Task 33 §5).
+    pub arrows: Vec<bow::BowArrow>,
+    /// Mitts fists (JS `FISTS` world list, mitts.js L140): advanced right
+    /// after the arrows (kit `tick` order, Task 33 §5).
+    pub fists: Vec<mitts::MittsFist>,
     /// Kit spawns produced this frame, waiting for the replication layer to
     /// record them onto the outgoing timeline (JS `recKit`, Task 30 §4).
     /// Drained every frame by `Replicator::update`; cleared at the top of
@@ -312,6 +319,8 @@ impl Match {
             kinds: vec![WeaponKind::Shooter; team_size * 2],
             launched: Vec::new(),
             waves: Vec::new(),
+            arrows: Vec::new(),
+            fists: Vec::new(),
             kit_out: Vec::new(),
             paint: PaintGrid::new(world.collision),
             projectiles: ProjectileSim::new(seed),
@@ -402,6 +411,8 @@ impl Match {
         // match; the runner kits are released by `r.reset()` below.
         self.launched.clear();
         self.waves.clear();
+        self.arrows.clear();
+        self.fists.clear();
         self.kit_out.clear();
         for (a, r) in self.actors.iter_mut().zip(self.runners.iter_mut()) {
             r.reset();
@@ -537,13 +548,26 @@ impl Match {
             {
                 self.actors[i].jump_swallowed = true;
             }
+            // JS `actor.js` L313: the mitts jump hook creates its kit
+            // lazily (`K(r)`, mitts.js L48-67) — ensure it before the step
+            // so the first jump press of a fresh mitts kid is handled.
+            if self.kinds[i] == WeaponKind::Mitts {
+                self.runners[i].ensure_mitts(w);
+            }
             let a = &mut self.actors[i];
             // Respawn gating (see module docs): hold dead timers above the
             // step while the phase does not allow respawning.
             if !a.alive && !can_respawn && a.respawn_timer <= dt {
                 a.respawn_timer = dt * 1.5;
             }
-            a.step(dt, &inp, world, &self.paint, t);
+            a.step(
+                dt,
+                &inp,
+                world,
+                &self.paint,
+                t,
+                self.runners[i].mitts.as_deref_mut(),
+            );
             // Intro confinement (spec TR-8.2; deviation — see module docs).
             if intro && a.alive {
                 confine_to_own_pad(a, world);
@@ -599,6 +623,9 @@ impl Match {
                 remote,
                 inp.fire,
                 ps_time,
+                &mut self.arrows,
+                &mut self.fists,
+                inp.jump,
             );
             // A brolly launch this frame joins the world canopy list (JS
             // `addLaunched` → `LAUNCHED.push`, brolly.js L285).
@@ -702,6 +729,64 @@ impl Match {
             );
             if !keep {
                 self.waves.remove(wi);
+            }
+        }
+
+        // JS `MAIN_KITS.bow.tick` L514-519 (Task 33 §5): a draw left hanging
+        // (the runner stopped updating — death, a special, Task 35) is
+        // cancelled quietly before the arrows advance.
+        let ps_time = self.projectiles.time;
+        for r in self.runners.iter_mut() {
+            bow::sweep_stalled_draw(r, ps_time);
+        }
+
+        // JS `updateArrows` (bow.js L175-264, `tick` L520): arrows advance
+        // right after the waves, reverse order (spent ones spliced out).
+        // Turf / hits / impacts ride the projectile event queue, drained
+        // below like every other splat credit.
+        let mut ai = self.arrows.len();
+        while ai > 0 {
+            ai -= 1;
+            let keep = bow::BowArrow::step(
+                &mut self.arrows[ai],
+                dt,
+                world.collision,
+                &mut self.paint,
+                &w.bow,
+                t,
+                &mut self.projectiles,
+                &mut self.actors,
+                remote,
+            );
+            if !keep {
+                // JS `kill(i)` (bow.js L71): swap-remove — the reverse
+                // loop never re-steps the swapped-in (already-stepped) arrow.
+                self.arrows.swap_remove(ai);
+            }
+        }
+
+        // JS `updateFists` (mitts.js L197-246, `tick` L920): fists advance
+        // after the arrows, reverse order. The foe scan covers the full list
+        // (the owner is filtered by team inside the fist's own scans).
+        let mut fi = self.fists.len();
+        while fi > 0 {
+            fi -= 1;
+            let mut foes = FoeScan::all(&mut self.actors);
+            let keep = mitts::MittsFist::step(
+                &mut self.fists[fi],
+                dt,
+                world.collision,
+                &mut self.paint,
+                &w.mitts,
+                t,
+                &mut self.projectiles,
+                &mut foes,
+                remote,
+            );
+            if !keep {
+                // JS `stepFist` L244: swap-remove — same reverse-loop
+                // behaviour as the arrow `kill`.
+                self.fists.swap_remove(fi);
             }
         }
 

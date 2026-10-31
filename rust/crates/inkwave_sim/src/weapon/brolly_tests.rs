@@ -116,6 +116,9 @@ fn frame(
         None,
         false,
         0.0,
+        &mut Vec::new(),
+        &mut Vec::new(),
+        false,
     );
     ps.drain_events()
 }

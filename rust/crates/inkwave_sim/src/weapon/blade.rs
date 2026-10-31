@@ -260,8 +260,14 @@ impl BladeWave {
                     damage: dmg,
                 });
             } else {
-                let outcome =
-                    apply_hit(&mut actors[si], dmg, Some((self.team, self.owner_slot)), t);
+                let atk_pos = super::actor_pos_by_slot(actors, self.owner_slot);
+                let outcome = apply_hit(
+                    &mut actors[si],
+                    dmg,
+                    Some((self.team, self.owner_slot)),
+                    atk_pos,
+                    t,
+                );
                 ps.push_event(SimEvent::Hit {
                     attacker_slot: self.owner_slot,
                     victim_slot,
@@ -746,7 +752,7 @@ fn melee(
         }
         hits.push(ei);
     }
-    let (a_slot, a_team) = (a.slot, a.team);
+    let (a_slot, a_team, a_pos) = (a.slot, a.team, a.pos);
     for ei in hits {
         sw.hits.insert(ei);
         let Some(v) = foes.get_mut(ei) else {
@@ -763,7 +769,7 @@ fn melee(
                 damage: dmg,
             });
         } else {
-            let outcome = apply_hit(v, dmg, Some((a_team, a_slot)), t);
+            let outcome = apply_hit(v, dmg, Some((a_team, a_slot)), Some(a_pos), t);
             ps.push_event(SimEvent::Hit {
                 attacker_slot: a_slot,
                 victim_slot,

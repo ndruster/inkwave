@@ -68,7 +68,9 @@
 //!     [`SimEvent::Impact`] / [`SimEvent::Turf`] payloads to it.
 
 pub mod blade;
+pub mod bow;
 pub mod brolly;
+pub mod mitts;
 
 use std::collections::BTreeMap;
 
@@ -253,6 +255,8 @@ impl WeaponKind {
                 | Self::Roller
                 | Self::Brush
                 | Self::Blade
+                | Self::Bow
+                | Self::Mitts
         )
     }
 }
@@ -658,6 +662,11 @@ pub struct WeaponRunner {
     /// A wave spawned this frame (JS `addWave` → the world `WAVES` list,
     /// blade.js L261-265): the match takes it into its registry.
     pub(crate) blade_wave: Option<blade::BladeWave>,
+    // ---- Task 33: bow / mitts kit state (JS `this.kit`, weapons.js L57;
+    // `None` = no kit yet, like blade / brolly). The bow's draw lives on the
+    // runner itself (`charging` / `charge` / `charge_t`, weapons.js L40-41).
+    pub(crate) bow: Option<Box<bow::BowKit>>,
+    pub(crate) mitts: Option<Box<mitts::MittsKit>>,
 }
 
 impl Default for WeaponRunner {
@@ -700,6 +709,8 @@ impl Default for WeaponRunner {
             roll_hits: BTreeMap::new(),
             blade: None,
             blade_wave: None,
+            bow: None,
+            mitts: None,
         }
     }
 }
@@ -728,6 +739,9 @@ impl WeaponRunner {
             || self.dodge_t > 0.0
             || self.lock_t > 0.0
             || self.blade.as_ref().is_some_and(|k| k.swing.is_some())
+            // Task 33: JS L62 `MAIN_KITS.mitts.busy` (mitts.js L879) — only
+            // the leap blocks the actor; the crouch and the cling do not.
+            || self.mitts.as_ref().is_some_and(|k| k.leaping)
     }
 
     /// Whether the muzzle-flash window is open (JS `wr.firingT > 0`, the
@@ -891,12 +905,39 @@ impl WeaponRunner {
                     run
                 }
             }
-            // JS L64: the remaining kit weapons own their move-speed curve
-            // (kits/*.js). Without a kit `moveSpeed` JS falls through to the
-            // tail chain (L89-90: `firingT > 0 ? moveSpeedFiring : runSpeed`);
-            // the kits are unwired until Task 33, so the sim returns
-            // `runSpeed`.
-            WeaponKind::Bow | WeaponKind::Mitts => run,
+            // JS L64 `MAIN_KITS.bow.moveSpeed` (bow.js L500-504): drawing is
+            // slowed, the loose pose window runs `moveSpeedFiring`; without
+            // either the falsy fall-through is the general tail (JS L89-90).
+            WeaponKind::Bow => {
+                if self.charging {
+                    lerp(
+                        run * 0.75,
+                        w.bow.move_speed_drawing,
+                        (self.charge * 2.5).min(1.0),
+                    )
+                } else if self.firing_t > 0.0 {
+                    w.bow.move_speed_firing
+                } else {
+                    run
+                }
+            }
+            // JS L64 `MAIN_KITS.mitts.moveSpeed` (mitts.js L905-912): the
+            // pounce keeps its launch speed, the crouch crawls, the post-land
+            // hop is fast, the punch window slows you.
+            WeaponKind::Mitts => {
+                let k = self.mitts.as_ref();
+                if k.is_some_and(|m| m.leaping) {
+                    k.unwrap().leap_h.max(t.air_min_speed)
+                } else if k.is_some_and(|m| m.charging) {
+                    w.mitts.move_speed_charging
+                } else if k.is_some_and(|m| m.land_t < 0.25) {
+                    w.mitts.move_speed_charging * 2.0
+                } else if self.firing_t > 0.0 {
+                    w.mitts.move_speed_firing
+                } else {
+                    run
+                }
+            }
         }
     }
 
@@ -952,6 +993,9 @@ impl WeaponRunner {
                     w.brolly.spread_air
                 }
             }
+            // JS L95 `MAIN_KITS.mitts.spreadDeg` (mitts.js L913): punches
+            // always use the kit spread (no bloom, no air branch).
+            WeaponKind::Mitts => w.mitts.punch_spread,
             _ => 0.0,
         }
     }
@@ -987,6 +1031,9 @@ impl WeaponRunner {
         remote: Option<&[bool]>,
         intent_fire: bool,
         ps_time: f32,
+        arrows: &mut Vec<bow::BowArrow>,
+        fists: &mut Vec<mitts::MittsFist>,
+        jump_held: bool,
     ) {
         // ---- JS L110-116 common decay. JS `inp` here is the *gated* `winp`
         // (actor.js L370-373: `fire = intent.fire || buffered`, suppressed
@@ -1071,7 +1118,28 @@ impl WeaponRunner {
                 remote,
                 ps_time,
             ),
-            WeaponKind::Bow | WeaponKind::Mitts => {}
+            // Task 33: JS L128 `default` → `MAIN_KITS.bow.update` /
+            // `MAIN_KITS.mitts.update`. `jump_held` is the raw
+            // `a.intent.jump` the mitts leap release reads (mitts.js L574).
+            WeaponKind::Bow => {
+                bow::update(self, dt, gate, actor, &w.bow, arrows, projectiles, ps_time)
+            }
+            WeaponKind::Mitts => mitts::update(
+                self,
+                dt,
+                gate,
+                jump_held,
+                actor,
+                &w.mitts,
+                world,
+                paint,
+                t,
+                fists,
+                projectiles,
+                foes,
+                remote,
+                ps_time,
+            ),
         }
     }
 
@@ -1497,7 +1565,7 @@ impl WeaponRunner {
                 hits.push(ei);
             }
         }
-        let (a_slot, a_team) = (a.slot, a.team);
+        let (a_slot, a_team, a_pos) = (a.slot, a.team, a.pos);
         for ei in hits {
             self.roll_hits.insert(ei, 0.5); // JS L265 literal window
             let Some(v) = foes.get_mut(ei) else {
@@ -1514,7 +1582,7 @@ impl WeaponRunner {
                     damage: rw.roll_damage,
                 });
             } else {
-                let outcome = apply_hit(v, rw.roll_damage, Some((a_team, a_slot)), t);
+                let outcome = apply_hit(v, rw.roll_damage, Some((a_team, a_slot)), Some(a_pos), t);
                 ps.push_event(SimEvent::Hit {
                     attacker_slot: a_slot,
                     victim_slot,
@@ -1653,7 +1721,7 @@ impl WeaponRunner {
                 hits.push(ei);
             }
         }
-        let (a_slot, a_team) = (a.slot, a.team);
+        let (a_slot, a_team, a_pos) = (a.slot, a.team, a.pos);
         for ei in hits {
             self.roll_hits.insert(ei, bw.brush_hit_cd);
             let Some(v) = foes.get_mut(ei) else {
@@ -1670,7 +1738,7 @@ impl WeaponRunner {
                     damage: bw.brush_damage,
                 });
             } else {
-                let outcome = apply_hit(v, bw.brush_damage, Some((a_team, a_slot)), t);
+                let outcome = apply_hit(v, bw.brush_damage, Some((a_team, a_slot)), Some(a_pos), t);
                 ps.push_event(SimEvent::Hit {
                     attacker_slot: a_slot,
                     victim_slot,
@@ -1823,6 +1891,19 @@ impl WeaponRunner {
         self.flick >= 0.0
     }
 
+    /// The mitts kit, created lazily like JS `K(r)` (mitts.js L48-67) —
+    /// the jump hook (`actor.js` L313 → [`mitts::MittsKit::jump`]) can run before
+    /// the first [`mitts::update`], and `ink_min` must already read the
+    /// leap-ink floor (L951) so an under-ink press is swallowed like JS.
+    pub(crate) fn ensure_mitts(&mut self, w: &WeaponSet) -> &mut mitts::MittsKit {
+        if self.mitts.is_none() {
+            let mut k = mitts::MittsKit::new();
+            k.ink_min = w.mitts.leap_ink_min;
+            self.mitts = Some(Box::new(k));
+        }
+        self.mitts.as_mut().unwrap()
+    }
+
     /// The brolly kit, created lazily like JS `kitOf` (brolly.js L48-61).
     pub(crate) fn ensure_brolly(&mut self, w: &WeaponSet) -> &mut BrollyKit {
         if self.brolly.is_none() {
@@ -1940,6 +2021,18 @@ impl<'a> FoeScan<'a> {
                 hi_off: self_idx + 1,
             },
         )
+    }
+
+    /// A scan over the full actor list (Task 33 §5: the fist steps run
+    /// match-side with no "own" actor — the owner is filtered by team inside
+    /// the scans themselves, so nothing needs excluding).
+    pub fn all(all: &'a mut [Actor]) -> Self {
+        let hi_off = all.len();
+        Self {
+            lo: all,
+            hi: &mut [],
+            hi_off,
+        }
     }
 
     /// An empty scan (offline unit tests that only exercise fire paths).
@@ -2664,7 +2757,8 @@ impl ProjectileSim {
                     damage: dmg,
                 });
             } else {
-                let outcome = apply_hit(&mut actors[ei], dmg, Some((team, owner_slot)), t);
+                let atk_pos = actor_pos_by_slot(actors, owner_slot);
+                let outcome = apply_hit(&mut actors[ei], dmg, Some((team, owner_slot)), atk_pos, t);
                 self.push_event(SimEvent::Hit {
                     attacker_slot: owner_slot,
                     victim_slot,
@@ -2904,10 +2998,12 @@ impl ProjectileSim {
                     damage: rec.dmg,
                 });
             } else {
+                let atk_pos = actor_pos_by_slot(actors, rec.owner_slot);
                 let outcome = apply_hit(
                     &mut actors[rec.victim],
                     rec.dmg,
                     Some((rec.team, rec.owner_slot)),
+                    atk_pos,
                     t,
                 );
                 self.push_event(SimEvent::Hit {
@@ -3119,7 +3215,9 @@ impl ProjectileSim {
                     // never called on this branch), so `area` is 0. The attacker
                     // identity `(team, owner_slot)` rides `damage` → `lastAttacker`
                     // (JS L188) so a later water splat of the victim can credit it.
-                    let outcome = apply_hit(&mut actors[si], dmg, Some((team, owner_slot)), t);
+                    let atk_pos = actor_pos_by_slot(actors, owner_slot);
+                    let outcome =
+                        apply_hit(&mut actors[si], dmg, Some((team, owner_slot)), atk_pos, t);
                     self.push_event(SimEvent::Hit {
                         attacker_slot: owner_slot,
                         victim_slot,
@@ -3397,7 +3495,8 @@ impl ProjectileSim {
                     damage: dmg,
                 });
             } else {
-                let outcome = apply_hit(&mut actors[ei], dmg, Some((team, owner_slot)), t);
+                let atk_pos = actor_pos_by_slot(actors, owner_slot);
+                let outcome = apply_hit(&mut actors[ei], dmg, Some((team, owner_slot)), atk_pos, t);
                 self.push_event(SimEvent::Hit {
                     attacker_slot: owner_slot,
                     victim_slot,
@@ -3408,6 +3507,13 @@ impl ProjectileSim {
             }
         }
     }
+}
+
+/// The attacker's live position by slot (JS passes the owner actor into
+/// `victim.damage`; the Task 33 guard-arc snapshot reads the attacker XZ).
+/// `None` when the owner is gone (despawned / never present).
+pub(crate) fn actor_pos_by_slot(actors: &[Actor], slot: usize) -> Option<Vec3> {
+    actors.iter().find(|x| x.slot == slot).map(|x| x.pos)
 }
 
 /// JS `Projectiles.applyHit` local route: `victim.damage`. The wrong-team /
@@ -3421,6 +3527,7 @@ fn apply_hit(
     v: &mut Actor,
     dmg: f32,
     attacker: Option<(usize, usize)>,
+    attacker_pos: Option<Vec3>,
     t: &PlayerTuning,
 ) -> HitOutcome {
     let blocked = !v.alive || v.invuln() > 0.0;
@@ -3430,7 +3537,7 @@ fn apply_hit(
             blocked: true,
         };
     }
-    let killed = v.damage(dmg, attacker, t);
+    let killed = v.damage(dmg, attacker, attacker_pos, t);
     HitOutcome {
         killed,
         blocked: false,
@@ -3594,3 +3701,9 @@ mod brolly_tests;
 
 #[cfg(test)]
 mod blade_tests;
+
+#[cfg(test)]
+mod bow_tests;
+
+#[cfg(test)]
+mod mitts_tests;

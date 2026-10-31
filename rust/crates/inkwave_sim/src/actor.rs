@@ -7,16 +7,25 @@
 //! `_spawnBarrier`, `_face` (angular spring), and the `smoothY` visual spring.
 //!
 //! Deferred to later tasks (keep this list honest on upstream sync):
-//! wall climb (`_updateClimb`), roof slide / rail centring, dodge rolls and kit
-//! jump hooks, super jump, specials, status effects (track/poison/reveal/
-//! shield), and the `WeaponRunner` integration (ink spend, `moveSpeedFiring`,
-//! `busy()`). The fire gate (`FireGate`) is computed here and consumed by the
-//! Task 7 weapon runner; ink refill's `busy()` term is omitted until then.
+//! wall climb (`_updateClimb`), roof slide / rail centring, super jump,
+//! specials, status effects (track/poison/reveal/shield), and the
+//! `WeaponRunner` integration (ink spend, `moveSpeedFiring`). The fire gate
+//! (`FireGate`) is computed here and consumed by the Task 7 weapon runner.
+//!
+//! Declared deviation (Task 33 review P1-1): JS gates the squid dive
+//! (actor.js L282) and the kid idle refill (L358) on
+//! `weaponRunner.busy()` — which for Mitts is true through the whole leap
+//! (mitts.js L879). `Actor::step` has no runner handle, so both terms are
+//! omitted for every weapon kind: a leaping sponge can dive and refills
+//! while airborne. [`crate::weapon::WeaponRunner::busy`] is ported and
+//! unit-tested; wiring it needs an actor→runner hook (all 12 kinds,
+//! follow-up task).
 
 use glam::{Vec3, vec3};
 
 use crate::collision::{CollisionWorld, Contacts, GroundHit};
 use crate::tuning::PlayerTuning;
+use crate::weapon::mitts::MittsKit;
 
 /// Fixed simulation step (JS runs the same logic per 60 Hz frame).
 pub const FIXED_DT: f32 = 1.0 / 60.0;
@@ -137,6 +146,29 @@ pub struct FireGate {
     pub sub_released: bool,
 }
 
+/// The kit damage-mitigation snapshot (Task 33 §4): JS
+/// `MAIN_KITS.mitts.damageTaken` (mitts.js L883-903) is evaluated per damage
+/// event there; the sim writes this snapshot every mitts-update frame and
+/// `Actor::damage` reads it — equivalent within the fixed step.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct KitArmor {
+    /// JS `k.leaping` — airborne from a leap (leap armour).
+    pub leaping: bool,
+    /// JS `k.landT` — seconds since landing (the grace window).
+    pub land_t: f32,
+    /// JS L888-891 guard condition: `!cling && form==kid && firingT >
+    /// 0.35 - guardAfter`.
+    pub guard_up: bool,
+    /// JS `w.leapArmor` multiplier.
+    pub leap_armor: f32,
+    /// JS `w.leapArmorGrace` seconds.
+    pub leap_grace: f32,
+    /// JS `w.guardArmor` multiplier.
+    pub guard_armor: f32,
+    /// `cos(guardArc * DEG)` — the front-arc dot threshold (JS L897).
+    pub guard_arc_cos: f32,
+}
+
 #[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 struct PrevIntent {
     fire: bool,
@@ -170,8 +202,8 @@ pub struct Actor {
     pub ground_team: u8,
     pub on_enemy: bool,
     ground: GroundHit,
-    ground_n: Vec3,
-    contacts: Contacts,
+    pub(crate) ground_n: Vec3,
+    pub(crate) contacts: Contacts,
     pub respawn_timer: f32,
     pub invuln: f32,
     last_damage: f32,
@@ -183,8 +215,8 @@ pub struct Actor {
     damage_from_ink: f32,
     hard_land: f32,
     kid_t: f32,
-    coyote: f32,
-    jump_buffer: f32,
+    pub(crate) coyote: f32,
+    pub(crate) jump_buffer: f32,
     fire_buffer: f32,
     fire_facing: f32,
     smooth_y: f32,
@@ -218,6 +250,11 @@ pub struct Actor {
     /// jump block instead of jumping.
     #[serde(default)]
     pub jump_swallowed: bool,
+    /// The mitts damage-mitigation snapshot (Task 33 §4, JS
+    /// `MAIN_KITS.mitts.damageTaken`); `None` = no armour in play. Written
+    /// every mitts-update frame, cleared on splat/reset.
+    #[serde(default)]
+    pub kit_armor: Option<KitArmor>,
     events: Vec<ActorEvent>,
 }
 
@@ -270,6 +307,7 @@ impl Actor {
             net_tp: 0,
             dodge_vel: None,
             jump_swallowed: false,
+            kit_armor: None,
             events: Vec::new(),
         };
         a.reset(t);
@@ -312,6 +350,7 @@ impl Actor {
         self.time = 0.0;
         self.dodge_vel = None;
         self.jump_swallowed = false;
+        self.kit_armor = None;
     }
 
     /// JS `spawnAt(p, yaw)`: place on the ground (settle probe) with spawn
@@ -361,6 +400,7 @@ impl Actor {
         &mut self,
         amount: f32,
         attacker: Option<(usize, usize)>,
+        attacker_pos: Option<Vec3>,
         t: &PlayerTuning,
     ) -> bool {
         if !self.alive || amount <= 0.0 {
@@ -368,6 +408,29 @@ impl Actor {
         }
         if self.invuln > 0.0 {
             return false;
+        }
+        // JS `MAIN_KITS.mitts.damageTaken` (mitts.js L883-903) via the
+        // per-frame [`KitArmor`] snapshot (Task 33 §4): the leap armour
+        // (L884-886) or the guard arc (L888-901), never both.
+        let mut amount = amount;
+        if let Some(k) = &self.kit_armor {
+            if k.leaping || k.land_t < k.leap_grace {
+                amount *= k.leap_armor;
+            } else if k.guard_up
+                && let Some(ap) = attacker_pos
+            {
+                let dx = ap.x - self.pos.x;
+                let dz = ap.z - self.pos.z;
+                let l = dx.hypot(dz);
+                if l > 0.01 {
+                    // JS mitts.js L888-889: the aim heading vs. the
+                    // attacker direction (both XZ, +Z at yaw 0).
+                    let dot = (self.aim_yaw.sin() * dx + self.aim_yaw.cos() * dz) / l;
+                    if dot > k.guard_arc_cos {
+                        amount *= k.guard_armor;
+                    }
+                }
+            }
         }
         self.hp -= amount;
         self.last_damage = 0.0;
@@ -391,6 +454,7 @@ impl Actor {
         self.hp = 0.0;
         self.respawn_timer = t.respawn_time;
         self.deaths += 1;
+        self.kit_armor = None;
         self.events.push(ActorEvent::Splatted { cause, attacker });
     }
 
@@ -488,6 +552,9 @@ impl Actor {
     }
 
     /// JS `update(dt)`: one fixed simulation step.
+    /// Task 33 §4: `mitts` is this actor's Mitts kit (JS
+    /// `MAIN_KITS[a.weapon.kind].jump` hook, actor.js L311-313, and the
+    /// `hang` wall-cling freeze, L502-507); `None` for every other weapon.
     pub fn step(
         &mut self,
         dt: f32,
@@ -495,6 +562,7 @@ impl Actor {
         world: &SimWorld,
         ink: &dyn InkQuery,
         t: &PlayerTuning,
+        mut mitts: Option<&mut MittsKit>,
     ) {
         // JS runs this whole pipeline once per 60 Hz frame; variable dt would
         // desync the timers (jump buffer / coyote / emerge) from the tuning.
@@ -613,6 +681,15 @@ impl Actor {
             self.jump_buffer = 0.0;
             self.jump_swallowed = false;
         }
+        // JS L311-313 (Task 33 §4): the mitts jump hook runs after the twins
+        // dodge — a swallowed press never becomes a jump.
+        if self.jump_buffer > 0.0
+            && self.form != Form::Squid
+            && let Some(k) = mitts.as_mut()
+            && k.jump(self, input.fire)
+        {
+            self.jump_buffer = 0.0;
+        }
         let mut jumped = false;
         if self.jump_buffer > 0.0 && (self.grounded || self.coyote > 0.0) {
             let mut jv = if self.submerged {
@@ -633,7 +710,14 @@ impl Actor {
         }
 
         // ---- integrate + collide (feet + body), then the spawn keep-out
-        self.integrate(dt, is_squid, jumped, world, t);
+        // JS actor.js L502-507 (Task 33 §4): a clinging kid hangs frozen —
+        // velocity zeroed, no ground following / gravity / landing probe.
+        let hang = self.form == Form::Kid && mitts.as_ref().is_some_and(|k| k.hang);
+        if hang {
+            self.vel = Vec3::ZERO;
+            self.grounded = false;
+        }
+        self.integrate(dt, is_squid, jumped, world, t, hang);
         self.spawn_barrier(world);
 
         // ---- enemy ink damage + hp regen + ink tank refill
@@ -867,7 +951,13 @@ impl Actor {
         jumped: bool,
         world: &SimWorld,
         t: &PlayerTuning,
+        hang: bool,
     ) {
+        if hang {
+            // Task 33 §4: the wall holds the kid — no integration at all
+            // (the position and the stale contacts stay put).
+            return;
+        }
         let was_grounded = self.grounded && !jumped;
         if was_grounded {
             // follow the ground plane (no micro-hops up ramps, no sliding)
@@ -1331,7 +1421,7 @@ mod tests {
         let (mut sp_prev, mut x_prev) = (0.0_f32, 0.0_f32);
         let mut crossed: Option<(f32, f32)> = None;
         for k in 1..600 {
-            a.step(DT, &run_x(), &f.sim(), &NoInk, p);
+            a.step(DT, &run_x(), &f.sim(), &NoInk, p, None);
             let sp = a.vel.x.hypot(a.vel.z);
             if sp >= target && crossed.is_none() {
                 let frac = (target - sp_prev) / (sp - sp_prev);
@@ -1386,7 +1476,7 @@ mod tests {
         a.note_fired(); // just fired: refill blocked for inkRefillDelay
         let ink_at = |steps: u32, a: &mut Actor| {
             for _ in 0..steps {
-                a.step(DT, &idle(), &f.sim(), &NoInk, p);
+                a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
             }
             a.ink
         };
@@ -1417,12 +1507,12 @@ mod tests {
             ..ActorInput::default()
         };
         for _ in 0..30 {
-            a.step(DT, &swim, &f.sim(), &OwnInk, p);
+            a.step(DT, &swim, &f.sim(), &OwnInk, p, None);
         }
         assert!(a.submerged, "squid on own ink must be submerged");
         let ink05 = a.ink;
         for _ in 0..60 {
-            a.step(DT, &swim, &f.sim(), &OwnInk, p);
+            a.step(DT, &swim, &f.sim(), &OwnInk, p, None);
         }
         let rate = a.ink - ink05;
         println!(
@@ -1439,19 +1529,19 @@ mod tests {
         let p = &f.tuning.player;
         let mut a = spawn_actor(&f, 1);
         a.invuln = 0.0;
-        assert!(a.damage(150.0, None, p), "lethal hit must splat");
+        assert!(a.damage(150.0, None, None, p), "lethal hit must splat");
         assert!(!a.alive);
         assert_eq!(a.deaths, 1);
         close(f64::from(a.respawn_timer), 5.5, 1e-4, "respawn timer");
         // 5.4 s later: still dead
         for _ in 0..324 {
-            a.step(DT, &idle(), &f.sim(), &NoInk, p);
+            a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
         }
         assert!(!a.alive, "must stay dead until respawnTime");
         // cross 5.5 s one frame at a time and catch the respawn frame
         let mut steps = 324;
         while !a.alive {
-            a.step(DT, &idle(), &f.sim(), &NoInk, p);
+            a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
             steps += 1;
             assert!(
                 steps < 400,
@@ -1480,7 +1570,7 @@ mod tests {
         close(f64::from(a.hp), 100.0, 1e-6, "hp after respawn");
         close(f64::from(a.invuln), 1.6, 1e-4, "spawn invuln");
         // invulnerable: a hit right now does nothing
-        assert!(!a.damage(50.0, None, p));
+        assert!(!a.damage(50.0, None, None, p));
         close(f64::from(a.hp), 100.0, 1e-6, "hp during invuln");
         // events: splatted then respawn
         let ev = a.drain_events();
@@ -1491,7 +1581,7 @@ mod tests {
         assert!(ev.contains(&ActorEvent::Respawn));
         // drops in and lands on the pad
         for _ in 0..240 {
-            a.step(DT, &idle(), &f.sim(), &NoInk, p);
+            a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
         }
         assert!(a.grounded, "must land on the pad after drop-in");
     }
@@ -1506,7 +1596,7 @@ mod tests {
         a.pos = vec3(100.0, -2.0, 0.0);
         a.vel = Vec3::ZERO;
         a.drain_events();
-        a.step(DT, &idle(), &f.sim(), &NoInk, p);
+        a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
         assert!(!a.alive, "falling below fallDeathY over water must splat");
         close(f64::from(a.respawn_timer), 5.5, 1e-4, "water respawn timer");
         let ev = a.drain_events();
@@ -1515,7 +1605,7 @@ mod tests {
             attacker: None
         }));
         for _ in 0..340 {
-            a.step(DT, &idle(), &f.sim(), &NoInk, p);
+            a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
         }
         assert!(a.alive, "water splat respawns like a combat splat");
         assert_eq!(a.deaths, 1);
@@ -1529,7 +1619,7 @@ mod tests {
         b.drain_events();
         let mut respawn_frame = None;
         for k in 0..340 {
-            b.step(DT, &idle(), &f.sim(), &NoInk, p);
+            b.step(DT, &idle(), &f.sim(), &NoInk, p, None);
             if respawn_frame.is_none() && b.alive {
                 respawn_frame = Some(k);
             }
@@ -1555,10 +1645,10 @@ mod tests {
         let p = &f.tuning.player;
         let mut a = spawn_actor(&f, 0);
         a.invuln = 0.0;
-        assert!(!a.damage(60.0, None, p));
+        assert!(!a.damage(60.0, None, None, p));
         close(f64::from(a.hp), 40.0, 1e-6, "hp after hit");
         for _ in 0..72 {
-            a.step(DT, &idle(), &f.sim(), &NoInk, p);
+            a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
         }
         assert!(
             (a.hp - 40.0).abs() < 1e-4,
@@ -1566,11 +1656,11 @@ mod tests {
             a.hp
         );
         for _ in 0..60 {
-            a.step(DT, &idle(), &f.sim(), &NoInk, p);
+            a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
         }
         let hp2 = a.hp;
         for _ in 0..60 {
-            a.step(DT, &idle(), &f.sim(), &NoInk, p);
+            a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
         }
         let rate = a.hp - hp2;
         println!("hp regen: rate={rate:.3}/s (expect 22)");
@@ -1584,7 +1674,7 @@ mod tests {
         let mut a = spawn_actor(&f, 0);
         a.invuln = 0.0;
         for _ in 0..180 {
-            a.step(DT, &run_x(), &f.sim(), &EnemyInk, p);
+            a.step(DT, &run_x(), &f.sim(), &EnemyInk, p, None);
         }
         assert!(a.on_enemy);
         // dps 20 with a 40-point cap → hp floors at 60, and ink alone never kills
@@ -1612,7 +1702,7 @@ mod tests {
         let mut a = spawn_actor(&f, 0);
         a.invuln = 0.0;
         for _ in 0..180 {
-            a.step(DT, &run_x(), &f.sim(), &NoInk, p);
+            a.step(DT, &run_x(), &f.sim(), &NoInk, p, None);
         }
         let sp0 = a.vel.x.hypot(a.vel.z);
         assert!(
@@ -1622,7 +1712,7 @@ mod tests {
         let x0 = a.pos.x;
         let mut steps = 0;
         while a.vel.x.hypot(a.vel.z) > 0.05 {
-            a.step(DT, &idle(), &f.sim(), &NoInk, p);
+            a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
             steps += 1;
             assert!(steps < 600);
         }
@@ -1657,7 +1747,7 @@ mod tests {
             jump: true,
             ..ActorInput::default()
         };
-        a.step(DT, &jump, &f.sim(), &NoInk, p);
+        a.step(DT, &jump, &f.sim(), &NoInk, p, None);
         assert!(!a.grounded, "jump must leave the ground");
         assert!(a.vel.y > 7.9, "jump vel applied (vy={})", a.vel.y);
         let mut apex = a.pos.y.max(0.0);
@@ -1665,7 +1755,7 @@ mod tests {
         for k in 1..600 {
             let y_prev = a.pos.y;
             let vy_prev = a.vel.y;
-            a.step(DT, &idle(), &f.sim(), &NoInk, p);
+            a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
             apex = apex.max(a.pos.y);
             if a.grounded {
                 // linear crossing inside the landing step (fall gravity region)
@@ -1725,7 +1815,7 @@ mod tests {
         let (mut sp_prev, mut x_prev) = (0.0_f32, 0.0_f32);
         let mut crossed: Option<(f32, f32)> = None;
         for k in 1..600 {
-            a.step(DT, &swim, &f.sim(), &OwnInk, p);
+            a.step(DT, &swim, &f.sim(), &OwnInk, p, None);
             assert!(a.submerged);
             let sp = a.vel.x.hypot(a.vel.z);
             if sp >= target && crossed.is_none() {
@@ -1788,7 +1878,7 @@ mod tests {
             let inp = if first { &jump } else { &idle() };
             first = false;
             let vy_before = a.vel.y;
-            a.step(DT, inp, &f.sim(), &NoInk, p);
+            a.step(DT, inp, &f.sim(), &NoInk, p, None);
             if a.vel.y > vy_before + 1.0 && !a.grounded {
                 jumped = true;
                 break;
@@ -1802,7 +1892,7 @@ mod tests {
         b.vel = vec3(6.0, 0.0, 0.0);
         let mut off = false;
         for _ in 0..30 {
-            b.step(DT, &run_x(), &f.sim(), &NoInk, p);
+            b.step(DT, &run_x(), &f.sim(), &NoInk, p, None);
             if !b.grounded {
                 off = true;
                 break;
@@ -1811,11 +1901,11 @@ mod tests {
         assert!(off, "must have run off the edge (pos.x={})", b.pos.x);
         // 2 more airborne frames (still well inside 0.12 s), then press jump
         for _ in 0..2 {
-            b.step(DT, &idle(), &f.sim(), &NoInk, p);
+            b.step(DT, &idle(), &f.sim(), &NoInk, p, None);
         }
         assert!(!b.grounded);
         let vy_before = b.vel.y;
-        b.step(DT, &jump, &f.sim(), &NoInk, p);
+        b.step(DT, &jump, &f.sim(), &NoInk, p, None);
         assert!(
             b.vel.y > vy_before + 1.0,
             "coyote jump must fire within coyoteTime (vy {} → {})",
@@ -1837,7 +1927,7 @@ mod tests {
             ..ActorInput::default()
         };
         for _ in 0..180 {
-            a.step(DT, &squid, &f.sim(), &NoInk, p); // dry floor: not submerged
+            a.step(DT, &squid, &f.sim(), &NoInk, p, None); // dry floor: not submerged
         }
         assert!(!a.submerged);
         let sp = a.vel.x.hypot(a.vel.z);
@@ -1861,7 +1951,7 @@ mod tests {
             ..ActorInput::default()
         };
         for _ in 0..30 {
-            a.step(DT, &swim, &f.sim(), &OwnInk, p);
+            a.step(DT, &swim, &f.sim(), &OwnInk, p, None);
         }
         assert_eq!(a.form, Form::Squid);
         // press fire while still holding squid → most recent press wins
@@ -1870,13 +1960,13 @@ mod tests {
             fire: true,
             ..ActorInput::default()
         };
-        a.step(DT, &both, &f.sim(), &OwnInk, p);
+        a.step(DT, &both, &f.sim(), &OwnInk, p, None);
         assert_eq!(a.form, Form::Kid, "fire pressed after squid pops out");
         assert_eq!(a.kid_t, 0.0, "emerge timer restarts");
         // fire gate stays shut until emergeDelay, then passes the buffer
         let mut gate_seen = false;
         for _ in 0..30 {
-            a.step(DT, &idle(), &f.sim(), &OwnInk, p);
+            a.step(DT, &idle(), &f.sim(), &OwnInk, p, None);
             if a.fire_gate.fire {
                 gate_seen = true;
             }
@@ -1893,7 +1983,7 @@ mod tests {
         // drop the actor inside the Bravo bubble (pad[1] = (0,0,24), R=4.2)
         a.pos = vec3(0.0, 0.0, 22.0);
         a.vel = Vec3::ZERO;
-        a.step(DT, &idle(), &f.sim(), &NoInk, p);
+        a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
         let d = (a.pos.x.powi(2) + (a.pos.z - 24.0).powi(2)).sqrt();
         assert!(d >= 4.2 - 1e-3, "barrier must push out to the rim (d={d})");
     }
@@ -1907,20 +1997,20 @@ mod tests {
         a.invuln = 0.0;
         // build up forward speed on +x, then jump and steer to +z mid-air
         for _ in 0..180 {
-            a.step(DT, &run_x(), &f.sim(), &NoInk, p);
+            a.step(DT, &run_x(), &f.sim(), &NoInk, p, None);
         }
         let jump = ActorInput {
             jump: true,
             ..ActorInput::default()
         };
-        a.step(DT, &jump, &f.sim(), &NoInk, p);
+        a.step(DT, &jump, &f.sim(), &NoInk, p, None);
         assert!(!a.grounded);
         let (vx0, vz0) = (a.vel.x, a.vel.z);
         let steer = ActorInput {
             move_dir: vec3(0.0, 0.0, 1.0),
             ..ActorInput::default()
         };
-        a.step(DT, &steer, &f.sim(), &NoInk, p);
+        a.step(DT, &steer, &f.sim(), &NoInk, p, None);
         // kid airborne: target = max(run_speed, air_min_speed) = 6 toward +z;
         // dv = (−vx0, 6 − vz0), walked by air_accel·dt along the error.
         let (tvx, tvz) = (0.0, p.run_speed.max(p.air_min_speed));
@@ -1944,15 +2034,15 @@ mod tests {
         let mut a = spawn_actor(&f, 0);
         a.invuln = 0.0;
         for _ in 0..180 {
-            a.step(DT, &run_x(), &f.sim(), &NoInk, p);
+            a.step(DT, &run_x(), &f.sim(), &NoInk, p, None);
         }
         let jump = ActorInput {
             jump: true,
             ..ActorInput::default()
         };
-        a.step(DT, &jump, &f.sim(), &NoInk, p);
+        a.step(DT, &jump, &f.sim(), &NoInk, p, None);
         let vx0 = a.vel.x;
-        a.step(DT, &idle(), &f.sim(), &NoInk, p);
+        a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
         // airborne, no input: velocity error toward zero walks at air_decel·dt
         close(
             f64::from(vx0 - a.vel.x),
@@ -1969,11 +2059,11 @@ mod tests {
         let p = &f.tuning.player;
         let mut a = spawn_actor(&f, 0);
         a.invuln = 0.0;
-        a.step(DT, &idle(), &f.sim(), &NoInk, p);
+        a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
         assert!(a.grounded);
         // inject a speed above the run cap (e.g. after a swim exit glide)
         a.vel.x = 9.0;
-        a.step(DT, &run_x(), &f.sim(), &NoInk, p);
+        a.step(DT, &run_x(), &f.sim(), &NoInk, p, None);
         // sp − vts = 3 > decelKnee → full brake rate: Δ = runDecel·dt
         close(
             f64::from(9.0 - a.vel.x),
@@ -1987,7 +2077,7 @@ mod tests {
         );
         // converges down to exactly the target speed
         for _ in 0..300 {
-            a.step(DT, &run_x(), &f.sim(), &NoInk, p);
+            a.step(DT, &run_x(), &f.sim(), &NoInk, p, None);
         }
         close(
             f64::from(a.vel.x),
@@ -2005,7 +2095,7 @@ mod tests {
         let mut a = spawn_actor(&f, 0);
         a.invuln = 0.0;
         for _ in 0..180 {
-            a.step(DT, &run_x(), &f.sim(), &NoInk, p);
+            a.step(DT, &run_x(), &f.sim(), &NoInk, p, None);
         }
         assert!(a.grounded && a.vel.x > 0.99 * p.run_speed);
         let vx0 = a.vel.x;
@@ -2015,7 +2105,7 @@ mod tests {
         };
         // first enemy-ink frame: ground probe from last frame + EnemyInk →
         // on_enemy, sp > 0.5 and ang = π > reverseAngle → plant-and-reverse
-        a.step(DT, &rev, &f.sim(), &EnemyInk, p);
+        a.step(DT, &rev, &f.sim(), &EnemyInk, p, None);
         assert!(a.on_enemy);
         let r_enemy = p.reverse_decel.max(p.enemy_ink_decel) * DT * 0.5;
         close(
@@ -2028,10 +2118,10 @@ mod tests {
         let mut b = spawn_actor(&f, 0);
         b.invuln = 0.0;
         for _ in 0..180 {
-            b.step(DT, &run_x(), &f.sim(), &NoInk, p);
+            b.step(DT, &run_x(), &f.sim(), &NoInk, p, None);
         }
         let vx1 = b.vel.x;
-        b.step(DT, &rev, &f.sim(), &NoInk, p);
+        b.step(DT, &rev, &f.sim(), &NoInk, p, None);
         close(
             f64::from(vx1 - b.vel.x),
             f64::from(p.reverse_decel * DT),
@@ -2072,7 +2162,7 @@ mod tests {
         a.invuln = 0.0;
         let mut go_sp = Vec::new();
         for _ in 0..70 {
-            a.step(DT, &run_x(), &f.sim(), &NoInk, p);
+            a.step(DT, &run_x(), &f.sim(), &NoInk, p, None);
             go_sp.push(a.vel.x.hypot(a.vel.z) as f64);
         }
         // JS speedFirst6 (r3): [0.583, 1.343, 2.469, 3.636, 4.802, 5.634]
@@ -2093,7 +2183,7 @@ mod tests {
         let x0 = a.pos.x as f64;
         let mut stop_sp = Vec::new();
         for _ in 0..45 {
-            a.step(DT, &idle(), &f.sim(), &NoInk, p);
+            a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
             stop_sp.push(a.vel.x.hypot(a.vel.z) as f64);
         }
         // JS stopFirst8: [5.033, 4.067, 3.1, 2.133, 1.168, 0.465, 0.011, 0]
@@ -2107,7 +2197,7 @@ mod tests {
         let mut b = spawn_actor(&f, 0);
         b.invuln = 0.0;
         for _ in 0..50 {
-            b.step(DT, &run_x(), &f.sim(), &NoInk, p);
+            b.step(DT, &run_x(), &f.sim(), &NoInk, p, None);
         }
         let rev = ActorInput {
             move_dir: vec3(-1.0, 0.0, 0.0),
@@ -2115,7 +2205,7 @@ mod tests {
         };
         let mut rev_vx = Vec::new();
         for _ in 0..50 {
-            b.step(DT, &rev, &f.sim(), &NoInk, p);
+            b.step(DT, &rev, &f.sim(), &NoInk, p, None);
             rev_vx.push(b.vel.x as f64);
         }
         // JS tReverseZero = frame 4 (0.0667 s), tReverse90 = frame 9 (0.15 s)
@@ -2136,12 +2226,12 @@ mod tests {
             ..ActorInput::default()
         };
         // JS samples AFTER the frame, so r[0] is one frame after takeoff.
-        a.step(DT, &jump, &f.sim(), &NoInk, p);
+        a.step(DT, &jump, &f.sim(), &NoInk, p, None);
         let y0 = a.pos.y as f64;
         let mut ys = vec![y0];
         let mut vys = vec![a.vel.y as f64];
         for _ in 0..60 {
-            a.step(DT, &idle(), &f.sim(), &NoInk, p);
+            a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
             ys.push(a.pos.y as f64);
             vys.push(a.vel.y as f64);
         }
@@ -2158,10 +2248,10 @@ mod tests {
         let mut grounded_seq = Vec::new();
         let mut b = spawn_actor(&f, 0);
         b.invuln = 0.0;
-        b.step(DT, &jump, &f.sim(), &NoInk, p);
+        b.step(DT, &jump, &f.sim(), &NoInk, p, None);
         grounded_seq.push(b.grounded);
         for _ in 0..60 {
-            b.step(DT, &idle(), &f.sim(), &NoInk, p);
+            b.step(DT, &idle(), &f.sim(), &NoInk, p, None);
             grounded_seq.push(b.grounded);
         }
         for (i, &g) in grounded_seq.iter().enumerate() {
@@ -2187,7 +2277,7 @@ mod tests {
         probe.vel = Vec3::ZERO;
         let mut land_f = None;
         for i in 0..80 {
-            probe.step(DT, &idle(), &f.sim(), &NoInk, p);
+            probe.step(DT, &idle(), &f.sim(), &NoInk, p, None);
             if land_f.is_none() && probe.grounded {
                 land_f = Some(i);
             }
@@ -2213,7 +2303,7 @@ mod tests {
                 } else {
                     idle()
                 };
-                a.step(DT, &inp, &f.sim(), &NoInk, p);
+                a.step(DT, &inp, &f.sim(), &NoInk, p, None);
                 if i > land_f && a.vel.y > 3.0 {
                     jumped = true;
                 }
@@ -2237,7 +2327,7 @@ mod tests {
             ..ActorInput::default()
         };
         for _ in 0..20 {
-            a.step(DT, &squid, &f.sim(), &OwnInk, p);
+            a.step(DT, &squid, &f.sim(), &OwnInk, p, None);
         }
         assert!(a.submerged);
         let swim = ActorInput {
@@ -2247,7 +2337,7 @@ mod tests {
         };
         let mut sp = Vec::new();
         for _ in 0..55 {
-            a.step(DT, &swim, &f.sim(), &OwnInk, p);
+            a.step(DT, &swim, &f.sim(), &OwnInk, p, None);
             sp.push(a.vel.x.hypot(a.vel.z) as f64);
         }
         // JS first8: [0.8, 1.647, 2.6, 3.653, 4.72, 5.787, 6.853, 7.92]
@@ -2273,7 +2363,7 @@ mod tests {
             ..ActorInput::default()
         };
         for _ in 0..45 {
-            a.step(DT, &fwd, &f.sim(), &NoInk, p);
+            a.step(DT, &fwd, &f.sim(), &NoInk, p, None);
         }
         assert!(a.yaw.abs() < 1e-3, "yaw settled to 0 on the +z lane");
         let right = ActorInput {
@@ -2294,7 +2384,7 @@ mod tests {
         let mut vang = Vec::new();
         let mut yaws = Vec::new();
         for _ in 0..50 {
-            a.step(DT, &right, &f.sim(), &NoInk, p);
+            a.step(DT, &right, &f.sim(), &NoInk, p, None);
             let (vx, vz) = (a.vel.x as f64, a.vel.z as f64);
             sp.push(vx.hypot(vz));
             vang.push(vx.atan2(vz));

@@ -1,0 +1,555 @@
+=== fmt ===
+FMT_EXIT=0
+=== clippy ===
+[1m[92m    Checking[0m inkwave_sim v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave_sim)
+[1m[92m    Checking[0m relay-shim v0.1.0-m1 (/root/work/project/inkwave/rust/tools/relay-shim)
+[1m[92m    Checking[0m inkwave v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave)
+[1m[92m    Checking[0m net-harness v0.1.0-m1 (/root/work/project/inkwave/rust/tools/net-harness)
+[1m[91merror[0m[1m: variable does not need to be mutable[0m
+    [1m[94m--> [0mcrates/inkwave_sim/src/weapon/mitts_tests.rs:1604:9
+     [1m[94m|[0m
+[1m[94m1604[0m [1m[94m|[0m     let mut fly = |actors: &mut [Actor], ps: &mut ProjectileSim, pg: &mut PaintGrid| {
+     [1m[94m|[0m         [1m[94m----[0m[1m[91m^^^[0m
+     [1m[94m|[0m         [1m[94m|[0m
+     [1m[94m|[0m         [1m[94mhelp: remove this `mut`[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `-D unused-mut` implied by `-D warnings`
+     [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(unused_mut)]`
+
+[1m[91merror[0m: could not compile `inkwave_sim` (lib test) due to 1 previous error
+[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+CLIPPY_EXIT=101
+=== test ===
+[1m[92m   Compiling[0m inkwave_sim v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave_sim)
+[1m[92m   Compiling[0m relay-shim v0.1.0-m1 (/root/work/project/inkwave/rust/tools/relay-shim)
+[1m[92m   Compiling[0m net-harness v0.1.0-m1 (/root/work/project/inkwave/rust/tools/net-harness)
+[1m[33mwarning[0m[1m: variable does not need to be mutable[0m
+    [1m[94m--> [0mcrates/inkwave_sim/src/weapon/mitts_tests.rs:1604:9
+     [1m[94m|[0m
+[1m[94m1604[0m [1m[94m|[0m     let mut fly = |actors: &mut [Actor], ps: &mut ProjectileSim, pg: &mut PaintGrid| {
+     [1m[94m|[0m         [1m[94m----[0m[1m[33m^^^[0m
+     [1m[94m|[0m         [1m[94m|[0m
+     [1m[94m|[0m         [1m[94mhelp: remove this `mut`[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+[1m[92m   Compiling[0m inkwave v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave)
+[1m[33mwarning[0m: `inkwave_sim` (lib test) generated 1 warning (run `cargo fix --lib -p inkwave_sim --tests` to apply 1 suggestion)
+[1m[92m    Finished[0m ]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\`test` profile [unoptimized + debuginfo]]8;;\ target(s) in 29.56s
+[1m[92m     Running[0m unittests src/main.rs (target/debug/deps/inkwave-45eb1475ae8b46ed)
+
+running 62 tests
+test actors::tests::lean_clamps_at_run_speed ... ok
+test actors::tests::team_colors_match_upstream_hex ... ok
+test audio::tests::cue_mapping_mirrors_upstream_credit_cases ... ok
+test actors::tests::blink_stays_in_band_and_swings ... ok
+test audio::tests::decodable_source_reports_metadata ... ok
+test audio::tests::shot_edge_detects_last_fire_reset ... ok
+test audio::tests::synthesis_is_bounded_finite_and_deterministic ... ok
+test actors::tests::spawn_and_sync_builds_and_switches_visual_trees ... ok
+test audio::tests::shot_and_splat_events_spawn_players ... ok
+test input::tests::diagonal_is_normalised_like_the_js_stick ... ok
+test input::tests::move_basis_matches_js_forward_right ... ok
+test input::tests::move_dir_decomposes_to_camera_axes ... ok
+test audio::tests::paused_screen_hears_nothing ... ok
+test audio::tests::dry_fire_clicks_once_per_cooldown ... ok
+test net::match_link::tests::tr24_local_roster_index_follows_prune_gate ... ok
+test audio::tests::mute_switch_stops_spawns_and_global_volume ... ok
+test ink_render::tests::tr12_1_no_override_keeps_bots ... ok
+test ink_render::tests::tr12_1_player_input_drives_slot0 ... ok
+test net::native_transport::tests::native_connect_welcome_ping_close ... ok
+test net::native_transport::tests::native_join_ladder_rejects_unknown_room ... ok
+test net::match_link::tests::tr24_local_slot_follows_leave_removal ... ok
+test net::native_transport::tests::origin_for_maps_ws_scheme ... ok
+test net::native_transport::tests::resolve_relay_base_prefers_cli_override ... ok
+test nettest::tests::tr26_parse_full_host_config ... ok
+test nettest::tests::tr26_parse_join_keeps_case_and_shape ... ok
+test nettest::tests::tr26_parse_no_seam_params_is_none ... ok
+test nettest::tests::tr26_parse_only_net_create_counts ... ok
+test ui::online::tests::tr24_code_char_feedback ... ok
+test ui::online::tests::tr24_error_copy_matches_errmap ... ok
+test ui::online::tests::tr24_first_empty_and_auto_join_armed ... ok
+test ui::online::tests::tr24_leave_confirm_two_step ... ok
+test ui::online::tests::tr24_list_names_and_waiting_banner ... ok
+test ui::online::tests::tr24_project_hub_gating ... ok
+test ui::online::tests::tr24_project_start_enable_needs_all_ready ... ok
+test ui::online::tests::tr24_run_cmd_maps_to_session ... ok
+test ui::online::tests::tr24_settle_error_routing ... ok
+test ui::online::tests::tr24_start_block_banner ... ok
+test net::match_link::tests::tr24_match_end_returns_lobby ... ok
+test net::match_link::tests::tr24_build_net_match_roster_order ... ok
+test ui::tests::fmt_clock_matches_upstream_ceil ... ok
+test net::match_link::tests::tr24_lobby_flow_two_clients ... ok
+test ui::tests::results_text_uses_winner_and_percents ... ok
+test net::native_transport::tests::native_transport_end_to_end_against_relay_shim ... ok
+test ui::tests::splat_text_covers_all_credit_cases ... ok
+test ui::tests::timer_color_states ... ok
+test ui::tests::apply_action_transitions_and_freeze ... ok
+test world::tests::boom_next_shrinks_on_wall_and_clamps ... ok
+test world::tests::embedded_tidewater_batches_to_expected_styles ... ok
+test world::tests::emit_box_makes_24_verts_36_indices ... ok
+test world::tests::emit_box_uvs_scale_by_tex_scale ... ok
+test world::tests::emit_sphere_is_wound_outward_for_front_cull ... ok
+test world::tests::frame_of_box_is_axis_aligned ... ok
+test world::tests::frame_of_obox_rotates_axes_by_rot_y ... ok
+test world::tests::frame_of_ramp_is_right_handed_and_spans_low_to_high ... ok
+test world::tests::hex_color_parses ... ok
+test world::tests::style_for_covers_pattern_table ... ok
+test world::tests::vfov_matches_camera_rig_formula ... ok
+test ui::tests::tr24_net_mode_results_buttons ... ok
+test ui::tests::feed_drains_expires_and_mirrors_labels ... ok
+test ui::tests::pause_edge_flips_hud_and_pause ... ok
+test ui::tests::screens_switch_display_and_timer_follows_clock ... ok
+test net::native_transport::tests::native_broadcast_and_send_to_between_two_clients ... ok
+
+test result: ok. 62 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.07s
+
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/inkwave_sim-007df5a024727f90)
+
+running 306 tests
+test actor::tests::fire_beats_squid_when_pressed_later ... ok
+test actor::tests::air_steering_with_input_uses_air_accel ... ok
+test actor::tests::enemy_ink_damage_cap_and_slowdown ... ok
+test actor::tests::golden_accel_stop_reverse ... ok
+test actor::tests::air_no_input_drifts_down_air_decel ... ok
+test actor::tests::golden_jump_buffer_edges ... ok
+test actor::tests::golden_standing_jump ... ok
+test actor::tests::golden_swim_accel ... ok
+test actor::tests::jump_buffer_and_coyote_time ... ok
+test actor::tests::golden_turn_90 ... ok
+test actor::tests::hp_regen_after_combat_delay ... ok
+test actor::tests::spawn_barrier_pushes_out_of_enemy_pad ... ok
+test actor::tests::over_speed_sheds_at_brake_rate ... ok
+test actor::tests::squid_dry_land_is_slower_than_kid ... ok
+test actor::tests::tr5_1_run_accel_matches_analytic_reference ... ok
+test actor::tests::tr5_3_fall_into_sea_same_flow ... ok
+test actor::tests::reverse_in_enemy_ink_half_rate ... ok
+test actor::tests::tr5_2_squid_swim_ink_refill ... ok
+test actor::tests::tr5_2_kid_ink_refill_after_delay ... ok
+test actor::tests::tr5_4_swim_accel_matches_reference ... ok
+test actor::tests::tr5_3_splat_respawn_invuln ... ok
+test actor::tests::tr5_4_jump_apex_and_airtime ... ok
+test actor::tests::tr5_4_brake_distance ... ok
+test bot::tests::close_visible_enemy_aims_and_fires_after_reaction ... ok
+test bot::tests::dead_bot_emits_nothing_and_clears_plan ... ok
+test bot::tests::dry_land_squid_enemy_is_perceived_swimming_one_is_not ... ok
+test bot::tests::enemy_beyond_awareness_is_ignored ... ok
+test bot::tests::enemy_in_awareness_becomes_the_fight_target ... ok
+test bot::tests::low_ink_switches_to_refill ... ok
+test bot::tests::wounded_bot_with_a_target_retreats ... ok
+test collision::tests::body_fits_basic ... ok
+test collision::tests::capsule_cannot_cross_wall ... ok
+test collision::tests::flat_box_ground_height ... ok
+test collision::tests::ground_probe_center_and_step_up ... ok
+test collision::tests::mirrored_ramp_heights ... ok
+test collision::tests::point_and_block_queries ... ok
+test collision::tests::ramp_ground_three_points ... ok
+test collision::tests::raycast_grate_filter ... ok
+test collision::tests::raycast_known_faces ... ok
+test collision::tests::tidewater_mirror_and_spawns ... ok
+test bot::tests::bot_moves_and_paints_over_a_long_run ... ok
+test collision::tests::tidewater_spawn_ray_face ... ok
+test geometry::tests::half_slice_is_mirrored_verbatim ... ok
+test geometry::tests::known_mirrored_primitives_exist ... ok
+test geometry::tests::primitive_counts_match_meta ... ok
+test geometry::tests::rail_and_grate_flags ... ok
+test geometry::tests::stage_info ... ok
+test ink_atlas::tests::hsh_matches_upstream_formula ... ok
+test ink_atlas::tests::layout_is_deterministic_and_pads_faces ... ok
+test ink_atlas::tests::over_composite_newest_wins ... ok
+test ink_atlas::tests::clear_wipes_pixels_and_bumps_version ... ok
+test ink_atlas::tests::pack_origin_keeps_the_zero_uv_sentinel_clean ... ok
+test ink_atlas::tests::tr11_1_atlas_matches_grid_per_cell ... ok
+test ink_atlas::tests::splat_sequence_is_deterministic ... ok
+test ink_atlas::tests::uv_at_matches_sample_face ... ok
+test ink_atlas::tests::wall_splat_stamps_wall_face ... ok
+test autopilot::tests::idle_control_run_makes_no_progress ... ok
+test autopilot::tests::tr9_3_no_bot_stalls_past_the_watchdog_window ... ok
+test autopilot::tests::tr9_1_full_run_no_panic_all_bots_active_and_both_teams_paint ... ok
+test match_::tests::clock_emits_final_countdown_and_skips_one_minute ... ok
+test match_::tests::dead_actor_fires_nothing ... ok
+test match_::tests::kill_routes_splash_credit_splat_count_and_bus ... ok
+test match_::tests::respawn_is_gated_outside_play ... ok
+test match_::tests::roster_is_4v4_on_the_spawn_rings ... ok
+test match_::tests::soft_push_mask_weights_follow_js_ternary ... ok
+test match_::tests::soft_push_separates_overlapping_bodies ... ok
+test match_::tests::tr8_2_intro_barrier_holds_until_active ... ok
+test nav::tests::flat_floor_samples_one_node_per_cell ... ok
+test nav::tests::nearest_snaps_to_the_grid_and_path_walks_it ... ok
+test nav::tests::roof_top_is_not_sampled ... ok
+test nav::tests::step_pair_connects_walk_and_jump_edges ... ok
+test match_::tests::water_death_inherits_recent_attacker ... ok
+test nav::tests::unreachable_island_is_pruned ... ok
+test nav::tests::wet_ring_marks_water_edges ... ok
+test net::playback::tests::tr22_1_hermite_is_c1_and_exact_through_owner_tangents ... ok
+test net::playback::tests::tr22_1_tp_jump_cuts_the_path ... ok
+test net::playback::tests::tr22_2_delay_stays_in_the_85_to_300ms_band ... ok
+test net::playback::tests::tr22_2_extrapolation_capped_at_180ms ... ok
+test net::playback::tests::tr22_3_correction_settles_without_a_pop ... ok
+test net::playback::tests::tr22_3_hermite_y_never_through_a_floor ... ok
+test net::playback::tests::tr22_ang_diff_shortest_arc ... ok
+test net::playback::tests::tr22_apply_writes_invuln_window_and_turf_ratchet ... ok
+test net::playback::tests::tr22_buffer_capacity_and_monotonic_guard ... ok
+test net::playback::tests::tr22_handoff_and_adopt_reset_the_path ... ok
+test net::playback::tests::tr22_quantile_matches_js ... ok
+test match_::tests::tr8_1_full_run_settles_with_result_and_restart_zeroes ... ok
+test match_::tests::tr8_3_gameplay_state_serde_roundtrips ... ok
+test net::replication::tests::nfr_m2_2_playback_overlay_stays_under_20_percent ... ignored
+test nav::tests::tidewater_graph_is_connected_between_the_spawn_pads ... ok
+test net::replication::tests::phase_strings_match_js_states ... ok
+test net::replication::tests::guest_clock_steers_and_follower_gates_hold ... ok
+test net::replication::tests::hit_wire_shape_matches_js ... ok
+test net::replication::tests::no_bots_bind_prunes_leavers ... ok
+test net::replication::tests::st_frame_without_t_leaves_the_clock_alone ... ok
+test net::replication::tests::regression_recording_survives_render_draining ... ok
+test net::replication::tests::tr21_1_owner_proxy_split_and_nid_routing ... ok
+test autopilot::tests::tr9_2_same_seed_is_bit_identical ... ok
+test net::replication::tests::tr21_2_hit_channel_end_to_end ... ok
+test net::replication::tests::tr21_3_guest_leave_actor_adopted_as_bot ... ok
+test net::replication::tests::tr23_1_splat_replay_matches_grid_and_never_loops_back ... ok
+test net::replication::tests::tr21_3_no_bots_stage_removes_leavers ... ok
+test net::replication::tests::tr30_2_kit_record_ghost_blocks_local_shots ... ok
+test ink_atlas::tests::tr11_2_1000_splats_stable ... ok
+test net::session::tests::connection_loss_surfaces_lost_connection ... ok
+test net::session::tests::create_exhausts_four_retries_and_fails ... ok
+test net::session::tests::create_mints_valid_code_and_reaches_lobby ... ok
+test net::session::tests::create_retries_with_a_new_code_when_taken ... ok
+test net::session::tests::emote_broadcasts_and_echoes_locally ... ok
+test net::session::tests::fix_teams_caps_honours_requests_and_balances ... ok
+test net::session::tests::game_messages_only_forward_during_a_match ... ok
+test net::session::tests::go_fallback_fires_at_12s ... ok
+test net::session::tests::guest_me_roundtrips_through_the_host ... ok
+test net::session::tests::guest_refuses_a_non_turf_start ... ok
+test net::session::tests::host_migration_on_leave ... ok
+test net::replication::tests::tr23_2_ghost_round_never_damages ... ok
+test net::session::tests::join_a_full_room_gets_room_is_full ... ok
+test net::session::tests::join_sanitises_the_code_and_surfaces_relay_refusals ... ok
+test net::session::tests::leave_resets_the_local_view_and_peers_see_it ... ok
+test net::session::tests::join_a_locked_room_gets_match_in_progress ... ok
+test net::session::tests::member_dropped_while_loading_counts_as_ready ... ok
+test net::session::tests::no_bots_stage_gates_the_start ... ok
+test net::session::tests::set_me_rejects_unknown_weapon_locally ... ok
+test net::session::tests::set_settings_clamps_and_validates_like_js ... ok
+test net::session::tests::solo_on_a_no_bots_stage_blocks_the_start ... ok
+test net::session::tests::lobby_ping_flows_to_the_host_and_back ... ok
+test net::session::tests::start_ready_go_full_sequence ... ok
+test net::tests::flags_match_upstream_table ... ok
+test net::session::tests::wire_encoders_are_byte_exact_against_fixtures ... ok
+test net::replication::tests::tr23_2_ghost_never_paints_and_splats_land_on_the_sender_clock ... ok
+test net::tests::splat_record_mirrors_paint_splat ... ok
+test net::replication::tests::tr30_2_brolly_pose_converges_rust_to_rust ... ok
+test net::transport::tests::fake_handshake_join_routing_and_lock_flow ... ok
+test net::transport::tests::fake_handshake_times_out_at_8s ... ok
+test net::transport::tests::fake_join_ladder_matches_relay_wording ... ok
+test net::transport::tests::fake_send_before_open_is_dropped ... ok
+test net::transport::tests::relay_url_matches_js_resolution ... ok
+test net::transport::tests::room_url_mirrors_transport_js_l44 ... ok
+test net::transport::tests::rtt_ema_matches_js_expression ... ok
+test net::transport::tests::rx_state_handles_every_js_frame_shape ... ok
+test net::transport::tests::sim_draws_jitter_then_spike_in_that_order ... ok
+test net::transport::tests::sim_jitter_bunches_like_tcp_and_is_deterministic ... ok
+test net::transport::tests::sim_lag_delays_everything_in_order ... ok
+test net::transport::tests::sim_spike_stalls_everything_behind_it ... ok
+test net::wire::tests::control_frames_round_trip_to_golden_wire ... ok
+test net::wire::tests::direct_messages_round_trip_to_golden_wire ... ok
+test net::wire::tests::envelopes_split_relay_frames ... ok
+test net::wire::tests::event_payloads_pass_through_verbatim ... ok
+test net::wire::tests::event_records_round_trip_to_golden_wire ... ok
+test net::wire::tests::forward_event_wire_names_match_table ... ok
+test net::wire::tests::host_messages_round_trip_to_golden_wire ... ok
+test net::wire::tests::kit_and_zone_records_round_trip ... ok
+test net::wire::tests::pack_actor_matches_golden_wire_for_every_case ... ok
+test net::wire::tests::pack_trig_covers_all_three_branches ... ok
+test net::wire::tests::round_edges_are_js_half_up_and_minus_zero_collapses ... ok
+test net::wire::tests::session_messages_pass_through_verbatim ... ok
+test net::wire::tests::tick_round_trips_to_golden_wire ... ok
+test net::wire::tests::timed_event_prefixes_the_timestamp ... ok
+test net::wire::tests::trigger_and_event_records_round_trip_through_decode_encode ... ok
+test net::wire::tests::unpack_actor_matches_golden_unpacked_for_every_case ... ok
+test net::wire::tests::unpack_trig_matches_golden ... ok
+test paint::tests::blob_wobble_bounds ... ok
+test paint::tests::cross_face_splat_accumulates ... ok
+test paint::tests::dead_cells_write_grid_but_skip_counts ... ok
+test paint::tests::grazing_dn_behind_plane_still_paints ... ok
+test paint::tests::ink_query_trait ... ok
+test paint::tests::non_paintable_never_claims ... ok
+test paint::tests::roll_band_stamps_along_direction ... ok
+test paint::tests::smear_stretch_line_is_asymmetric ... ok
+test paint::tests::tr6_1_circle_area_matches_pi_r_squared ... ok
+test paint::tests::tr6_1_counts_track_ownership ... ok
+test paint::tests::tr6_2_ramp_local_coords ... ok
+test paint::tests::tr6_2_rotated_face_local_coords ... ok
+test paint::tests::tr6_3_coverage_normalisation ... ok
+test paint::tests::wall_face_splat_paints_without_turf ... ok
+test tests::scaffold_smoke ... ok
+test tuning::tests::difficulty_normal_hard_values ... ok
+test tuning::tests::match_and_difficulty_and_palettes ... ok
+test tuning::tests::player_key_values ... ok
+test tuning::tests::schema_and_provenance ... ok
+test tuning::tests::special_ballistic_values ... ok
+test tuning::tests::special_barrage_variants_values ... ok
+test tuning::tests::special_driver_values ... ok
+test tuning::tests::special_field_values ... ok
+test tuning::tests::special_instant_values ... ok
+test tuning::tests::special_order_locked ... ok
+test tuning::tests::spritzer_key_values ... ok
+test tuning::tests::sub_bomb_family_values ... ok
+test tuning::tests::sub_kit_values ... ok
+test tuning::tests::sub_order_locked ... ok
+test tuning::tests::sub_placed_values ... ok
+test tuning::tests::sub_tracked_values ... ok
+test tuning::tests::weapon_blade_values ... ok
+test tuning::tests::weapon_blaster_values ... ok
+test tuning::tests::weapon_bow_values ... ok
+test tuning::tests::weapon_brolly_values ... ok
+test tuning::tests::weapon_brush_values ... ok
+test net::replication::tests::tr21_3_host_migration_completes_the_match ... ok
+test tuning::tests::weapon_bucket_values ... ok
+test tuning::tests::weapon_mitts_values ... ok
+test tuning::tests::weapon_charger_values ... ok
+test tuning::tests::weapon_order_locked_and_retired_excluded ... ok
+test tuning::tests::weapon_range_table ... ok
+test tuning::tests::weapon_roller_values ... ok
+test tuning::tests::weapon_spinner_values ... ok
+test tuning::tests::weapon_twins_values ... ok
+test tuning::tests::zones_values ... ok
+test weapon::blade_tests::tr32_1_blade_tap_crescent_values ... ok
+test weapon::blade_tests::tr32_1_blade_heavy_wave_kit_record ... ok
+test weapon::blade_tests::tr32_1_blade_wave_over_void_draws_nothing ... ok
+test weapon::blade_tests::tr32_1_blade_wave_stripes_and_end ... ok
+test weapon::blade_tests::tr32_1_blade_wave_wall_burst_impact ... ok
+test weapon::blade_tests::tr32_1_brush_drag_paint_and_ink ... ok
+test weapon::blade_tests::tr32_1_brush_swipe_values_and_alternation ... ok
+test weapon::blade_tests::tr32_1_roller_drag_paint_ink_and_rng ... ok
+test weapon::blade_tests::tr32_2_blade_busy_and_swing_window ... ok
+test weapon::blade_tests::tr32_2_blade_drop_delay_freezes_the_first_frames ... ok
+test weapon::blade_tests::tr32_2_blade_lunge_safe_samples ... ok
+test net::tests::sample_is_built_losslessly_from_sim_state ... ok
+test weapon::blade_tests::tr32_2_brush_melee_box_and_cd ... ok
+test weapon::blade_tests::tr32_2_brush_moving_boundary ... ok
+test weapon::blade_tests::tr32_2_ghost_wave_is_silent ... ok
+test weapon::blade_tests::tr32_2_blade_melee_bounds_arc_los_and_once ... ok
+test weapon::blade_tests::tr32_2_drop_dmg_far_lerp ... ok
+test weapon::blade_tests::tr32_2_roller_flick_timing_and_low_ink ... ok
+test weapon::bow_tests::tr33_1_bow_shot_tier_boundaries ... ok
+test weapon::bow_tests::tr33_1_arrow_dive_past_range ... ok
+test weapon::bow_tests::tr33_1_burst_splash_needs_los ... ok
+test weapon::bow_tests::tr33_1_burst_splash_falloff ... ok
+test weapon::bow_tests::tr33_1_direct_hit_drops_then_lodges ... ok
+test weapon::bow_tests::tr33_1_draw_then_release_full ... ok
+test weapon::bow_tests::tr33_1_ghost_arrow_impact ... ok
+test weapon::bow_tests::tr33_1_ghost_arrow_mutes_everything ... ok
+test weapon::bow_tests::tr33_1_lodged_fuse_bursts ... ok
+test net::tests::sample_survives_serde_round_trip ... ok
+test weapon::bow_tests::tr33_1_max_arrows_cap ... ok
+test weapon::bow_tests::tr33_1_low_ink_empty_click ... ok
+test weapon::bow_tests::tr33_1_move_speed_drawing_and_firing ... ok
+test weapon::blade_tests::tr32_2_roller_melee_gates_and_window ... ok
+test weapon::bow_tests::tr33_1_tank_caps_charge ... ok
+test weapon::bow_tests::tr33_1_sweep_stalled_draw ... ok
+test weapon::bow_tests::tr33_1_tap_arrow_impact_splat ... ok
+test weapon::bow_tests::tr33_1_volley_air_fan ... ok
+test weapon::brolly_tests::tr30_1_brolly_kit_init ... ok
+test weapon::bow_tests::tr33_1_trail_drip_two_draws ... ok
+test weapon::bow_tests::tr33_1_volley_ground_fan_and_record ... ok
+test weapon::brolly_tests::tr30_1_launched_canopy_slides_paints_blocks ... ok
+test weapon::brolly_tests::tr30_1_pellet_blast_merges_into_one_hit ... ok
+test weapon::brolly_tests::tr30_1_pellet_damage_falloff ... ok
+test weapon::mitts_tests::tr33_2_cling_enter_and_drain ... ok
+test weapon::mitts_tests::tr33_2_cling_enter_rejects_glancing_and_floor ... ok
+test weapon::mitts_tests::tr33_2_cling_exit_causes ... ok
+test weapon::mitts_tests::tr33_2_cling_punches_right_hand_only ... ok
+test weapon::mitts_tests::tr33_2_fist_direct_hit ... ok
+test weapon::mitts_tests::tr33_2_fist_life_bursts_in_air ... ok
+test weapon::mitts_tests::tr33_2_fist_splash_falloff_and_direct_excluded ... ok
+test weapon::mitts_tests::tr33_2_fist_splash_needs_los ... ok
+test weapon::mitts_tests::tr33_2_fist_wall_burst_one_draw ... ok
+test weapon::mitts_tests::tr33_2_guard_arc_halves_frontal_damage ... ok
+test weapon::mitts_tests::tr33_2_guard_arc_uses_owner_position ... ok
+test weapon::mitts_tests::tr33_2_hang_freezes_velocity ... ok
+test weapon::mitts_tests::tr33_2_jump_hook_swallows_and_starts ... ok
+test weapon::mitts_tests::tr33_2_land_splash_damage_and_rng ... ok
+test weapon::mitts_tests::tr33_2_land_splash_needs_los ... ok
+test weapon::mitts_tests::tr33_2_leap_armor_and_grace ... ok
+test weapon::mitts_tests::tr33_2_leap_charge_release ... ok
+test weapon::mitts_tests::tr33_2_leap_velocity_endpoints ... ok
+test weapon::mitts_tests::tr33_2_leap_wall_exit_guard ... ok
+test weapon::mitts_tests::tr33_2_ledge_cancel_charge ... ok
+test weapon::mitts_tests::tr33_2_low_ink_punch_empty_click ... ok
+test weapon::mitts_tests::tr33_2_move_speed_arms ... ok
+test weapon::mitts_tests::tr33_2_punch_backfill_capped_at_two ... ok
+test weapon::mitts_tests::tr33_2_punch_cadence_hands_and_rng ... ok
+test weapon::mitts_tests::tr33_2_stale_seen_resets ... ok
+test weapon::mitts_tests::tr33_2_step_jump_swallowed_by_charge ... ok
+test weapon::tests::ballistic_is_a_noop_outside_its_envelope ... ok
+test weapon::tests::capsule_distance_matches_analytic_values ... ok
+test weapon::tests::rng_is_deterministic_and_bounded ... ok
+test weapon::tests::runner_bloom_and_spread_track_upstream_formulas ... ok
+test weapon::tests::runner_move_speed_uses_firing_penalty ... ok
+test weapon::tests::tr29_2_fire_round_straight_then_parabola_and_life_cutoff ... ok
+test net::tests::tick_and_messages_survive_serde_round_trip ... ok
+test weapon::tests::tr29_2_spread_cone_is_bounded_and_seed_deterministic ... ok
+test weapon::tests::tr29_2_trail_drips_paint_the_deck_under_a_fixed_seed ... ok
+test weapon::tests::tr30_1_blaster_airburst_splash_falloff ... ok
+test weapon::tests::tr30_1_blaster_burst_paints_the_deck ... ok
+test weapon::brolly_tests::tr30_1_brolly_open_then_launch ... ok
+test weapon::tests::tr30_1_blaster_direct_hit_kills ... ok
+test weapon::tests::tr29_2_kind_table_and_dispatch_skeleton ... ok
+test net::replication::tests::tr30_2_pack_slots_three_loadouts ... ok
+test weapon::tests::tr30_1_twins_hit_damage_30 ... ok
+test weapon::tests::tr30_1_twins_roll_plants_the_turret ... ok
+test weapon::tests::tr30_1_twins_cadence_ink_and_bloom ... ok
+test weapon::tests::tr31_1_charger_hitscan_damage_and_events ... ok
+test weapon::tests::tr30_1_blaster_cadence_ink_and_fields ... ok
+test weapon::brolly_tests::tr30_1_brolly_cadence_ink_and_pellet_cone ... ok
+test weapon::tests::tr31_2_lob_aim_solves_the_arc ... ok
+test weapon::tests::tr31_2_volley_passthrough_and_below_falloff ... ok
+test weapon::tests::tr7_1_three_hits_kill_and_invuln_blocks_the_fourth ... ok
+test weapon::tests::tr31_2_bucket_windup_and_blob_taper ... ok
+test weapon::tests::tr7_3_straight_phase_then_parabola_and_range_cutoff ... ok
+test weapon::tests::tr7_4_impact_paints_the_face_queryable_by_the_grid ... ok
+test weapon::tests::tr31_1_charger_charge_curve_and_release_timing ... ok
+test weapon::tests::tr31_1_spinner_linear_charge_and_burst_stream ... ok
+test weapon::brolly_tests::tr30_1_held_canopy_blocks_breaks_regrows ... ok
+test weapon::tests::tr30_1_twins_roll_chain_lockout_and_refill ... ok
+test weapon::tests::tr7_2_ink_gating_and_shots_to_empty ... ok
+
+test result: ok. 305 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 8.30s
+
+[1m[92m     Running[0m unittests src/bin/ink-atlas-check.rs (target/debug/deps/ink_atlas_check-d3a9b7ca4d8ac0b6)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src/bin/inkwave-autopilot.rs (target/debug/deps/inkwave_autopilot-8d2f666bf47ae5c5)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/net_harness-34849988591e1e44)
+
+running 5 tests
+test match_e2e::tests::kink_is_zero_on_a_steady_line_and_spikes_on_a_snap ... ok
+test match_e2e::tests::sample_interpolates_and_guards_brackets ... ok
+test match_e2e::tests::pct_matches_the_js_selection_rule ... ok
+test match_e2e::tests::kink_skips_dead_and_respawned_brackets ... ok
+test match_e2e::tests::teleport_counts_only_clean_big_jumps ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src/main.rs (target/debug/deps/net_harness-3a6b9a80a672bc18)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/acceptance.rs (target/debug/deps/acceptance-dd6506b29597a1e4)
+
+running 4 tests
+test heartbeat_cadence_and_rtt_end_to_end ... ok
+test fake_scenario_lagless_is_consistent ... ok
+test fake_scenario_lag_jitter_spike_is_consistent_and_deterministic ... ok
+test shim_scenario_is_consistent ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.00s
+
+[1m[92m     Running[0m tests/e2e_match.rs (target/debug/deps/e2e_match-00cda10bfdf4644b)
+
+running 5 tests
+test tr25_guest_dropped_to_bot ... ok
+test tr25_full_match_three_clients ... ok
+test tr25_lag_scenario_stats ... ok
+test tr25_full_match_deterministic ... ok
+test tr25_host_migration ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.83s
+
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/relay_shim-2f593a67ab17d7c4)
+
+running 8 tests
+test tests::code_valid_is_uppercase_alnum_4_to_8 ... ok
+test tests::base36_ids_have_js_shape ... ok
+test tests::clean_name_strips_and_falls_back ... ok
+test tests::origin_ok_matches_worker_regex ... ok
+test tests::hygiene_sweep_drops_a_silent_socket ... ok
+test tests::hygiene_rate_and_msg_max ... ok
+test tests::three_sockets_welcome_election_fanout_leave_and_lock ... ok
+test tests::join_ladder_texts_and_runtime_ping ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.00s
+
+[1m[92m     Running[0m unittests src/main.rs (target/debug/deps/relay_shim-394e297e28a3c576)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m inkwave_sim
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m net_harness
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m relay_shim
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+TEST_EXIT=0
+TOTAL_PASSED=389
+=== wasm32 check ===
+[1m[92m    Checking[0m inkwave_sim v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave_sim)
+[1m[92m    Checking[0m inkwave v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave)
+[1m[92m    Finished[0m ]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\`dev` profile [unoptimized + debuginfo]]8;;\ target(s) in 10.54s
+WASM_EXIT=0
+=== cargo tree -p inkwave_sim ===
+inkwave_sim v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave_sim)
+[2m├──[0m glam v0.30.10
+[2m│[0m   [2m└──[0m serde_core v1.0.229
+[2m├──[0m serde v1.0.229
+[2m│[0m   [2m├──[0m serde_core v1.0.229
+[2m│[0m   [2m└──[0m serde_derive v1.0.229 (proc-macro)
+[2m│[0m   [2m [0m   [2m├──[0m proc-macro2 v1.0.107
+[2m│[0m   [2m [0m   [2m│[0m   [2m└──[0m unicode-ident v1.0.26
+[2m│[0m   [2m [0m   [2m├──[0m quote v1.0.47
+[2m│[0m   [2m [0m   [2m│[0m   [2m└──[0m proc-macro2 v1.0.107 [33m[2m(*)[39m[22m
+[2m│[0m   [2m [0m   [2m└──[0m syn v3.0.6
+[2m│[0m   [2m [0m   [2m [0m   [2m├──[0m proc-macro2 v1.0.107 [33m[2m(*)[39m[22m
+[2m│[0m   [2m [0m   [2m [0m   [2m├──[0m quote v1.0.47 [33m[2m(*)[39m[22m
+[2m│[0m   [2m [0m   [2m [0m   [2m└──[0m unicode-ident v1.0.26
+[2m└──[0m serde_json v1.0.151
+[2m [0m   [2m├──[0m itoa v1.0.18
+[2m [0m   [2m├──[0m memchr v2.8.3
+[2m [0m   [2m├──[0m serde_core v1.0.229
+[2m [0m   [2m└──[0m zmij v1.0.23
+TREE_EXIT=0
+=== trunk build ===
+2026-10-31T09:15:37.179218Z  INFO 🚀 Starting trunk 0.21.14
+2026-10-31T09:15:37.183613Z  INFO 📦 starting build
+[1m[92m   Compiling[0m inkwave_sim v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave_sim)
+2026-10-31T09:15:39.748964Z  INFO ⏫ Found an update of trunk: 0.21.14 -> 0.22.1
+[1m[92m   Compiling[0m inkwave v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave)
+[1m[92m    Finished[0m ]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\`release` profile [optimized]]8;;\ target(s) in 40.33s
+2026-10-31T09:16:32.743327Z  INFO applying new distribution
+2026-10-31T09:16:32.746532Z  INFO ✅ success
+TRUNK_EXIT=0
+=== headless ===
+[1m[92m   Compiling[0m inkwave_sim v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave_sim)
+[1m[92m   Compiling[0m inkwave v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave)
+[1m[92m    Finished[0m ]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\`release` profile [optimized]]8;;\ target(s) in 55.27s
+[1m[92m     Running[0m `target/release/inkwave --headless --frames 600`
+[inkwave] boot: sim crate 0.1.0-m1 (headless = true)
+[inkwave] headless frames complete
+HEADLESS_EXIT=0
+=== JS tree git status ===
+JS_TREE_CLEAN (empty above)
+GATES_DONE

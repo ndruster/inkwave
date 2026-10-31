@@ -143,6 +143,7 @@ use crate::tuning::{Difficulty, PlayerTuning, Spritzer, WeaponSet};
 use crate::weapon::blade::BladeWave;
 use crate::weapon::brolly::LaunchedCanopy;
 use crate::weapon::{PROJ_DRAG, PROJ_GRAV, PROJ_SIZE, SHOT_LIFE, WeaponKind};
+use crate::weapon::{bow, mitts};
 use glam::{Vec3, vec3};
 
 /// JS `TICK = 1/20` (netmatch.js L30): owners stream every 1/20 s.
@@ -938,6 +939,58 @@ impl Replication {
                                     true,
                                 ));
                             }
+                            // JS `bow.js ghost(a, d)` L300-305: `[m×3, dir×3,
+                            // c, air]` → the three-arrow volley with the
+                            // `ghost` flag (arrows neither paint nor hurt).
+                            "bow" => {
+                                if k.data.len() < 8 {
+                                    continue;
+                                }
+                                let d = &k.data;
+                                let s = bow::bow_shot(d[6], &w.bow);
+                                let pos = vec3(d[0], d[1], d[2]);
+                                // JS L303: `_gd.set(d[3], d[4], d[5]).normalize()`.
+                                let dir = vec3(d[3], d[4], d[5]).normalize_or(Vec3::Z);
+                                bow::volley(
+                                    &m.actors[i],
+                                    &s,
+                                    pos,
+                                    dir,
+                                    d[7] != 0.0,
+                                    true,
+                                    &mut m.arrows,
+                                    &mut m.projectiles,
+                                );
+                            }
+                            // JS `mitts.js ghost(a, d)` L863-870: only the
+                            // `0` (fist spawn) variant has a sim-side object;
+                            // `1` (land splash) / `2` (cling tick) are FX the
+                            // sim does not model — consumed and ignored.
+                            "mitts" => {
+                                let d = &k.data;
+                                if d.len() < 8 || d[0] != 0.0 {
+                                    continue;
+                                }
+                                let pos = vec3(d[1], d[2], d[3]);
+                                // JS L866: `spawnFist(…, _dir.set(d[4], d[5], d[6]),
+                                // true)` — the sender's aim dir is copied as-is
+                                // (`spawnFist` L132), never re-normalised here.
+                                let dir = vec3(d[4], d[5], d[6]);
+                                m.fists.push(mitts::MittsFist {
+                                    owner_slot: m.actors[i].slot,
+                                    team: m.actors[i].team,
+                                    pos,
+                                    prev: pos,
+                                    vel: dir * w.mitts.fist_speed,
+                                    dir,
+                                    age: 0.0,
+                                    life: w.mitts.fist_range / w.mitts.fist_speed,
+                                    hand: d[7] as i32,
+                                    seed: m.projectiles.rng.next_f32(),
+                                    trail: -0.8,
+                                    ghost: true,
+                                });
+                            }
                             _ => {}
                         }
                     }
@@ -1070,7 +1123,11 @@ impl Replication {
         };
         let d = wire::r2(wire::dec(damage)) as f32;
         if self.owners[vi] == self.my_id {
-            m.actors[vi].damage(d, Some(attacker), t);
+            // JS reads the attacker's *current* position in the victim's
+            // `damageTaken` hook — on this machine the attacker is a proxy,
+            // so its interpolated pos is the faithful stand-in (Task 33 §5).
+            let ap = m.actors[ai].pos;
+            m.actors[vi].damage(d, Some(attacker), Some(ap), t);
             return;
         }
         let msg = DirectMsg::Hit {
@@ -1244,7 +1301,8 @@ impl Replication {
             return;
         }
         let atk = (m.actors[ai].team, m.actors[ai].slot);
-        m.actors[vi].damage(dmg, Some(atk), t);
+        let ap = m.actors[ai].pos;
+        m.actors[vi].damage(dmg, Some(atk), Some(ap), t);
     }
 
     /// JS `sendResult` (L650-655): the host's final count, broadcast. The JS

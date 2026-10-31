@@ -140,7 +140,7 @@
 - **裁决/偏差记录**：`ground_stroke`→`Turf` 经 `SimEvent::Turf` 记账（同 Spritzer 命中模型）；D-T32-2/3 偏差（blade-fx 简化、远端波单记录）落 spec §5；`swipe_side` 抛时翻转（首扫 side=−1）；`spawn_at` 将 pos.y 吸附地面（甲板顶 y=0，全部 y 断言基准 0.0）；三分搜索边界偏差以容差 0.5+内点采样处置。
 
 ## Task 33: 主武器批四——特殊机制类（bow/mitts）
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 29、Task 32
 - **Description**:
@@ -151,6 +151,26 @@
   - `rule` TR-33.2: cling 状态进入/退出（jump/墨尽）与 drain 时序用例。
   - `rule` TR-33.3: actor 扩展回归——既有移动/游泳/重生测试不破。
 - **Notes**: 本任务风险最高（actor 状态机），先写 spike 评审再落码。
+
+### Task 33 Completion Evidence（2026-10-31）
+- **TR-33.1 ✅**：18 个固定种子逐值测试全绿（`weapon/bow_tests.rs`）。shot 档位表逐值（`bow_shot`：0.449→tier0 `lerp(14,20,u)`=19.9867/range 7.4944/speed_tap/fan_tap、不 lodging 无 fuse 无 burst 组；0.45→tier1 起 lodging+fuse 0.7+burst 组 0；0.998→tier1 上段 37.97/16.4855/47.9782；满充→tier2 damageFull 55/fuse 0.55/burst 组 1）；地面 volley 绕 UP 三箭扇（RNG 按 i=−1,0,+1 三抽、侧箭 side=dmg·side_mul、`['k','bow']` 记录）、空中 volley 绕 dir×UP；draw→release 全流程（tank caps charge、低墨 empty click、sweep stalled draw）；箭飞行（straight 段→重力段、dive past range、tap impact splat、直伤先掉后插、lodged fuse burst 溅射 `lerp(bd,be,d/br)`+LOS 必需、ghost 全静默、trail drip 两抽）；MAX_ARROWS=192 池顶（新箭逐出、swap_remove 语义）；move_speed 蓄力/射击段。
+- **TR-33.2 ✅**：26 个 mitts 测试全绿（`weapon/mitts_tests.rs`）。leap 端点逐值（`leap_velocity`：charge=0→10.9·(sin40,cos40)、charge=1→18.6、角钳 60°上/18°下、wall exit guard）；punch（左右手交替 cadence+RNG 消耗序、backfill 上限 2、cling 中仅右手、低墨 empty click、fist 寿终空中爆、直伤 38、溅射 falloff+直伤排除、LOS 必需、wall burst 一抽）；leap 蓄力（release 推离 1 抽、ledge cancel、stale seen 复位、jump hook 吞/起）；cling（进入同帧起 drain 8/s、glancing/floor 拒绝、四种退出：jump/脱离/墨尽 'empty'（4 墨 8/s ≤31 帧）/失墙、hang 冻速——贴墙态在 `MittsKit`，`Actor::step` 消费 `k.hang` 实现 JS actor.js L502-507）；land splash（glove 砸地+伤害环 lerp+25 抽+LOS）；guard 弧（正面 70° 内 ×guard_armor 减伤（测试覆写 0.65 断言）、背后满伤、leap 甲+grace、move_speed 全臂）。
+- **TR-33.3 ✅**：actor 状态机扩展回归——M1/M2 既有移动/游泳/重生测试逐条不破（lib 303→305、workspace 345→389 单调递增）。
+- **架构落地（spec §1–§7）**：`weapon/bow.rs`（新增）——`BowKit` 蓄力/释放状态机 + `bow_shot` 档位表 + `BowArrow::step`（straight/重力/dive/lodge/fuse burst/直伤 `route_hit` 路由/trail drip/ghost）；`weapon/mitts.rs`（新增）——`MittsKit`（charge/leap/cling/hang）+ `MittsFist::step` + `leap_velocity`/`land_splash`/`start_cling`/`drop_cling` + `KitArmor` 每帧快照（JS `damageTaken` L883-903，spec §4）；D-T33-1：`predictLeap`/telegraph 不移植（落点由真实物理接触决定）。`actor.rs`——`kit_armor: Option<KitArmor>` + jump hook（JS actor.js L311-313）+ `k.hang` 冻速 + `busy()` 偏差声明。`weapon.rs`——`is_wired` 12 类全真、`ensure_mitts` 惰性初始化（bow 的 kit 槽由 `bow.rs` 内部懒建）、move_speed/spread_deg bow/mitts 臂。`match_.rs`——arrows/fists 世界对象步进+`swap_remove` 删除、Mitts actor 循环预接 runner。`net/replication.rs`——`['k','bow']`/`['k','mitts']` case 0 ghost 重放（mitts 分支 `d.len()<8||d[0]!=0.0` 守卫、ghost fist dir 原样拷贝）。**e2e shim 移除**：net-harness `match_e2e.rs` Task 30 bot-kind 强制 Shooter 块删除（12 武器全部 wired），tr25 5 测试 + acceptance 4 测试全绿。
+- **门禁**：全量九段矩阵全 exit 0，日志 `rust/tools/verify/logs/task33-gates-20261031T091834Z.log`（fmt/clippy/test/wasm32/cargo tree/trunk release/headless 600 帧/JS 树零改动；workspace **389 passed** > 345 单调递增）。
+
+### Task 33 Review 附录（独立评审：1 P0 / 2 P1 / 5 P2 → 全部处置 → 门禁复验全绿）
+- **P0-1 ✅** mitts guard 弧位置源错误：`route_hit` 的 `a_pos` 改 `Option<Vec3>`，burst 溅射（JS mitts.js L169）与 step 直伤（L212）改从 `foes` 按 slot+team 查 owner **实时位置**（原用拳 spawn 位/命中点，弧判定错位）；`land_splash` 两处传 `Some(a_pos)`；补回归测试 `tr33_2_guard_arc_uses_owner_position`（owner 在 victim 背后满伤 38/挪至正面 ×0.65 对照）。
+- **P1-1 ✅（声明偏差）** `busy()` 未接 squid dive（JS actor.js L282）/idle refill（L358）——`Actor::step` 无 runner 句柄、12 武器共性，落 actor.rs 模块注释「Declared deviation (Task 33 review P1-1)」，留 follow-up。
+- **P1-2 ✅** replication mitts ghost 分支守卫调序 `d.len() < 8 || d[0] != 0.0`（先长度后值，杜绝越界面）。
+- **P2-1 ✅** 池满删除统一 `swap_remove`（bow.rs volley `arrows.swap_remove(0)` 对 JS `kill(0)` L71；match_.rs arrows/fists 同步）；`tr33_1_max_arrows_cap` 断言改 swap 语义（1000/1191 被逐、老箭 190 存活、`arrows[0]` 为新箭）。
+- **P2-2 ✅** `start_cling` 注释记 JS L466 `botHold` 未移植（Task 39 bot 驱动）。
+- **P2-3 ✅** replication ghost fist dir 去 normalize（JS mitts.js L866 原样拷贝），锚点改 L863-870/L866。
+- **P2-4 ✅** bow `SimEvent::Impact` 移出 `if !p.ghost`（JS bow.js L207 emit 无条件）——ghost 箭仅发 Impact 不发 Hit 不扣血；补回归测试 `tr33_1_ghost_arrow_impact`。
+- **P2-5 ✅** `weapon.rs` 新增 `ensure_mitts`（ensure_brolly 旁，ink_min=`w.mitts.leap_ink_min`），`match_.rs` Mitts actor 循环 a.step 前调用（修 kit 状态槽首帧缺失）。
+- **锚点 ✅** actor.rs guard 弧注释改「JS mitts.js L888-889」。
+- 评审员实现侧疑点两条核实：① `SimEvent::Hit` 携减伤前原始伤害与 JS `applyHit` L1553 `emit('hit',{damage:dmg})` 一致（armor 在 `victim.damage()` 内应用，actor.js L184）；② `foes` 扫描不含 owner 仅测试直调退化路径，match 实路径 `FoeScan::all` 全体包含，无问题。
+- 修复复验：重跑首段 FMT 绿、CLIPPY 抓到新回归测试 `unused_mut` → 修复后九段复跑全 exit 0（389 passed），日志同上。
 
 ## Task 34: 副武器 15 个 + 设备网络语义（['b']/'dh'）
 - **Status**: `pending`

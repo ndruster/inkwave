@@ -132,8 +132,8 @@ impl Sim {
             let [s, v] = self.actors.as_mut_slice() else {
                 unreachable!("two actors");
             };
-            s.step(DT, inp, &sim, &zero, &self.f.t);
-            v.step(DT, &idle(), &sim, &zero, &self.f.t);
+            s.step(DT, inp, &sim, &zero, &self.f.t, None);
+            v.step(DT, &idle(), &sim, &zero, &self.f.t, None);
             let gate = s.fire_gate;
             self.runners[0].update(
                 DT,
@@ -150,6 +150,9 @@ impl Sim {
                 None,
                 false,
                 0.0,
+                &mut Vec::new(),
+                &mut Vec::new(),
+                false,
             );
         }
         self.ps.step(
@@ -274,6 +277,9 @@ fn tr7_2_ink_gating_and_shots_to_empty() {
             None,
             false,
             0.0,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            false,
         );
         fired += ps
             .drain_events()
@@ -311,6 +317,9 @@ fn tr7_2_ink_gating_and_shots_to_empty() {
             None,
             false,
             0.0,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            false,
         );
         low += ps
             .drain_events()
@@ -573,6 +582,9 @@ fn runner_bloom_and_spread_track_upstream_formulas() {
         None,
         false,
         0.0,
+        &mut Vec::new(),
+        &mut Vec::new(),
+        false,
     );
     assert!(r.bloom < 1.0);
 }
@@ -603,6 +615,9 @@ fn runner_move_speed_uses_firing_penalty() {
         None,
         false,
         0.0,
+        &mut Vec::new(),
+        &mut Vec::new(),
+        false,
     );
     assert_eq!(
         r.move_speed(WeaponKind::Shooter, &f.t, &f.w),
@@ -818,9 +833,10 @@ fn tr29_2_kind_table_and_dispatch_skeleton() {
     assert!(WeaponKind::Roller.is_wired());
     assert!(WeaponKind::Brush.is_wired());
     assert!(WeaponKind::Blade.is_wired());
-    // The remaining kinds are the Task 33 batch.
-    assert!(!WeaponKind::Bow.is_wired());
-    assert!(!WeaponKind::Mitts.is_wired());
+    // Task 33 batch four: bow / mitts joined the wired set — all 12 kinds
+    // now dispatch for real.
+    assert!(WeaponKind::Bow.is_wired());
+    assert!(WeaponKind::Mitts.is_wired());
 
     // Move-speed table (weapons.js L63-92): idle is always the run speed,
     // the firing states read the def, the kit kinds stay at run speed.
@@ -845,9 +861,18 @@ fn tr29_2_kind_table_and_dispatch_skeleton() {
         r.move_speed(WeaponKind::Brush, &f.t, &f.w),
         f.w.brush.move_speed_firing
     );
-    for k in [WeaponKind::Bow, WeaponKind::Mitts] {
-        assert_eq!(r.move_speed(k, &f.t, &f.w), f.t.run_speed, "kit {k:?}");
-    }
+    // Task 33: the bow / mitts kits join the firing window (bow.js L446 /
+    // mitts.js L910 `moveSpeedFiring`).
+    assert_eq!(
+        r.move_speed(WeaponKind::Bow, &f.t, &f.w),
+        f.w.bow.move_speed_firing,
+        "bow firing"
+    );
+    assert_eq!(
+        r.move_speed(WeaponKind::Mitts, &f.t, &f.w),
+        f.w.mitts.move_speed_firing,
+        "mitts firing"
+    );
     // Task 32: the blade kit owns its curve (blade.js L683-689) — with the
     // pose window active the kit `moveSpeedFiring` applies.
     assert_eq!(
@@ -921,10 +946,15 @@ fn tr29_2_kind_table_and_dispatch_skeleton() {
         WeaponKind::Brush,
         WeaponKind::Bow,
         WeaponKind::Blade,
-        WeaponKind::Mitts,
     ] {
         assert_eq!(r.spread_deg(true, k, &f.w), 0.0, "spread {k:?}");
     }
+    // Task 33: the mitts punch cone reads the def (mitts.js L139 `spread`).
+    assert_eq!(
+        r.spread_deg(true, WeaponKind::Mitts, &f.w),
+        f.w.mitts.punch_spread,
+        "spread Mitts"
+    );
     // Brolly cone (brolly.js fireBlast): ground vs air spread from the def.
     assert!((r.spread_deg(true, WeaponKind::Brolly, &f.w) - f.w.brolly.spread_deg).abs() < MM);
     assert!((r.spread_deg(false, WeaponKind::Brolly, &f.w) - f.w.brolly.spread_air).abs() < MM);
@@ -966,6 +996,9 @@ fn tr29_2_kind_table_and_dispatch_skeleton() {
             None,
             false,
             0.0,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            false,
         );
     }
     assert_eq!(a.ink, ink0, "charger arm must not consume ink yet");
@@ -1007,6 +1040,9 @@ fn tr30_1_twins_cadence_ink_and_bloom() {
             None,
             false,
             0.0,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            false,
         );
         for e in ps.drain_events() {
             if let SimEvent::Fire { .. } = e {
@@ -1097,6 +1133,9 @@ fn tr30_1_twins_roll_plants_the_turret() {
         None,
         false,
         0.0,
+        &mut Vec::new(),
+        &mut Vec::new(),
+        false,
     );
     let _ = ps.drain_events();
     let normal = ps.list.last().unwrap();
@@ -1133,6 +1172,9 @@ fn tr30_1_twins_roll_plants_the_turret() {
             None,
             false,
             0.0,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            false,
         );
         ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
     }
@@ -1155,6 +1197,9 @@ fn tr30_1_twins_roll_plants_the_turret() {
             None,
             false,
             0.0,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            false,
         );
         ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
     }
@@ -1181,6 +1226,9 @@ fn tr30_1_twins_roll_plants_the_turret() {
         None,
         false,
         0.0,
+        &mut Vec::new(),
+        &mut Vec::new(),
+        false,
     );
     let planted = ps.list.last().unwrap();
     assert!(ps.list.len() > n_before);
@@ -1205,6 +1253,9 @@ fn tr30_1_twins_roll_plants_the_turret() {
         None,
         false,
         0.0,
+        &mut Vec::new(),
+        &mut Vec::new(),
+        false,
     );
     assert!(!r.turret, "walking un-plants");
     // Releasing the trigger also un-plants.
@@ -1224,6 +1275,9 @@ fn tr30_1_twins_roll_plants_the_turret() {
         None,
         false,
         0.0,
+        &mut Vec::new(),
+        &mut Vec::new(),
+        false,
     );
     assert!(!r.turret, "releasing the trigger un-plants");
 }
@@ -1266,6 +1320,9 @@ fn tr30_1_twins_roll_chain_lockout_and_refill() {
             None,
             false,
             0.0,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            false,
         );
         ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
     }
@@ -1294,6 +1351,9 @@ fn tr30_1_twins_roll_chain_lockout_and_refill() {
             None,
             false,
             0.0,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            false,
         );
         ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
     }
@@ -1345,6 +1405,9 @@ fn tr30_1_blaster_cadence_ink_and_fields() {
             None,
             false,
             0.0,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            false,
         );
         shots += ps
             .drain_events()
@@ -1538,6 +1601,9 @@ fn hold(
             None,
             false,
             0.0,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            false,
         );
     }
 }
@@ -1559,6 +1625,9 @@ fn release(r: &mut WeaponRunner, a: &mut Actor, k: WeaponKind, f: &Fix, ps: &mut
         None,
         false,
         0.0,
+        &mut Vec::new(),
+        &mut Vec::new(),
+        false,
     );
 }
 
@@ -1891,6 +1960,9 @@ fn tr31_2_bucket_windup_and_blob_taper() {
         None,
         false,
         0.0,
+        &mut Vec::new(),
+        &mut Vec::new(),
+        false,
     );
     assert_eq!(r.flick, 0.0, "the throw wound up on the tap");
     assert!((a.ink - (f.t.ink_max - bw.ink_per_shot)).abs() < MM);

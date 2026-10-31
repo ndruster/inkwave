@@ -128,6 +128,9 @@ fn frame(
         None,
         g.fire,
         0.0,
+        &mut Vec::new(),
+        &mut Vec::new(),
+        false,
     );
     ps.drain_events()
 }
@@ -1105,6 +1108,9 @@ fn tr32_2_roller_melee_gates_and_window() {
             None,
             false,
             0.0,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            false,
         );
         ps.drain_events()
             .iter()
@@ -1159,6 +1165,9 @@ fn tr32_2_roller_melee_gates_and_window() {
             None,
             false,
             0.0,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            false,
         );
         hits += ps
             .drain_events()
@@ -1206,6 +1215,9 @@ fn tr32_2_brush_melee_box_and_cd() {
             None,
             false,
             0.0,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            false,
         );
         let ev = ps.drain_events();
         for e in &ev {
@@ -1246,6 +1258,9 @@ fn tr32_2_brush_melee_box_and_cd() {
         None,
         false,
         0.0,
+        &mut Vec::new(),
+        &mut Vec::new(),
+        false,
     );
     assert_eq!(
         ps2.drain_events()
@@ -1296,6 +1311,9 @@ fn tr32_2_blade_melee_bounds_arc_los_and_once() {
                 None,
                 i == 0,
                 0.0,
+                &mut Vec::new(),
+                &mut Vec::new(),
+                false,
             );
             hits += ps
                 .drain_events()
@@ -1368,6 +1386,9 @@ fn tr32_2_blade_melee_bounds_arc_los_and_once() {
             None,
             i == 0,
             0.0,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            false,
         );
         // Count only the melee hits (35): the crescent drops fired on frame 2
         // carry their own damage values and must not confuse the tally.
