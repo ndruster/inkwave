@@ -510,6 +510,13 @@ pub struct KitRecord {
     pub nid: u8,
     /// Kit kind string (JS `kind`, e.g. `'mitts'`).
     pub kind: String,
+    /// Sub-system kind string for `kind == "subs"` records — JS packs the
+    /// mixed array `['k', nid, 'subs', [op, gid, kindStr, …]]` (subs.js
+    /// L77/L103); the wire layer writes it back at `data[2]` and the decode
+    /// lifts it out again (the numeric vector keeps the JS index layout).
+    /// `None` for the main-weapon kits.
+    #[serde(default)]
+    pub sub_kind: Option<String>,
     /// Short array of rounded numbers the kit packs (JS `data`).
     pub data: Vec<f32>,
 }
@@ -868,6 +875,7 @@ mod tests {
             &mut a,
             crate::weapon::WeaponKind::Shooter,
             &f.tuning.weapons,
+            &f.tuning.subs,
             glam::Vec3::ZERO,
             &f.world,
             &mut proj,
@@ -879,6 +887,7 @@ mod tests {
             0.0,
             &mut Vec::new(),
             &mut Vec::new(),
+            false,
             false,
         );
         assert!(wr.firing(), "a shot must open the firing window");
@@ -923,13 +932,14 @@ mod tests {
         let sim = f.sim();
         let t = &f.tuning.player;
         let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
         let mut m = Match::with_roster(180.0, 42, &sim, t, &f.tuning.match_config, 2);
         // Step past the intro (4.2 s) with the trigger held so at least one
         // runner is firing and positions/velocities are non-trivial.
         let mut inputs = vec![crate::actor::ActorInput::default(); 4];
         for _ in 0..340 {
             inputs[0].fire = m.playing();
-            m.step(crate::actor::FIXED_DT, &inputs, &sim, t, w);
+            m.step(crate::actor::FIXED_DT, &inputs, &sim, t, w, sb);
         }
         let mut firing_seen = 0;
         for (i, (a, wr)) in m.actors.iter().zip(&m.runners).enumerate() {

@@ -552,13 +552,20 @@ pub fn encode_record(e: &TickEvent) -> String {
             js_str(ev.name.js_wire_name()),
             ev.payload.to_wire(),
         ]),
-        // ['k', nid, kind, data] (L136)
-        TickEvent::Kit(k) => arr([
-            js_str("k"),
-            num(f64::from(k.nid)),
-            js_str(&k.kind),
-            arr(k.data.iter().map(|d| num(dec(*d)))),
-        ]),
+        // ['k', nid, kind, data] (L136). The subs payload is the one mixed
+        // array: JS writes the sub kind *string* at `data[2]`
+        // (`[op, gid, kind, …]`, subs.js L77/L103), so the wire mirrors it.
+        TickEvent::Kit(k) => {
+            let data = match (&*k.kind, k.sub_kind.as_deref()) {
+                ("subs", Some(s)) => arr(k
+                    .data
+                    .iter()
+                    .enumerate()
+                    .map(|(i, d)| if i == 2 { js_str(s) } else { num(dec(*d)) })),
+                _ => arr(k.data.iter().map(|d| num(dec(*d)))),
+            };
+            arr([js_str("k"), num(f64::from(k.nid)), js_str(&k.kind), data])
+        }
         // ['z', e] (L148) — e carried verbatim.
         TickEvent::Zone(z) => arr([js_str("z"), z.payload.to_wire()]),
     }
@@ -630,15 +637,23 @@ pub fn decode_record(a: &[JVal]) -> Option<TickEvent> {
             name: ForwardEvent::from_js_name(a.get(1)?.as_str()?)?,
             payload: a.get(2).cloned().unwrap_or(JVal::Null),
         })),
-        "k" => Some(TickEvent::Kit(KitRecord {
-            nid: g(1) as u8,
-            kind: gs(2).unwrap_or_default(),
-            data: a
-                .get(3)
-                .and_then(JVal::as_array)
-                .map(|d| d.iter().map(|v| v.as_f64().unwrap_or(0.0) as f32).collect())
-                .unwrap_or_default(),
-        })),
+        "k" => {
+            let data_arr = a.get(3).and_then(JVal::as_array);
+            Some(TickEvent::Kit(KitRecord {
+                nid: g(1) as u8,
+                kind: gs(2).unwrap_or_default(),
+                // The subs record is a mixed array (subs.js L77/L103): the
+                // kind string rides `data[2]`; the numeric vector keeps the
+                // JS index layout with a `0.0` placeholder there.
+                sub_kind: data_arr
+                    .and_then(|d| d.get(2))
+                    .and_then(JVal::as_str)
+                    .map(str::to_string),
+                data: data_arr
+                    .map(|d| d.iter().map(|v| v.as_f64().unwrap_or(0.0) as f32).collect())
+                    .unwrap_or_default(),
+            }))
+        }
         "z" => Some(TickEvent::Zone(ZoneRecord {
             payload: a.get(1).cloned().unwrap_or(JVal::Null),
         })),
@@ -1462,6 +1477,7 @@ mod tests {
             nid: 2,
             kind: "mitts".into(),
             data: vec![0.5, 1.25, 0.0],
+            sub_kind: None,
         });
         assert_eq!(encode_record(&kit), "[\"k\",2,\"mitts\",[0.5,1.25,0]]");
         let zone = TickEvent::Zone(ZoneRecord {

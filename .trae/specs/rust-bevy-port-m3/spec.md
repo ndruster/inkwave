@@ -381,3 +381,66 @@
 - TR-33.3：actor 既有移动/游泳/重生测试全绿（签名扩展后调用点更新不破语义）。
 - 补充固定种子用例：bow 抽弓→释放全流程（charge_t 线性、tank 封顶 max_c、ring1 边界、cooldown 0.22、firing_t 0.35）；箭 lodging→burst fuse 0.7/0.55、tap 不 lodge 直接 splat、dive 段（dist>range 后 diveGrav/diveDrag）；mitts 出拳节奏（0.12s/发、guard<2 补发、side 交替、cling 时恒 0 手）、拳射程 4.6/28 寿终空中爆、splash `lerp(22,10,d/1.4)`+LOS+direct 排除、guard 减伤弧（±70° 内 ×0.5、外原值、leap armor ×0.35 + grace 0.15）。
 - 门禁：`/tmp/task32-gates.sh` → `/tmp/task33-gates.sh`，日志 `rust/tools/verify/logs/task33-gates-<UTC>.log` 九段全 exit 0；workspace 测试 > 345；JS 树零改动。
+
+# Task 34 实施设计（副武器 15 个 + 设备网络语义 ['b']/'dh'）
+
+## 0. 范围与模式
+SubSystem 平移（subs.js 693 行，非 kit 10 key + splat bomb 在 weapons.js bombs 段 L1431-1465/L1481-1507/L1711-1758）+ 5 个 kit sub（kits/shaker|waddle|torpedo|tracer|boomerang.js，约 3.5k 行，含呈现/音频）。纯逻辑移植：mesh/prop/curtain shader/audio/fx/rumble/nearCam/character.trigger/boss 分支一律不移植（既有范围）。数值全走 `tuning.rs` SUBS 15 组（Task 28 已提取），代码注释带 `// JS L…` 锚点。fixture 金标准扩展并入 Task 36（既有决议）。bot 驾驶段（各 kit `SUB_KITS[k].bot`）→ Task 38/39。
+
+网络语义（本任务实装）：
+- `['b', nid, kind, x,y,z, vx,vy,vz]`（recBomb，netmatch L124-127）：splat bomb/storm 抛体记录；Rust 收帧 → remote actor → ghost bomb（fuse 到点爆，**不喷墨不判伤**，JS mute L1751 语义）。`kind='storm'` 解码容忍不建云（D-T34-1，云属 Task 35）。
+- `['k', nid, 'subs', data]` ops：0 抛体 `[0,gid,kind,x,y,z,vx,vy,vz]`（L77）、1 放置 `[1,gid,kind,x,y,z,nx,ny,nz,yaw]`（L103）、2 结束 `[2,gid]`（L165）→ `net_ghost`（L192-212：op2 mine→blast/stuck|run→blast/else destroy；op0/1 ghost 建实体，paint mute + hits dropped）。
+- `['k', nid, <kit>, data]`：五 kit sub 各自 op 表（见 §5）。
+- `'dh'` DirectMsg::DeviceHit `{kind,id,d}`（sendDevHit L157-159 / case L210-213）：本地玩家击伤 ghost 设备 → 直发 owner；owner 收 → `kind=='subs'` → `SubSystem::net_hurt(gid,d)`，kit kind → 该 kit `net_hurt`；**非 owner 忽略**。owner 侧设备 `hp<=0` → 自身 `[2,gid]` 结束记录广播。
+
+## 1. 架构：新模块 `inkwave_sim::sub`
+- `sub.rs`：`SubSystem{ items: Vec<SubItem>, rng, seq, … }` + 每帧 `update`（倒序 `_step` 状态机分发，JS L155-184：fly/stuck/run/cloud/mist/curtain/spray/mine/beacon）+ 公共机制：`_blast`（L550-567 damage lerp(min,max,k*k)+LOS+damageArea 60）、`_pelletBlast`（L568-583）、`_paint`（L584-591 1+4 splat）、`_paint_under`、`_credit`（sp 标志走 add_turf_no_special——specialActive 属 Task 35，现阶段恒 false，记注）、`_stick`（L260-276）、`block_shot`（L609-632 curtain 段吸收 + spray/beacon 胶囊 0.34 阈值）、`block_ray`（L633-649）、`damage_area`（L650-658 radius+0.4 内 curtain/spray/beacon hurt）、`block_actor`（L660-672 curtain 推挤）、`_hurt`（L597-607 ghost→'dh'、curtain 只掉 hp）、`_destroy`/dead 回收（L164-167 含 `[2,gid]` 记录）、`track`/`poison`（L537-547 写 ActorStatus）。
+- `SubItem`：JS 鸭子类型 item 收敛为 struct + `SubState` 枚举（kind 用 `SubKind` 枚举 15 值；`sub` 调参经 `&SubSet` 按 kind 取，或存 `SubParams` 联合——实施取「kind 枚举 + 按 kind match 读 tuning」，避免 dyn）。ghost 标志 + gid + owner 槽位 + team + pos/vel/state/age/t/fuse/hp/uses/normal/face/u/v 等 JS 字段按需。
+- gid：JS `netId` = `owner.nid*1e5 + (++seq%1e5)`（registry L64-65）。Rust sim 层 owner 是 actor 槽位：`SubSystem.seq` 递增，`gid = owner_slot*100_000 + (seq%100_000)`（记录层经 nid 映射，同 Task 30 kit_out 范式：`SimEvent::SubSpawn{owner,kind,gid,data}` → replication 换 nid 编 `['k']`）。D-T34-5：gid 唯一性口径 sim 内成立即可，跨端以 (nid, gid) 对为键。
+- kit sub 五文件 `sub/shaker.rs` 等：各持自有对象列表（仿 `weapon/bow.rs`），`Match::subs` 内嵌或平级字段；blast/paint/hurt 复用 SubSystem helper。
+- Match 接线：`pub subs: SubSystem`（与 `projectiles` 平级）；步进序 = JS main.js 实读锚定（projectiles.update 之后、actors 移动后调 `block_actor`）；`ProjectileSim::step` 命中前插 `subs.block_shot`（JS weapons.js `_step` L1606 附近实读锚点）、charger beam 插 `block_ray`（L1245-1246，Task 31 留注）；blaster splash / 各爆 `damage_area`。reset/clear 同 projectiles。
+
+## 2. Deploy 路径（runner sub block，weapons.js L130-155）
+- `Actor` 新增 `sub: SubKind`（loadout；默认 `Bomb`，JS `a.sub || SUB.bomb` L133）；session roster `sub` 字段 → match spawn 接线（`net/session.rs` 已有 sub 透传）。
+- `WeaponRunner` 新增 `aiming_sub: bool`（JS aimingSub；F.subAim 槽 replication 已有解码）；`update` 尾增 sub block：`inp.sub && !aiming → aiming=true`（低墨仅本地提示，不移植音频）；`inp.sub_released && aiming`：`blocked?`（kit 一发在途守卫）→ 拒绝产 `SimEvent::SubCantUse`、墨不动（L143-145）；`ink>=ink_cost → ink-=ink_cost; last_fire=0; kind==bomb → projectiles.throw_bomb; else subs.use`（L146-153）；`!inp.sub && !sub_released → aiming=false`。barrage 分支（L132/146/148）不接（D-T34-6，Task 35）。shaker `hold` 挂点：`aiming_sub && kit.hold` → `shaker::hold`（L135）。
+- `use`（L71-79）：kit → kit use；`sub.placed` → `_place`；否则 pos.y+1.35、`throw_velocity`（复用 §3 同一函数）、`_throw` + 记录 + `SimEvent::SubUse`。
+- `_place`（L96-105）：脚下 raycast DOWN 3；roof/rail/perch 拒（L98，Rust blocks 旗标缺项视为可放，同 Task 33 cling 注记）；per-player 上限：mine 超 `max=2` 最旧 `_mine_blast`、beacon 超 `max=3` 最旧 destroy（L100-101，TR-34.3）。
+
+## 3. splat bomb（weapons.js，归 `ProjectileSim.bombs`）
+- `throw_velocity`（L1443-1447）：`pitch=clamp(aim_pitch+0.28,-0.3,1.1)`；`v=(sin(yaw)*cp*speed + vel.x*0.4, sin(pitch)*speed+1.5, cos(yaw)*cp*speed + vel.z*0.4)`。
+- `throw_bomb`（L1449-1465）：pos.y+1.35、fuse=-1、spin=rng 2 抽、`sp` 标志；本地非 remote → `TickEvent::Bomb` 记录。
+- `_update_bombs`（L1711-157）：grav 24、`segment` 弹地（vel 反 1.35 法向分量、乘 0.45 地面/0.6 墙）、`normal.y>0.6 && fuse<0 → fuse=0.95` + arm 事件；`fuse>=0` 递减到 0 → `_explode_bomb`（ghost 时 mute：不喷墨不判伤）；`pos.y < water_y-1.8` 直接移除（不爆）。
+- `_explode_bomb`（L1481-1507）：splat 1+5（paintRadius 2.7，5 环 `r=2.7*(0.6+0.4rng)`、半径 `0.7+0.5rng`）、`damage_area(radius 3.1,60)`、敌 `d<=3.1 && los` → `lerp(35,180,k*k)`、`applyHit('bomb')`。
+
+## 4. 设备注册表与击毁（'dh' 闭环）
+- 击毁判定入口：弹丸段 `block_shot`（curtain `dmg*shotMul`；spray/beacon 胶囊 `lift*2` 高、0.34 阈值 `dmg`）；charger `block_ray`（`dmg*shotMul`）；一切爆炸 `damage_area`（60/30/25 各源）。
+- `_hurt`：ghost → 产 `DirectMsg::DeviceHit{kind,gid,d}` 送 owner（curtain ghost 本地也掉 hp 表现衰减，L601）；非 ghost → `hp-=dmg`，curtain 只 fade（`_curtain` hp<=0 → destroy），其余 `hp<=0 → _destroy` + `[2,gid]`。
+- owner 收 'dh'：`items` 查 `!ghost && gid` → `_hurt`；非 owner（gid 无主/已死）忽略（TR-34.2）。
+- kit sub 击毁：waddle hp 30 / torpedo hp 20 走各自 `block_shot` 钩与 `net_hurt`（ops 见 §5）。
+
+## 5. 15 效果逐 key（实现分批：批一 = 基建+bomb+sticky/burst/seeker/scan/mist/curtain/sprinkler/mine/beacon + ['b']/'dh'/'subs' 网络；批二 = 5 kit sub）
+- **sticky**：`_stick(stuck, fuse 2.4)` → `_stuck` t>=fuse → `_blast(4.0, 180/35, 3.3, normal)`。
+- **burst**：飞行直撞敌胶囊（`segmentCapsuleDist`，L225-235，burst/mist 共用）→ `_pelletBlast(direct 60 / splash 35, radius 2.1, damage_area 25)`；撞地同爆（L244）。
+- **seeker**：落地 floor → `_startRun`（heading=atan2(dir.x,dir.z)）→ `_run`（L300-351：seekRange 15 最近敌重选、dash 判定 commitDist 2.5/|Δ|<0.35、turnRate 1.75 clamp、creep 0.6 减速、贴墙 stuckT 6*dt 转、`ground_height` 探脚下（-Infinity→dead）、每 0.35m trail splat 0.6、triggerDist 1.2/life 4.5/stuckT>0.6 → `_blast(2.8,180/35,2.4)`）。
+- **scan**：fuse 1.1 空中/落地爆 → `_cloud`（grow 0.25s cubic、cloudTime 0.9、`e.pos.y+0.7` 距 < radius*grow → `track(8s)`，tagged 去重）。
+- **mist**：直命中 → poison 全程 mistTime 4.5（L231/396）；fuse/落地 → `_mist`（grow 0.4、radius*0.72 视觉、判定用 radius 3.3*grow、`e.pos.y+0.6`、poison 0.6s 续注；无伤害）。
+- **curtain**：floor → `_startCurtain`（n=dir 朝向抛者、tan 轴、`_paint_under 1.4`、hp 170）→ `_curtain` decay 19/s；三钩：block_shot 段穿面（L613-622）、block_ray（L636-648）、block_actor 推挤（L660-672：`|across|<=r → 推出 + 消法向速`）。
+- **sprinkler**：`_stick(spray)`（一人一具替换 L269-273）→ `_spray`（pulse 0.3/sprayFade 12 后 *2、spin 9→4.5、切标架 drops 6：`a=spin*1.7+k/drops*TAU+rng*0.4`、`out=0.6+0.4rng`、`sp=3.2+2.6rng`、n*0.75 离面 → `spawn_drop`（damage 8、radius 0.5+0.25rng、size 0.08、weaponId 'sprinkler'）；ghost 不产滴（L454）；owner splatted → destroy（match 死亡钩，L60）。
+- **mine**：`_place`（`_paint_under 1.1`）→ `_mine`（armTime 0.9 后 triggerRadius 2.1 敌触 → fuse 0.35 → `_mine_blast`：paint 2.0、damage 45+LOS、`track 8`、`damage_area 2.6/30`；ghost 不自爆 L474）。
+- **beacon**：`_place`（max 3、hp 50、uses 2）；`beacons_for/jump_to_beacon/_landed_on_beacon` 超跳交互**不移植**（D-T34-2：sim 无 superJump；uses/hp/上限/可击毁全移植）。
+- **shaker**（kit）：`hold` 蓄力（chargeTime 2.7 基础 + moveBoost 0.9×速度因子 + jumpBoost 0.075/跳按；maxRate 1.6/s 限速；mouse waggle shakeBoost 属输入层不接 D-T34-4）；释放 1-3 段爆（level：c>=0.999→3 段、c>=0.5→2 段；fuse 0.5/gap 0.42/hop 4.2+4.6 上跳；每爆同小 Splat Bomb radius 2.3/110/30/2.0）；行进 trail 0.38m/0.3；ops `0 spawn(9+level) / 1 blast(5) / 2 sink(2)`。
+- **waddle**（kit）：落地 senseRadius 7.5/senseUp 4 感知，无人 → fuse 1.1 原地爆；有人 → nav 追踪（speed 4、turnRate 8、life 9、maxTravel 26、triggerDist 1.2、上台阶 hop——nav 寻路用既有 `nav` 模块或简化直线+重力，实施注记 D-T34-7）；hp 30 可射爆（'popped'）；ops `0 spawn / 1 land / 2 end(why) / 3 repath / 4 blast`。
+- **torpedo**（kit）：抛体 flight（flyLife 2.5，入海/落地未锁 → fallback paint 1.5）→ armTime 0.12 后 lockRange 6.5+LOS 锁定 → unfold 0.5 悬停 → launch（2.2→9.5 accel 8、turnRate 1.9 追踪、launchLife 2.8）→ 爆：核心 60/35 lerp + 10 drops（damage 12、dropHits 3 上限、paint 0.65）；hp 20 可击落（ops 2 'shot'）；blocked 一发在途；ops `0 spawn / 1 unfold / 2 shot / 3 lock / 4 launch`。
+- **tracer**（kit）：低角速射（speed 40、pitchDown 9°、range 32、maxBounces 12、floorExit 0.3 出地面阈值、size 0.16）；每跳落 puddle splat 1.35；直伤 35 + `track 9s`；拖尾 trailLife 1.0 splat radius 0.42 damage 22 mark 3；ops `0 fire / 1 end(pos,victim)`。
+- **boomerang**（kit）：平抛 out（0.6s ease 至 9m，撞墙早停）→ hover 1.75s（tickRate 8 → 9dmg/拍、paint 1.0）→ return（returnSpeed 17、绕主 orbit 2.5s/radius 1.5/spin 7/damage 6/hitCd 0.3）→ 末端爆（2.4/100/30/2.2）；飞行触敌（contact 0.3）→ 0.6s 后 Splat Bomb 级爆（3.1/180/35/2.7）；blocked 一发在途；ops `0 throw / 1 blast(big) / 2 end / 3 hover`。
+
+## 6. actor / status / SimEvent
+- `Actor` 新增 `status: ActorStatus{ track: f32, track_team: Option<usize>, poison: f32 }`；`track` 消费 = 队伍可见性（呈现/小地图 M4，sim 仅存值）；`poison` 消费：移速 ×`slow 0.55`、墨恢复 −`inkDrain 12/s`（JS actor.js 实读锚定，批一实施）。
+- SimEvent 增：`SubUse{owner,kind}`、`SubCantUse`、`SubSpawn{owner,kind,gid,data}`（→['k']）、`SubEnd{owner,gid}`（→[2,gid]）、`BombSpawn{…}`（→['b']）、`DeviceHit{owner,kind,gid,d}`（→'dh'）；`sub:land/cloud/arm/destroyed/bomb:explode` 呈现事件按测试需要最小集。
+- replication：收 `TickEvent::Bomb` → remote → ghost bomb；收 `TickEvent::Kit{kind:'subs'|五 kit}` → `net_ghost`；收 `DirectMsg::DeviceHit` → owner 本地则路由 `net_hurt`；发侧：SimEvent 新种 → 记录/直发（仿 kit_out 通道）。
+
+## 7. 测试与门禁
+- TR-34.1：15 sub 墨耗/fuse/伤害半径/效果时序逐值（投掷族/领域族/追踪族/近战族分组固定种子；bomb 弹道+引爆时序；curtain 三钩几何；sprinkler 滴序；seeker 转向/dash/creep 边界；kit 各机制核心时序）。
+- TR-34.2：FakeTransport——'dh' owner 应用（hp 扣减/击毁）/非 owner 忽略；['b'] ghost 不喷墨不判伤（turf 覆盖与伤害零变化）；['k','subs'] op0/1/2 ghost 重放（ghost mine 不自爆）。
+- TR-34.3：beacon≤3（最旧移除）/mine≤2（最旧起爆）/sprinkler 一人一具/torpedo、boomerang blocked 一发在途（拒投墨不动）。
+- 门禁：`/tmp/task33-gates.sh` → `/tmp/task34-gates.sh`，日志 `rust/tools/verify/logs/task34-gates-<UTC>.log` 九段全 exit 0；workspace 测试 > 389；JS 树零改动。

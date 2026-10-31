@@ -145,7 +145,14 @@ pub fn run(
                 *inp = ActorInput::default();
             }
         }
-        m.step(FIXED_DT, &inputs, &sim, &tuning.player, &tuning.weapons);
+        m.step(
+            FIXED_DT,
+            &inputs,
+            &sim,
+            &tuning.player,
+            &tuning.weapons,
+            &tuning.subs,
+        );
 
         #[cfg(not(target_arch = "wasm32"))]
         ft_samples.push(t0.elapsed().as_secs_f64() * 1e3);

@@ -374,12 +374,20 @@ pub fn net_tick(
                     &sim,
                     &t.player,
                     &t.weapons,
+                    &t.subs,
                 );
                 let Some(tr) = os.sess.transport_mut() else {
                     break; // link gone; the session will emit `Aborted`
                 };
-                let rest: Vec<MatchEvent> =
-                    rep.update(FIXED_DT, &mut demo.m, &sim, &t.player, &t.weapons, tr);
+                let rest: Vec<MatchEvent> = rep.update(
+                    FIXED_DT,
+                    &mut demo.m,
+                    &sim,
+                    &t.player,
+                    &t.weapons,
+                    &t.subs,
+                    tr,
+                );
                 // Un-consumed bus events (splat / turf / countdown / …) feed
                 // the HUD + audio drains like the offline match's own bus.
                 demo.m.events.extend(rest);
@@ -684,17 +692,50 @@ mod tests {
         let tp = &demo.tuning.player;
         let sp = &demo.tuning.weapons.shooter;
         let ws = &demo.tuning.weapons;
+        let sb = &demo.tuning.subs;
         let mut hinputs = vec![ActorInput::default(); hm.actors.len()];
         let mut ginputs = vec![ActorInput::default(); gm.actors.len()];
         // INTRO_TIME is 4.2 s (match_.rs L70): 300 substeps clear it.
         for _ in 0..300 {
             hrep.drive_bots(&mut hm, &demo.nav, &sim, tp, sp, &mut hinputs);
-            hm.step_masked(FIXED_DT, &hinputs, Some(hrep.remote_mask()), &sim, tp, ws);
-            let rest = hrep.update(FIXED_DT, &mut hm, &sim, tp, ws, h.transport_mut().unwrap());
+            hm.step_masked(
+                FIXED_DT,
+                &hinputs,
+                Some(hrep.remote_mask()),
+                &sim,
+                tp,
+                ws,
+                sb,
+            );
+            let rest = hrep.update(
+                FIXED_DT,
+                &mut hm,
+                &sim,
+                tp,
+                ws,
+                sb,
+                h.transport_mut().unwrap(),
+            );
             hm.events.extend(rest);
             grep.drive_bots(&mut gm, &demo.nav, &sim, tp, sp, &mut ginputs);
-            gm.step_masked(FIXED_DT, &ginputs, Some(grep.remote_mask()), &sim, tp, ws);
-            let rest = grep.update(FIXED_DT, &mut gm, &sim, tp, ws, g.transport_mut().unwrap());
+            gm.step_masked(
+                FIXED_DT,
+                &ginputs,
+                Some(grep.remote_mask()),
+                &sim,
+                tp,
+                ws,
+                sb,
+            );
+            let rest = grep.update(
+                FIXED_DT,
+                &mut gm,
+                &sim,
+                tp,
+                ws,
+                sb,
+                g.transport_mut().unwrap(),
+            );
             gm.events.extend(rest);
             step2(&mut h, &mut g, FIXED_DT as f64 * 1000.0);
             for ev in h.poll_events() {
@@ -719,7 +760,15 @@ mod tests {
         // result rides the replication bus to the guest (JS match.js L258/271).
         hm.phase = Phase::Finish;
         hm.state_t = 1000.0;
-        hm.step_masked(FIXED_DT, &hinputs, Some(hrep.remote_mask()), &sim, tp, ws);
+        hm.step_masked(
+            FIXED_DT,
+            &hinputs,
+            Some(hrep.remote_mask()),
+            &sim,
+            tp,
+            ws,
+            sb,
+        );
         assert!(hm.result.is_some(), "the host judged the match");
         hrep.send_result(&hm, h.transport_mut().unwrap());
         let mut guest_result = false;

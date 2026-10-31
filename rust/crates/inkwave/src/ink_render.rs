@@ -281,7 +281,7 @@ impl DemoSim {
             }
         }
         self.m
-            .step(FIXED_DT, &self.inputs, &sim, &t.player, &t.weapons);
+            .step(FIXED_DT, &self.inputs, &sim, &t.player, &t.weapons, &t.subs);
         // Task 13: no auto-restart — the UI shows the results screen when the
         // match reaches `Phase::End` and replays on demand (`replay`).
     }

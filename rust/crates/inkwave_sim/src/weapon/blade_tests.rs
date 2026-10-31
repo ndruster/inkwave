@@ -56,6 +56,7 @@ struct Fix {
     pads: [Vec3; 2],
     t: PlayerTuning,
     w: WeaponSet,
+    sb: crate::tuning::SubSet,
 }
 
 fn fix() -> Fix {
@@ -65,6 +66,7 @@ fn fix() -> Fix {
         pads: [vec3(0.0, 0.0, -20.0), vec3(0.0, 0.0, 20.0)],
         t: tuning.player,
         w: tuning.weapons,
+        sb: tuning.subs,
     }
 }
 
@@ -119,6 +121,7 @@ fn frame(
         a,
         kind,
         &f.w,
+        &f.sb,
         move_dir,
         &f.world,
         ps,
@@ -130,6 +133,7 @@ fn frame(
         0.0,
         &mut Vec::new(),
         &mut Vec::new(),
+        false,
         false,
     );
     ps.drain_events()
@@ -988,6 +992,8 @@ fn tr32_2_drop_dmg_far_lerp() {
             &mut pg,
             &f.t,
             &f.w,
+            &f.sb,
+            None,
             None,
             &[],
             &mut owner,
@@ -1063,11 +1069,11 @@ fn tr32_2_blade_drop_delay_freezes_the_first_frames() {
     );
     assert_eq!(ps.list.len(), 7);
     let frozen = ps.list[6].pos;
-    ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
+    ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w, &f.sb);
     assert_eq!(ps.list[6].age, 0.0, "delay 0.018 > dt → frozen");
     assert_eq!(ps.list[6].pos, frozen, "a frozen round does not move");
     assert!(ps.list[0].age > 0.0, "delay 0 steps immediately");
-    ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
+    ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w, &f.sb);
     assert!(
         ps.list[6].age > 0.0,
         "the last drop launches once its delay clears"
@@ -1099,6 +1105,7 @@ fn tr32_2_roller_melee_gates_and_window() {
             me,
             WeaponKind::Roller,
             &f.w,
+            &f.sb,
             Vec3::ZERO,
             &f.world,
             &mut ps,
@@ -1110,6 +1117,7 @@ fn tr32_2_roller_melee_gates_and_window() {
             0.0,
             &mut Vec::new(),
             &mut Vec::new(),
+            false,
             false,
         );
         ps.drain_events()
@@ -1156,6 +1164,7 @@ fn tr32_2_roller_melee_gates_and_window() {
             me,
             WeaponKind::Roller,
             &f.w,
+            &f.sb,
             Vec3::ZERO,
             &f.world,
             &mut ps,
@@ -1167,6 +1176,7 @@ fn tr32_2_roller_melee_gates_and_window() {
             0.0,
             &mut Vec::new(),
             &mut Vec::new(),
+            false,
             false,
         );
         hits += ps
@@ -1206,6 +1216,7 @@ fn tr32_2_brush_melee_box_and_cd() {
             me,
             WeaponKind::Brush,
             &f.w,
+            &f.sb,
             vec3(0.0, 0.0, 1.0),
             &f.world,
             &mut ps,
@@ -1217,6 +1228,7 @@ fn tr32_2_brush_melee_box_and_cd() {
             0.0,
             &mut Vec::new(),
             &mut Vec::new(),
+            false,
             false,
         );
         let ev = ps.drain_events();
@@ -1249,6 +1261,7 @@ fn tr32_2_brush_melee_box_and_cd() {
         me,
         WeaponKind::Brush,
         &f.w,
+        &f.sb,
         vec3(0.0, 0.0, 1.0),
         &f.world,
         &mut ps2,
@@ -1260,6 +1273,7 @@ fn tr32_2_brush_melee_box_and_cd() {
         0.0,
         &mut Vec::new(),
         &mut Vec::new(),
+        false,
         false,
     );
     assert_eq!(
@@ -1302,6 +1316,7 @@ fn tr32_2_blade_melee_bounds_arc_los_and_once() {
                 me,
                 WeaponKind::Blade,
                 &f.w,
+                &f.sb,
                 Vec3::ZERO,
                 world,
                 &mut ps,
@@ -1313,6 +1328,7 @@ fn tr32_2_blade_melee_bounds_arc_los_and_once() {
                 0.0,
                 &mut Vec::new(),
                 &mut Vec::new(),
+                false,
                 false,
             );
             hits += ps
@@ -1377,6 +1393,7 @@ fn tr32_2_blade_melee_bounds_arc_los_and_once() {
             me,
             WeaponKind::Blade,
             &f.w,
+            &f.sb,
             Vec3::ZERO,
             &f.world,
             &mut ps,
@@ -1388,6 +1405,7 @@ fn tr32_2_blade_melee_bounds_arc_los_and_once() {
             0.0,
             &mut Vec::new(),
             &mut Vec::new(),
+            false,
             false,
         );
         // Count only the melee hits (35): the crescent drops fired on frame 2

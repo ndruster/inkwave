@@ -173,7 +173,7 @@
 - 修复复验：重跑首段 FMT 绿、CLIPPY 抓到新回归测试 `unused_mut` → 修复后九段复跑全 exit 0（389 passed），日志同上。
 
 ## Task 34: 副武器 15 个 + 设备网络语义（['b']/'dh'）
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 29
 - **Description**:
@@ -184,6 +184,20 @@
   - `rule` TR-34.2: `'dh'` 直发在 FakeTransport 下 owner 应用/非 owner 忽略；`['b']` ghost 不喷墨不判伤仅呈现。
   - `rule` TR-34.3: beacon 上限 3/mine 上限 2/torpedo 一发在途等数量守卫用例。
 - **Notes**: 呈现占位档（体块 + 简单特效），美术 M4。
+
+### Task 34 Completion Evidence（2026-10-31）
+- **TR-34.1 ✅**：58 个固定种子逐值测试全绿（批一 `sub.rs` 16 + 网络 `replication.rs` 5 + 批二 `sub/*_tests.rs` 37）。批一非 kit 10 种：`tr34_1_ink_cost_matches_the_subs_table`（15 key 墨耗逐值对 SUBS 表）、throw 弹道记录（`throw_velocity`+r2 舍入+`['k',nid,'subs',[0,gid,kind,x,y,z,vx,vy,vz]]` 字段序）、mine/beacon 放置（placed 分流、井下载体、beacon 可射）、sticky fuse 起爆、burst 直击+两段溅射、scan 落地云 track、seeker 追踪爆、curtain 衰减淡出+hp 通道、sprinkler 定时滴墨节拍、mine 武装→触发→track、mist  linger+poison（落点直写 4.5 / 边缘 tick 通道 0.6 双敌场景）。批二 kit 5 种逐机制：shaker（墨耗/投掷/level 爆数/hold 蓄力档/fuse 连爆节拍/伤害半径/0.38m 拖滴）、waddle（投掷记录/fuse 原地爆/锁定行走/到达爆/步速与行程帽/被射爆）、torpedo（投掷+脚下墨/一发在途/锁定展开发射/burst 核心伤害与墨滴/triggered 十滴/无人争夺小爆/被射落）、tracer（发射几何记录/地面弹跳掠行水洼/直击+终结记录/拖尾触碰单次标记/射程耗尽无记录/最大弹跳终结）、boomerang（tuning 逐值/投掷计划记录/生命周期相位+终结爆/hover 削杀/接触武装大爆/轨道擦伤/一发在途/owner 被 splat 哑火）。
+- **TR-34.2 ✅**：`tr34_2_dh_owner_applies_the_ghost_hit_non_owner_ignores`（FakeTransport 三端：'dh' 仅投递 owner、owner 应用伤害、非 owner 收不到）、`tr34_2_bomb_ghost_record_is_presentation_only`（`['b']` ghost 不喷墨不判伤）、`tr34_2_torpedo_ghost_locks_launches_but_decides_nothing`、`tr34_2_waddle_dh_kills_the_real_one_and_broadcasts_the_end`（owner 侧终结经 `['k']` op 2 广播）、`tr34_2_boomerang_ghost_never_bursts_on_a_local_foe`、`tr34_kit_ghost_round_trip`（出站 gid 重写 nid 基/入站反算回本地 gid 闭环）+ tracer/boomerang ghost 各一。
+- **TR-34.3 ✅**：`tr34_3_beacon_cap_evicts_the_oldest`（上限 3 逐出最旧）、`tr34_3_mine_cap_detonates_the_oldest`（上限 2 引爆最旧）、`tr34_3_torpedo_one_out`/`tr34_3_boomerang_one_out`（一发在途）、`tr34_3_waddle_shoot_down_pops_it`。
+- **架构落地（spec §0–§7）**：`sub.rs`（新增 2956 行）——`SubSystem`：`use_sub`（L71-79 throw/plant/placed 三分流）/`update`/`_step` 状态机（fly/stuck/run/cloud/mist/curtain/spray/mine/beacon/dead）、`net_ghost`/`net_hurt`、挡弹钩子 `block_shot`/`block_ray`/`damage_area`/`block_actor`（L609-672）、`Ctx::track`/`poison`/`blast`/`paint_at`/`hurt`；`sub/{shaker,waddle,torpedo,tracer,boomerang}.rs`（新增，共约 4.7k 行）——五 kit sub 实体状态机 + `['k',nid,<kit>,data]` op 表；`weapon.rs`——`shaker_hold`（L1318-1400）；`actor.rs`——`track`/`poison` 状态（减速/poisonTime）；`match_.rs`——runner sub block（JS weapons.js L130-155）+ splat bomb（weapons.js L1431-1507/L1711-1758）+ SubSpawn/SubEnd/DeviceHit/SubUse 事件通道；`net/replication.rs`——`['b']` BombRecord 九字段编解码+ghost 消费、`['k']` subs/kit 记录出站 gid 重写（`nid*100_000+off%100_000`）与终结记录 idx→nid 翻译、`'dh'` 直发路由（owner 应用/非 owner 忽略）。声明偏差 D-T34-1..10（storm 不建云/beacon 超跳交互/it.sp 恒 false/sub:cantuse 不 FORWARD/DEVICE_H 常量/kit 墨路径恒 ink/shaker waggle 仅 yaw 等，见 sub.rs 模块注释与 spec §6）。
+- **门禁**：全量九段矩阵全 exit 0，日志 `rust/tools/verify/logs/task34-gates-20261031T222107Z.log`（fmt/clippy/test/wasm32/cargo tree/trunk release/headless 600 帧/JS 树零改动；workspace **447 passed** > 389 单调递增）。
+
+### Task 34 Review 附录（独立评审：0 P0 / 0 P1 / 3 P2 → 全部处置 → 门禁复验全绿）
+- **P2-1 ✅** `sub.rs` 文档锚点错位修正：`UP`/`DOWN` L22→L25、`GRAV` L23→L28、`r2` L18→L22（对齐 subs.js 实际行号）。
+- **P2-2 ✅** gid `off==100_000` 边界：出站重写 `gid%100_000` 使 off=100_000 的设备上线为 0，入站反算失配会静默丢伤害——`replication.rs` "dh" 臂加对称回映射 `off==0→100_000`（D-T34-5 注释）。
+- **P2-3 ✅** ghost 设备伤害 `dmg > 0` 守卫（JS registry.js L68 `netHurt` 发送侧）：落点选 `dh_out` 唯一发送汇聚点加 `hit.d > 0.0` 过滤（等价 JS 单一闸口，覆盖 subs/waddle/torpedo/torpedoArea 全部 5 个 push 点；curtain 本地淡出在事件入队前已应用，不受影响）。
+- 评审已验证一致面：net_ghost op 字段序/r2 舍入/gid 去重、tracer 终结记录 idx→nid 翻译、hit_routed 三向路由、kit 常量全走 tuning、RNG 确定性、测试期望值对 config.js 无适配性修改。
+- 修复复验：`cargo fmt --all` + clippy `-D warnings` + workspace 447 passed 全绿，九段门禁复跑全 exit 0（日志同上）。
 
 ## Task 35: 特殊武器 19 个 + tick 槽实值化（sp/spx/spst）
 - **Status**: `pending`

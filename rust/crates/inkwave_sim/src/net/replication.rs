@@ -135,11 +135,12 @@ use crate::net::wire::{
     parse_json,
 };
 use crate::net::{
-    ActorSample, ActorStatsRow, DirectMsg, EventRecord, ForwardEvent, HostMsg, KitRecord,
-    ProjectileRecord, SessionId, SplatRecord, Tick, TickEvent, TimedEvent, TrigData, TriggerRecord,
+    ActorSample, ActorStatsRow, BombRecord, DirectMsg, EventRecord, ForwardEvent, HostMsg,
+    KitRecord, ProjectileRecord, SessionId, SplatRecord, Tick, TickEvent, TimedEvent, TrigData,
+    TriggerRecord,
 };
 use crate::paint::{SplatKind, SplatOpts};
-use crate::tuning::{Difficulty, PlayerTuning, Spritzer, WeaponSet};
+use crate::tuning::{Difficulty, PlayerTuning, Spritzer, SubSet, WeaponSet};
 use crate::weapon::blade::BladeWave;
 use crate::weapon::brolly::LaunchedCanopy;
 use crate::weapon::{PROJ_DRAG, PROJ_GRAV, PROJ_SIZE, SHOT_LIFE, WeaponKind};
@@ -395,6 +396,7 @@ impl Replication {
         sim: &SimWorld,
         t: &PlayerTuning,
         w: &WeaponSet,
+        sb: &SubSet,
         tr: &mut impl Transport,
     ) -> Vec<MatchEvent> {
         self.now += dt as f64;
@@ -419,7 +421,7 @@ impl Replication {
         // sampling, before the tick send — so a due splat paints into this
         // frame's grid and a due death already hides the proxy before its
         // sample is applied below).
-        self.play_events(m, sim, t, w);
+        self.play_events(m, sim, t, w, sb);
 
         // ---- outgoing tick (L182-187: `tickT -= dt; if (<=0) { += TICK;
         // if (<0) = TICK; _sendTick() }`).
@@ -526,11 +528,84 @@ impl Replication {
             if let Some(i) = find_actor(&m.actors, spawn.owner.0, spawn.owner.1)
                 && !self.remote[i]
             {
+                let mut data = spawn.data;
+                if matches!(
+                    spawn.kind.as_str(),
+                    "subs" | "shaker" | "waddle" | "torpedo" | "tracer" | "boomerang"
+                ) && data.len() >= 2
+                {
+                    // D-T34-5: the sim's owner-side gid (`slot * 100_000 +
+                    // off`) is rewritten into the wire gid (`nid * 100_000 +
+                    // off`) so receivers key their ghosts on
+                    // `(src_nid, gid)` — JS `netId` packs the owner's `nid`
+                    // straight in (registry.js L64-65).
+                    data[1] =
+                        (u32::from(self.nids[i]) * 100_000 + (data[1] as u32) % 100_000) as f32;
+                    // The sim pushes the *target's actor index* into the
+                    // record slots JS fills with `tgt?.nid ?? -1` (waddle.js
+                    // L381 / L469, torpedo.js L333, tracer.js L342); rewrite
+                    // the index into that actor's peer nid (−1 / −2 sentinels
+                    // stay).
+                    let idx_slot = match (spawn.kind.as_str(), data[0] as i32) {
+                        ("waddle", 3) | ("torpedo", 3) => Some(2),
+                        ("waddle", 4) => Some(6),
+                        ("tracer", 1) => Some(5),
+                        _ => None,
+                    };
+                    if let Some(k) = idx_slot
+                        && let Some(&v) = data.get(k)
+                    {
+                        let vi = v as i32;
+                        if vi >= 0 && (vi as usize) < self.nids.len() {
+                            data[k] = f32::from(self.nids[vi as usize]);
+                        }
+                    }
+                }
                 self.rec(TickEvent::Kit(KitRecord {
                     nid: self.nids[i],
                     kind: spawn.kind,
-                    data: spawn.data,
+                    sub_kind: spawn.sub_kind,
+                    data,
                 }));
+            }
+        }
+
+        // ---- splat-bomb throws (JS `recBomb`, netmatch.js L124-127):
+        // `['b', nid, kind, r2×6]` on the owner's timeline, local actors
+        // only — the same `!a.remote` guard as `recKit`.
+        for spawn in std::mem::take(&mut m.bomb_out) {
+            if let Some(i) = find_actor(&m.actors, spawn.owner.0, spawn.owner.1)
+                && !self.remote[i]
+            {
+                self.rec(TickEvent::Bomb(BombRecord {
+                    nid: self.nids[i],
+                    kind: spawn.kind,
+                    pos: [spawn.pos.x, spawn.pos.y, spawn.pos.z],
+                    vel: [spawn.vel.x, spawn.vel.y, spawn.vel.z],
+                }));
+            }
+        }
+
+        // ---- ghost-device hits (JS `sendDevHit`, netmatch.js L157-159):
+        // point-to-point `{k:'dh', kind:'subs', id, d}` to the device
+        // owner's screen. The ghost's `gid` already rides the wire form
+        // (D-T34-5); a ghost whose owner is *ours* cannot exist (ghosts are
+        // only built from remote records), so the self-target is dropped.
+        // JS `netHurt` (registry.js L68) guards the send with `dmg > 0`;
+        // this chokepoint is its Rust counterpart — a zero-damage hit never
+        // leaves the owner's screen (the curtain fade is applied locally
+        // before the event is queued, so the guard does not touch it).
+        for hit in std::mem::take(&mut m.dh_out) {
+            if let Some(i) = find_actor(&m.actors, hit.owner.0, hit.owner.1)
+                && hit.d > 0.0
+                && self.owners[i] != self.my_id
+            {
+                let msg = DirectMsg::DeviceHit {
+                    kind: hit.kind.clone(),
+                    id: hit.gid,
+                    d: hit.d,
+                };
+                tr.send_to(&self.owners[i], &encode_direct(&msg));
             }
         }
 
@@ -771,7 +846,14 @@ impl Replication {
     /// `respawn` into the proxy state machines and ignores the FX-only
     /// names (`weapon:fire` presentation is the `'p'` ghost + audio, out of
     /// sim scope).
-    fn play_events(&mut self, m: &mut Match, sim: &SimWorld, t: &PlayerTuning, w: &WeaponSet) {
+    fn play_events(
+        &mut self,
+        m: &mut Match,
+        sim: &SimWorld,
+        t: &PlayerTuning,
+        w: &WeaponSet,
+        sb: &SubSet,
+    ) {
         let due = self.playback.due_events();
         if due.is_empty() {
             return;
@@ -991,12 +1073,86 @@ impl Replication {
                                     ghost: true,
                                 });
                             }
+                            // JS `SUBS.netGhost(a, d)` (subs.js L192-212,
+                            // reached from `_play` 'k' L486-492): the throw /
+                            // place / end ghost of a remote player's device.
+                            // The wire `data[2]` kind string was lifted to
+                            // `k.sub_kind` at decode (the numeric vector
+                            // keeps the JS index layout); kit kinds and the
+                            // `bomb` kind are ignored inside `net_ghost`
+                            // (D-T34-9 / the bomb rides `['b']`).
+                            "subs" => {
+                                let Some(sk) = k.sub_kind.as_deref() else {
+                                    continue;
+                                };
+                                let ps_time = m.projectiles.time;
+                                m.subs.net_ghost(
+                                    i,
+                                    k.nid,
+                                    sk,
+                                    &k.data,
+                                    &self.nids,
+                                    sim.collision,
+                                    &mut m.actors,
+                                    &mut m.paint,
+                                    &mut m.projectiles,
+                                    t,
+                                    sb,
+                                    Some(&self.remote).map(|v| &**v),
+                                    ps_time,
+                                );
+                            }
+                            // Batch two: the five kit subs ride `['k', nid,
+                            // <kit id>, [op, gid, …]]` (kits/registry.js) —
+                            // the wire kind IS the kit id and there is no
+                            // `sub_kind` payload. `net_ghost` routes on the
+                            // kind and translates the wire nids in the lock
+                            // / walk / beam records via `self.nids`.
+                            "shaker" | "waddle" | "torpedo" | "tracer" | "boomerang" => {
+                                let ps_time = m.projectiles.time;
+                                m.subs.net_ghost(
+                                    i,
+                                    k.nid,
+                                    &k.kind,
+                                    &k.data,
+                                    &self.nids,
+                                    sim.collision,
+                                    &mut m.actors,
+                                    &mut m.paint,
+                                    &mut m.projectiles,
+                                    t,
+                                    sb,
+                                    Some(&self.remote).map(|v| &**v),
+                                    ps_time,
+                                );
+                            }
                             _ => {}
                         }
                     }
-                    // M1/M2 placeholders (`b`/`z`): no bomb/zone gameplay in
-                    // scope — JS L494/L496 would hand them to the boss/zones
-                    // layers, which the sim lacks.
+                    // JS `_play` 'b' (L477): `ghostBomb(a, e[3..9])` — the
+                    // visual copy of a remote player's splat bomb. JS has no
+                    // remote guard on `'b'` (unlike `'k'`): the record lands
+                    // on the owner's timeline, and a sender never replays
+                    // its own. The `storm` kind needs the special layer
+                    // (JS `throwStorm`, D-T34-1) — dropped upstream.
+                    TickEvent::Bomb(b) => {
+                        if b.kind != "bomb" {
+                            continue;
+                        }
+                        let Some(i) = self.idx_of_nid(b.nid) else {
+                            continue;
+                        };
+                        m.projectiles.ghost_bomb(
+                            b.kind,
+                            vec3(b.pos[0], b.pos[1], b.pos[2]),
+                            vec3(b.vel[0], b.vel[1], b.vel[2]),
+                            m.actors[i].slot,
+                            m.actors[i].team,
+                        );
+                    }
+                    // M1/M2 placeholder (`z`): no zone gameplay in scope —
+                    // JS L494 would hand it to the zones layer, which the
+                    // sim lacks.
                     _ => {}
                 }
             }
@@ -1163,9 +1319,35 @@ impl Replication {
                     self.apply_hit(m, t, vn, an, d);
                 }
             }
-            // M2 turf-only: no kit devices and no boss — ignored stubs
-            // (JS L210-215 runs `netHurt` / `boss.remoteHit`; spec 收口).
-            "dh" | "bhit" => {}
+            // JS L210-211: `netHurt` on the device owner's side — `subs`
+            // routes to `SUBS.netHurt`, the kit kinds to their own lists
+            // (waddle.js L691, torpedo.js `netHurt` / `netHurtArea`).
+            // D-T34-5: the wire gid (`src_nid * 100_000 + off`) is
+            // converted back to the owner-side local gid
+            // (`slot * 100_000 + off`) — the sim keys devices on the
+            // roster slot, not the session nid.
+            "dh" => {
+                if let Some(DirectMsg::DeviceHit { kind, id, d }) = decode_direct(&v)
+                    && matches!(kind.as_str(), "subs" | "waddle" | "torpedo" | "torpedoArea")
+                {
+                    let src_nid = (id / 100_000) as u8;
+                    let mut off = id % 100_000;
+                    // D-T34-5: the outbound rewrite is `gid % 100_000`, so a
+                    // local `off` of 100_000 rides the wire as 0 — map it
+                    // back before rebuilding the owner-side gid, or such a
+                    // hit would silently miss its device.
+                    if off == 0 {
+                        off = 100_000;
+                    }
+                    if let Some(i) = self.idx_of_nid(src_nid) {
+                        let gid = (m.actors[i].slot as u32) * 100_000 + off;
+                        m.subs.net_hurt(&kind, gid, d);
+                    }
+                }
+            }
+            // M2 turf-only: no boss — ignored stub (JS L215 runs
+            // `boss.remoteHit`; spec 收口).
+            "bhit" => {}
             "st" => {
                 if from == self.host_id
                     && let Some(HostMsg::State { phase, t: time }) = decode_host(&v)
@@ -1665,6 +1847,7 @@ mod tests {
         let sim = f.sim();
         let t = &f.tuning.player;
         let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
         let (h, g) = ("HOST", "GUEST");
         let cfg = cfg(roster111(h, g), "tidewater", h);
 
@@ -1685,8 +1868,8 @@ mod tests {
 
         // Run both to Active.
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
         }
         assert_eq!(mh.phase, Phase::Active);
 
@@ -1697,7 +1880,7 @@ mod tests {
         inputs[0].move_dir = vec3(0.0, 0.0, 1.0);
         inputs[1].move_dir = vec3(1.0, 0.0, 0.0);
         for _ in 0..30 {
-            mg.step_masked(FIXED_DT, &inputs, Some(rg.remote_mask()), &sim, t, w);
+            mg.step_masked(FIXED_DT, &inputs, Some(rg.remote_mask()), &sim, t, w, sb);
         }
         assert_eq!(
             mg.actors[0].pos, pinned,
@@ -1711,7 +1894,7 @@ mod tests {
         // Tick content: the host streams only its owned actors (L192) and
         // rides the clock snapshot (L197-200).
         let mut rec = Rec::default();
-        rh.update(TICK_DT, &mut mh, &sim, t, w, &mut rec);
+        rh.update(TICK_DT, &mut mh, &sim, t, w, sb, &mut rec);
         let (to, payload) = rec.find("t").clone();
         assert_eq!(to, None, "ticks are broadcast");
         let v = parse_json(&payload).unwrap();
@@ -1738,7 +1921,7 @@ mod tests {
         // Task 22: the sample lands in the playback buffer — advance the
         // clock one frame so the path is sampled and applied (tr sits
         // behind the newest sample → the Early hold shows it verbatim).
-        rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut rec);
+        rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec);
         assert_eq!(
             mg.actors[0].pos.x, good.actors[0].1.x,
             "the owner's word lands"
@@ -1754,7 +1937,7 @@ mod tests {
         // `t` from the tick ts, so bump nothing: same ts as `good`.
         stale.ts = good.ts;
         rg.on_message(h, &encode_tick(&stale, None), &mut mg, t);
-        rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut rec);
+        rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec);
         assert_eq!(
             mg.actors[0].pos.x, good.actors[0].1.x,
             "a non-newer sample is dropped (L251)"
@@ -1768,6 +1951,7 @@ mod tests {
         let sim = f.sim();
         let t = &f.tuning.player;
         let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
         // Real relay ids — `send_to` routes by them (FakeRelay.route).
         let relay = FakeRelay::new();
         let (mut trh, mut trg) = pair(&relay);
@@ -1784,8 +1968,8 @@ mod tests {
         // Both to Active, then pin the victim 3 m down the shooter's aim
         // line (team0 faces +Z from its pad).
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
         }
         assert_eq!(mh.phase, Phase::Active);
         let pad0 = sim.spawn_pads[0];
@@ -1812,7 +1996,7 @@ mod tests {
             mh.actors[0].pos = pad0;
             mh.actors[0].aim_yaw = 0.0;
             mh.actors[0].aim_pitch = 0.0;
-            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w);
+            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
             let hit = mh.events.iter().find_map(|e| match e {
                 MatchEvent::HitSend { damage, victim, .. } => Some((*victim, *damage)),
                 _ => None,
@@ -1825,8 +2009,8 @@ mod tests {
                 sent = Some(damage);
             }
             // rh.update consumes the HitSend and routes `{k:'hit'}` to G.
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             trh.advance(16.0);
             trg.advance(0.0);
             for (from, p) in drain_msgs(&mut trh) {
@@ -1859,10 +2043,10 @@ mod tests {
                 mh.actors[0].aim_yaw = 0.0;
                 mh.actors[0].aim_pitch = 0.0;
             }
-            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
+            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             trh.advance(16.0);
             trg.advance(0.0);
             for (from, p) in drain_msgs(&mut trh) {
@@ -1887,10 +2071,10 @@ mod tests {
         );
         let mut followed = false;
         for _ in 0..120 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             trh.advance(16.0);
             trg.advance(0.0);
             // The guest's respawned actor-1 sample arrives at the HOST inbox.
@@ -1915,6 +2099,7 @@ mod tests {
         let sim = f.sim();
         let t = &f.tuning.player;
         let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
         let (h, g) = ("HOST", "GUEST");
         let cfg = cfg(roster111(h, g), "tidewater", h);
         let mut mh = match111(&f, 5, 120.0);
@@ -1927,7 +2112,7 @@ mod tests {
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
             let mut inputs = vec![ActorInput::default(); 3];
             rh.drive_bots(&mut mh, &nav, &sim, t, &w.shooter, &mut inputs);
-            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w);
+            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
         }
         // The leave: the host stays host, so `host_changed = false`.
         rh.on_leave(g, false, &mut mh, &f.tuning.difficulty.easy, 5, &sim, t);
@@ -1944,7 +2129,7 @@ mod tests {
         for _ in 0..120 {
             let mut inputs = vec![ActorInput::default(); 3];
             rh.drive_bots(&mut mh, &nav, &sim, t, &w.shooter, &mut inputs);
-            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w);
+            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
         }
         assert_ne!(mh.actors[1].pos, before, "the adopted bot lives again");
     }
@@ -1955,6 +2140,7 @@ mod tests {
         let sim = f.sim();
         let t = &f.tuning.player;
         let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
         let relay = FakeRelay::new();
         let (mut trh, mut trg) = pair(&relay);
         let mut obs = ep(&relay, 3);
@@ -1985,12 +2171,12 @@ mod tests {
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
             let mut ih = vec![ActorInput::default(); 3];
             rh.drive_bots(&mut mh, &nav, &sim, t, &w.shooter, &mut ih);
-            mh.step_masked(FIXED_DT, &ih, Some(rh.remote_mask()), &sim, t, w);
+            mh.step_masked(FIXED_DT, &ih, Some(rh.remote_mask()), &sim, t, w, sb);
             let mut ig = vec![ActorInput::default(); 3];
             ig[1].move_dir = vec3(0.0, 0.0, -1.0);
-            mg.step_masked(FIXED_DT, &ig, Some(rg.remote_mask()), &sim, t, w);
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
+            mg.step_masked(FIXED_DT, &ig, Some(rg.remote_mask()), &sim, t, w, sb);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             trh.advance(16.0);
             trg.advance(0.0);
             for (from, p) in drain_msgs(&mut trh) {
@@ -2039,8 +2225,8 @@ mod tests {
         for _ in 0..max {
             let mut ig = vec![ActorInput::default(); 3];
             rg.drive_bots(&mut mg, &nav, &sim, t, &w.shooter, &mut ig);
-            mg.step_masked(FIXED_DT, &ig, Some(rg.remote_mask()), &sim, t, w);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
+            mg.step_masked(FIXED_DT, &ig, Some(rg.remote_mask()), &sim, t, w, sb);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             drain_msgs(&mut trg);
             trg.advance(16.0);
             obs.advance(0.0);
@@ -2106,6 +2292,7 @@ mod tests {
         let sim = f.sim();
         let t = &f.tuning.player;
         let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
         let (h, g) = ("HOST", "GUEST");
         // Cargo Terminal: humans-only (config.js L524).
         let cfg = cfg(roster111(h, g), "cargo", h);
@@ -2124,7 +2311,7 @@ mod tests {
         let mut inputs = vec![ActorInput::default(); 2];
         for _ in 0..60 {
             rh.drive_bots(&mut mh, &nav, &sim, t, &w.shooter, &mut inputs);
-            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w);
+            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
         }
         assert_eq!(mh.actors.len(), 2);
     }
@@ -2135,12 +2322,13 @@ mod tests {
         let sim = f.sim();
         let t = &f.tuning.player;
         let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
         let mut mg = match111(&f, 3, 120.0);
         let cfg = cfg(roster111("HOST", "GUEST"), "tidewater", "HOST");
         let mut rg = Replication::new(&cfg, "GUEST", "HOST");
         rg.bind_match(&mut mg);
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
         }
         assert_eq!(mg.phase, Phase::Active);
         mg.time = 100.0;
@@ -2189,7 +2377,7 @@ mod tests {
         // …but a follower never judges on its own (L216): Finish + follower
         // must not settle even past the window.
         for _ in 0..(FINISH_TIME * 60.0) as usize + 10 {
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
         }
         assert_eq!(mg.phase, Phase::Finish, "the follower waits for res");
         assert!(mg.result.is_none());
@@ -2214,6 +2402,7 @@ mod tests {
         let sim = f.sim();
         let t = &f.tuning.player;
         let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
         let cfg = cfg(roster111("H", "G"), "tidewater", "H");
         let mut m = match111(&f, 1, 30.0);
         let mut r = Replication::new(&cfg, "H", "H");
@@ -2224,7 +2413,7 @@ mod tests {
             victim: (1, 0),
             damage: 33.333,
         });
-        let rest = r.update(FIXED_DT, &mut m, &sim, t, w, &mut rec);
+        let rest = r.update(FIXED_DT, &mut m, &sim, t, w, sb, &mut rec);
         assert!(
             !rest.iter().any(|e| matches!(e, MatchEvent::HitSend { .. })),
             "HitSend is consumed"
@@ -2353,6 +2542,7 @@ mod tests {
             let sim = f.sim();
             let t = &f.tuning.player;
             let w = &f.tuning.weapons;
+            let sb = &f.tuning.subs;
             let (h, g) = ("HOST", "GUEST");
             let cfg = cfg(roster111(h, g), "tidewater", h);
             let mut mh = match111(&f, 11, 30.0);
@@ -2383,9 +2573,9 @@ mod tests {
                 let t0 = Instant::now();
                 let mut ih = vec![ActorInput::default(); 3];
                 rh.drive_bots(&mut mh, &nav, &sim, t, &w.shooter, &mut ih);
-                mh.step_masked(FIXED_DT, &ih, Some(rh.remote_mask()), &sim, t, w);
+                mh.step_masked(FIXED_DT, &ih, Some(rh.remote_mask()), &sim, t, w, sb);
                 let ig = vec![ActorInput::default(); 3];
-                mg.step_masked(FIXED_DT, &ig, Some(rg.remote_mask()), &sim, t, w);
+                mg.step_masked(FIXED_DT, &ig, Some(rg.remote_mask()), &sim, t, w, sb);
                 match arm {
                     0 => {}
                     1 => {
@@ -2449,8 +2639,8 @@ mod tests {
                         }
                     }
                     _ => {
-                        let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut th);
-                        let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut tg);
+                        let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut th);
+                        let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut tg);
                         for p in th.out.drain(..) {
                             rg.on_message(h, &p, &mut mg, t);
                         }
@@ -2533,6 +2723,7 @@ mod tests {
         let sim = f.sim();
         let t = &f.tuning.player;
         let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
         let relay = FakeRelay::new();
         let (mut trh, mut trg) = pair(&relay);
         let (h, g) = (trh.id(), trg.id());
@@ -2544,8 +2735,8 @@ mod tests {
         rh.bind_match(&mut mh);
         rg.bind_match(&mut mg);
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
         }
         assert_eq!(mh.phase, Phase::Active);
         assert!(
@@ -2578,10 +2769,10 @@ mod tests {
         let mut guest_splat_records = 0;
         let mut settled = false;
         for _ in 0..600 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             trh.advance(16.0);
             trg.advance(0.0);
             // Host inbox: B's ticks — scan them for splat records *before*
@@ -2628,6 +2819,7 @@ mod tests {
         let sim = f.sim();
         let t = &f.tuning.player;
         let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
         let relay = FakeRelay::new();
         let (mut trh, mut trg) = pair(&relay);
         let (h, g) = (trh.id(), trg.id());
@@ -2639,8 +2831,8 @@ mod tests {
         rh.bind_match(&mut mh);
         rg.bind_match(&mut mg);
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
         }
         assert_eq!(mh.phase, Phase::Active);
 
@@ -2661,10 +2853,10 @@ mod tests {
         let mut guest_splat_records = 0;
         let mut settled = false;
         for _ in 0..600 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             // Render layer drains *after* the replicator recorded / replayed.
             mh.paint.drain_ink();
             mg.paint.drain_ink();
@@ -2714,10 +2906,10 @@ mod tests {
         mg.paint.splat(sim.collision, c2, 2.0, 1, &opts);
         let mut converged = false;
         for _ in 0..600 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             mh.paint.drain_ink();
             mg.paint.drain_ink();
             trh.advance(16.0);
@@ -2751,6 +2943,7 @@ mod tests {
         let sim = f.sim();
         let t = &f.tuning.player;
         let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
         let relay = FakeRelay::new();
         let (mut trh, mut trg) = pair(&relay);
         let (h, g) = (trh.id(), trg.id());
@@ -2762,8 +2955,8 @@ mod tests {
         rh.bind_match(&mut mh);
         rg.bind_match(&mut mg);
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
         }
         let pad0 = sim.spawn_pads[0];
         let victim_p = vec3(pad0.x, pad0.y, pad0.z + 3.0);
@@ -2792,16 +2985,16 @@ mod tests {
             mh.actors[0].pos = pad0;
             mh.actors[0].aim_yaw = 0.0;
             mh.actors[0].aim_pitch = 0.0;
-            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
             if dmg.is_none() {
                 dmg = mh.events.iter().find_map(|e| match e {
                     MatchEvent::HitSend { damage, .. } => Some(*damage),
                     _ => None,
                 });
             }
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             if !saw_ghost {
                 saw_ghost = mg
                     .projectiles
@@ -2847,6 +3040,7 @@ mod tests {
         let sim = f.sim();
         let t = &f.tuning.player;
         let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
         let relay = FakeRelay::new();
         let (mut trh, mut trg) = pair(&relay);
         let (h, g) = (trh.id(), trg.id());
@@ -2858,8 +3052,8 @@ mod tests {
         rh.bind_match(&mut mh);
         rg.bind_match(&mut mg);
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
         }
         let pad0 = sim.spawn_pads[0];
         let stand = vec3(pad0.x, pad0.y, pad0.z + 2.0);
@@ -2879,10 +3073,10 @@ mod tests {
             mh.actors[0].pos = stand;
             mh.actors[0].aim_pitch = -1.4;
             mg.actors[0].pos = stand;
-            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
+            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             if host_at.is_none() && !mh.paint.ink_stream().is_empty() {
                 host_at = Some(frame);
             }
@@ -2969,6 +3163,7 @@ mod tests {
         let sim = f.sim();
         let t = &f.tuning.player;
         let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
         let (h, g) = ("HOST", "GUEST");
         let cfg = cfg(roster111(h, g), "tidewater", h);
         let mut mh = match111(&f, 30, 120.0);
@@ -2983,8 +3178,8 @@ mod tests {
         let mut rech = Rec::default();
         let mut recg = Rec::default();
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
         }
         assert_eq!(mh.phase, Phase::Active);
 
@@ -2999,15 +3194,15 @@ mod tests {
             inputs[0].jump = frame == 10;
             inputs[1].fire = true;
             inputs[2].fire = true;
-            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w);
-            mg.step_masked(FIXED_DT, &inputs, Some(rg.remote_mask()), &sim, t, w);
+            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &inputs, Some(rg.remote_mask()), &sim, t, w, sb);
             // `dodge_vel` is read *before* `try_dodge` (JS order, match_.rs
             // L505-509), so the roll shows from the frame after the tap.
             if (10..28).contains(&frame) && mh.actors[0].dodge_vel.is_some() {
                 saw_roll = true;
             }
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut rech);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut recg);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut rech);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut recg);
         }
         assert!(
             saw_roll,
@@ -3045,8 +3240,8 @@ mod tests {
         // fresh Ready pose open=0, grow=1, hp full → ks = 7<<6 | 31<<9 = 16320.
         inputs[2].fire = false;
         for _ in 0..15 {
-            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w);
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut rech);
+            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut rech);
         }
         let s2 = &latest_samples(&rech)
             .into_iter()
@@ -3068,13 +3263,14 @@ mod tests {
         let sim = f.sim();
         let t = &f.tuning.player;
         let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
         let (h, g) = ("HOST", "GUEST");
         let cfg = cfg(roster111(h, g), "tidewater", h);
         let mut mg = match111(&f, 31, 120.0);
         let mut rg = Replication::new(&cfg, g, h);
         rg.bind_match(&mut mg);
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
         }
         assert_eq!(mg.phase, Phase::Active);
         let mut rec = Rec::default();
@@ -3090,6 +3286,7 @@ mod tests {
                     nid: 0,
                     kind: kind.into(),
                     data,
+                    sub_kind: None,
                 }),
             }],
         };
@@ -3106,8 +3303,8 @@ mod tests {
             t,
         );
         for _ in 0..30 {
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut rec);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec);
         }
         assert!(
             mg.launched.is_empty(),
@@ -3130,6 +3327,7 @@ mod tests {
                     nid: 0,
                     kind: "brolly".into(),
                     data: vec![base.x, base.y, base.z, 0.0, -1.0, hp0, 1.2],
+                    sub_kind: None,
                 }),
             }],
         };
@@ -3149,8 +3347,8 @@ mod tests {
             if inputs[1].fire {
                 fired = true;
             }
-            mg.step_masked(FIXED_DT, &inputs, Some(rg.remote_mask()), &sim, t, w);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut rec);
+            mg.step_masked(FIXED_DT, &inputs, Some(rg.remote_mask()), &sim, t, w, sb);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec);
             if spawned.is_none() && !mg.launched.is_empty() {
                 let c = &mg.launched[0];
                 spawned = Some((frame, c.ghost, c.team, c.hp, c.pos, c.dir));
@@ -3205,6 +3403,7 @@ mod tests {
         let sim = f.sim();
         let t = &f.tuning.player;
         let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
         let relay = FakeRelay::new();
         let (mut trh, mut trg) = pair(&relay);
         let (h, g) = (trh.id(), trg.id());
@@ -3218,8 +3417,8 @@ mod tests {
         rh.bind_match(&mut mh);
         rg.bind_match(&mut mg);
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
         }
         assert_eq!(mh.phase, Phase::Active);
 
@@ -3249,10 +3448,10 @@ mod tests {
                 m.aim_pitch = 0.0;
                 m.invuln = 0.0;
             }
-            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w);
-            mg.step_masked(FIXED_DT, &inputs, Some(rg.remote_mask()), &sim, t, w);
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
+            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &inputs, Some(rg.remote_mask()), &sim, t, w, sb);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             trh.advance(16.0);
             trg.advance(0.0);
             for (from, p) in drain_msgs(&mut trh) {
@@ -3300,10 +3499,10 @@ mod tests {
             mh.actors[0].aim_yaw = 0.0;
             mg.actors[1].pos = front;
             mg.actors[1].aim_yaw = std::f32::consts::PI;
-            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w);
-            mg.step_masked(FIXED_DT, &inputs, Some(rg.remote_mask()), &sim, t, w);
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
+            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &inputs, Some(rg.remote_mask()), &sim, t, w, sb);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             trh.advance(16.0);
             trg.advance(0.0);
             for (from, p) in drain_msgs(&mut trh) {
@@ -3332,10 +3531,10 @@ mod tests {
             mh.actors[0].aim_yaw = 0.0;
             mg.actors[1].pos = front;
             mg.actors[1].aim_yaw = std::f32::consts::PI;
-            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w);
-            mg.step_masked(FIXED_DT, &inputs, Some(rg.remote_mask()), &sim, t, w);
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, &mut trg);
+            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &inputs, Some(rg.remote_mask()), &sim, t, w, sb);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             trh.advance(16.0);
             trg.advance(0.0);
             for (from, p) in drain_msgs(&mut trh) {
@@ -3350,5 +3549,852 @@ mod tests {
         let gk = mg.runners[0].brolly_net_state();
         assert_eq!(hk, 131008, "regrown pose word (brolly.js L636-641)");
         assert_eq!(gk, hk, "the regrow converges through `ks`");
+    }
+
+    // ---------------------------------------------------------------- TR-34.2
+    #[test]
+    fn tr34_2_dh_owner_applies_the_ghost_hit_non_owner_ignores() {
+        // JS `sendDevHit`/`netHurt` (netmatch.js L157-159, subs.js
+        // L214-217) over the wire: a hit on a ghost device rides
+        // `{k:'dh', kind:'subs', id, d}` to the owner's screen; the owner's
+        // real copy takes the damage, every other screen drops it.
+        use crate::sub::SubKind;
+        use crate::weapon::SimEvent;
+
+        let f = fix();
+        let sim = f.sim();
+        let t = &f.tuning.player;
+        let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
+        let (h, g) = ("HOST", "GUEST");
+        let cfg = cfg(roster111(h, g), "tidewater", h);
+        let mut mh = match111(&f, 41, 120.0);
+        let mut mg = match111(&f, 41, 120.0);
+        let mut rh = Replication::new(&cfg, h, h);
+        let mut rg = Replication::new(&cfg, g, h);
+        rh.bind_match(&mut mh);
+        rg.bind_match(&mut mg);
+        for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+        }
+        assert_eq!(mh.phase, Phase::Active);
+
+        // The host deploys a hop beacon locally: slot 0 mints gid 1
+        // (D-T34-5) and the spawn record carries the plant payload.
+        mh.actors[0].sub = SubKind::Beacon;
+        mh.subs.use_sub(
+            0,
+            1,
+            sim.collision,
+            &mut mh.actors,
+            &mut mh.paint,
+            &mut mh.projectiles,
+            t,
+            sb,
+            Some(rh.remote_mask()),
+            0.0,
+        );
+        let evs = mh.subs.drain_events();
+        let spawn = evs
+            .iter()
+            .find_map(|e| match e {
+                SimEvent::SubSpawn { sub_kind, data, .. } if sub_kind == "beacon" => {
+                    Some(data.clone())
+                }
+                _ => None,
+            })
+            .expect("the beacon ['k','subs',…] spawn record");
+        assert_eq!(spawn[1], 1.0, "owner-side gid");
+        assert_eq!(mh.subs.items[0].hp, sb.beacon.hp as f32);
+
+        // The guest replays it as a ghost (the `['k', nid, 'subs', …]` arm,
+        // subs.js `netGhost` L192-212).
+        mg.subs.net_ghost(
+            0,
+            0,
+            "beacon",
+            &spawn,
+            &rg.nids,
+            sim.collision,
+            &mut mg.actors,
+            &mut mg.paint,
+            &mut mg.projectiles,
+            t,
+            sb,
+            Some(rg.remote_mask()),
+            0.0,
+        );
+        assert_eq!(mg.subs.items.len(), 1);
+        assert!(mg.subs.items[0].ghost);
+        assert_eq!(mg.subs.items[0].gid, 1, "slot 0 and nid 0 pack the same id");
+        let hp0 = sb.beacon.hp as f32;
+
+        // A guest round dies on the ghost capsule: `block_shot` keeps the
+        // ghost hp (its owner decides, subs.js L597-607) and emits the
+        // DeviceHit that the `dh_out` drain sends to the owner.
+        let bp = mg.subs.items[0].pos;
+        let blocked = mg.subs.block_shot(
+            bp + vec3(0.0, 0.5, -1.0),
+            bp + vec3(0.0, 0.5, -0.2),
+            1,
+            30.0,
+            false,
+            sb,
+        );
+        assert!(blocked, "the beacon capsule stops the round");
+        let dev = mg
+            .subs
+            .drain_events()
+            .into_iter()
+            .find_map(|e| match e {
+                SimEvent::DeviceHit { gid, d, .. } => Some((gid, d)),
+                _ => None,
+            })
+            .expect("the ghost hit reports a DeviceHit");
+        assert_eq!(dev, (1, 30.0));
+
+        // The wire `'dh'` frame, delivered to both screens: the guest's
+        // ghost copy ignores it (`net_hurt` only matches real items), the
+        // host's real beacon takes the 30.
+        let msg = encode_direct(&DirectMsg::DeviceHit {
+            kind: "subs".into(),
+            id: dev.0,
+            d: dev.1,
+        });
+        rg.on_message(h, &msg, &mut mg, t);
+        assert_eq!(
+            mg.subs.items[0].hp, hp0,
+            "the non-owner screen ignores the 'dh'"
+        );
+        rh.on_message(g, &msg, &mut mh, t);
+        assert_eq!(mh.subs.items[0].hp, 20.0, "the owner applied the hit");
+
+        // A second hit kills it: the owner's splice emits the `[2, gid]`
+        // end record (subs.js L164-167).
+        let msg2 = encode_direct(&DirectMsg::DeviceHit {
+            kind: "subs".into(),
+            id: 1,
+            d: 30.0,
+        });
+        rh.on_message(g, &msg2, &mut mh, t);
+        mh.subs.update(
+            FIXED_DT,
+            sim.collision,
+            &mut mh.actors,
+            &mut mh.paint,
+            &mut mh.projectiles,
+            t,
+            sb,
+            Some(rh.remote_mask()),
+            0.0,
+        );
+        let ends: Vec<Vec<f32>> = mh
+            .subs
+            .drain_events()
+            .into_iter()
+            .filter_map(|e| match e {
+                SimEvent::SubEnd { data, .. } => Some(data),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ends, vec![vec![2.0, 1.0]]);
+        assert!(mh.subs.items.is_empty());
+    }
+
+    #[test]
+    fn tr34_2_bomb_ghost_record_is_presentation_only() {
+        // JS `_play` 'b' (netmatch.js L477 → `ghostBomb`, weapons.js
+        // L877-885): a remote player's splat bomb flies and pops on this
+        // screen under the mute wrap — it paints nothing and hurts nothing;
+        // the owner's screen decides the damage.
+        let f = fix();
+        let sim = f.sim();
+        let t = &f.tuning.player;
+        let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
+        let (h, g) = ("HOST", "GUEST");
+        let cfg = cfg(roster111(h, g), "tidewater", h);
+        let mut mg = match111(&f, 43, 120.0);
+        let mut rg = Replication::new(&cfg, g, h);
+        rg.bind_match(&mut mg);
+        for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+        }
+        assert_eq!(mg.phase, Phase::Active);
+
+        // The victim stands exactly under the record's drop point (nid 0 is
+        // the host — the guest's remote proxy 0).
+        let base = sim.spawn_pads[0];
+        mg.actors[1].pos = base;
+        mg.actors[1].set_invuln(0.0);
+        let hp0 = mg.actors[1].hp;
+        let cov0 = mg.paint.coverage();
+
+        let tick = Tick {
+            ts: 2.0,
+            actors: Vec::new(),
+            events: vec![TimedEvent {
+                ts: 2.0,
+                kind: TickEvent::Bomb(BombRecord {
+                    nid: 0,
+                    kind: "bomb".into(),
+                    pos: [base.x, base.y + 1.2, base.z],
+                    vel: [0.0, 0.0, 0.0],
+                }),
+            }],
+        };
+        rg.on_message(h, &encode_tick(&tick, None), &mut mg, t);
+
+        let mut rec = Rec::default();
+        let mut saw_ghost = None;
+        for _ in 0..400 {
+            mg.actors[1].pos = base;
+            mg.actors[1].invuln = 0.0;
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec);
+            if saw_ghost.is_none() && !mg.projectiles.bombs.is_empty() {
+                saw_ghost = Some(mg.projectiles.bombs[0].ghost);
+            }
+        }
+        assert_eq!(
+            saw_ghost,
+            Some(true),
+            "the ['b'] record replays as a ghost bomb"
+        );
+        assert!(mg.projectiles.bombs.is_empty(), "the ghost popped and left");
+        assert_eq!(mg.actors[1].hp, hp0, "a ghost bomb hurts nothing");
+        assert_eq!(
+            mg.paint.coverage(),
+            cov0,
+            "a ghost bomb paints nothing (JS `mute`)"
+        );
+        assert!(mg.actors[1].alive);
+    }
+
+    #[test]
+    fn tr34_2_torpedo_ghost_locks_launches_but_decides_nothing() {
+        // JS `SUB_KITS.torpedo.ghost` (torpedo.js L270-300): the
+        // `['k', nid, 'torpedo', [0|3|4|1, …]]` ops fly, lock, launch and
+        // burst on this screen as pure presentation. The `[3]` lock record
+        // carries the foe's wire `nid` (JS `byNid` L278) — the ghost
+        // resolves it to the *local* actor list — but every damage, paint
+        // and end decision belongs to the owner's screen (D-T34-5).
+        use crate::sub::torpedo::TorpedoState;
+        use crate::weapon::SimEvent;
+
+        let f = fix();
+        let sim = f.sim();
+        let t = &f.tuning.player;
+        let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
+        let (h, g) = ("HOST", "GUEST");
+        let cfg = cfg(roster111(h, g), "tidewater", h);
+        let mut mg = match111(&f, 44, 120.0);
+        let mut rg = Replication::new(&cfg, g, h);
+        rg.bind_match(&mut mg);
+        for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+        }
+        assert_eq!(mg.phase, Phase::Active);
+        let mut rec = Rec::default();
+
+        let kit = |data: Vec<f32>, ts: f32| Tick {
+            ts,
+            actors: Vec::new(),
+            events: vec![TimedEvent {
+                ts,
+                kind: TickEvent::Kit(KitRecord {
+                    nid: 0,
+                    kind: "torpedo".into(),
+                    data,
+                    sub_kind: None,
+                }),
+            }],
+        };
+        let echo = |evs: Vec<SimEvent>| -> bool {
+            evs.iter().any(|e| match e {
+                SimEvent::SubSpawn { sub_kind, .. } => sub_kind == "torpedo",
+                SimEvent::SubEnd { sub_kind, .. } => *sub_kind == Some("torpedo".to_string()),
+                _ => false,
+            })
+        };
+
+        // The guest's own player (actor 1, team 1) stands in the throw
+        // line: a real torpedo locks and bursts on it, the ghost may not.
+        let base = sim.spawn_pads[0];
+        let foe = vec3(base.x, base.y, base.z + 5.0);
+        let hp0 = mg.actors[1].hp;
+        let mut echo_seen = false;
+        macro_rules! step_frame {
+            () => {{
+                mg.actors[1].pos = foe;
+                mg.actors[1].invuln = 0.0;
+                mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+                let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec);
+                if echo(mg.subs.drain_events()) {
+                    echo_seen = true;
+                }
+            }};
+        }
+
+        // op0: the throw record `[0, gid, pos×3, vel×3]` (JS L281-286).
+        let p0 = vec3(base.x, base.y + 1.35, base.z + 0.3);
+        rg.on_message(
+            h,
+            &encode_tick(
+                &kit(vec![0.0, 1.0, p0.x, p0.y, p0.z, 0.0, 3.0, 9.0], 2.0),
+                None,
+            ),
+            &mut mg,
+            t,
+        );
+        let mut spawned = None;
+        for frame in 0..60 {
+            step_frame!();
+            if let Some(it) = mg.subs.torpedo_items().first() {
+                spawned = Some((frame, it.ghost, it.team, it.src_nid, it.gid, it.state));
+                break;
+            }
+        }
+        let (frame, ghost, team, src, gid, state) =
+            spawned.expect("the ['k',…,[0,…]] record ghosts a torpedo");
+        assert!(frame > 0, "the ghost matures on the sender timeline");
+        assert!(ghost, "the replayed torpedo is a ghost (JS `mute` wrap)");
+        assert_eq!((team, src, gid), (0, Some(0), 1), "owner nid 0 → proxy 0");
+        assert_eq!(state, TorpedoState::Fly, "op0 ghosts into the arc");
+
+        // op3: the lock record `[3, gid, foe_nid, pos×3]` — nid 1 is the
+        // guest's own player, so `byNid` must resolve to actor index 1.
+        for _ in 0..10 {
+            step_frame!();
+        }
+        let p = mg.subs.torpedo_items()[0].pos;
+        rg.on_message(
+            h,
+            &encode_tick(&kit(vec![3.0, 1.0, 1.0, p.x, p.y, p.z], 2.5), None),
+            &mut mg,
+            t,
+        );
+        let mut saw = None;
+        for _ in 0..60 {
+            step_frame!();
+            if let Some(it) = mg.subs.torpedo_items().first()
+                && it.state == TorpedoState::Unfold
+            {
+                saw = Some((it.target, it.pos));
+                break;
+            }
+        }
+        let (tgt, pos_at_lock) = saw.expect("op3 start_locks the ghost (Fly → Unfold)");
+        assert_eq!(
+            tgt,
+            Some(1),
+            "the record's foe nid 1 resolves to the local actor index (JS `byNid`)"
+        );
+        assert!(
+            (pos_at_lock - p).length() < 0.2,
+            "the lock record places the ghost at its owner's report"
+        );
+
+        // The ghost unfolds on its own timer and launches.
+        let mut launched = false;
+        for _ in 0..120 {
+            step_frame!();
+            if mg
+                .subs
+                .torpedo_items()
+                .first()
+                .is_some_and(|i| i.state == TorpedoState::Launch)
+            {
+                launched = true;
+                break;
+            }
+        }
+        assert!(launched, "the ghost unfolds into Launch (JS `unfold` L386)");
+
+        // op4: the swim report `[4, gid, pos×3, dir×3, speed]` seeds the
+        // dead-reckoning; the ghost swims the owner's line.
+        let p = mg.subs.torpedo_items()[0].pos;
+        rg.on_message(
+            h,
+            &encode_tick(
+                &kit(vec![4.0, 1.0, p.x, p.y, p.z, 0.0, 0.0, 1.0, 14.0], 3.0),
+                None,
+            ),
+            &mut mg,
+            t,
+        );
+        for _ in 0..10 {
+            step_frame!();
+        }
+        let z0 = mg.subs.torpedo_items()[0].pos.z;
+        for _ in 0..40 {
+            step_frame!();
+        }
+        let it = &mg.subs.torpedo_items()[0];
+        assert!(it.net.is_some(), "op4 seeds the ghost's swim report");
+        assert_eq!(it.speed, 14.0, "the ghost swims at the reported speed");
+        assert!(
+            it.pos.z > z0 + 0.5,
+            "the ghost chases down the owner's line: z {} → {}",
+            z0,
+            it.pos.z
+        );
+        assert_eq!(mg.actors[1].hp, hp0, "the ghost swim hurts nobody");
+
+        // op1: the full-burst record `[1, gid, pos×3, 1]` — presentation
+        // only: muted paint, routed-away hits, muted droplets.
+        let p = mg.subs.torpedo_items()[0].pos;
+        rg.on_message(
+            h,
+            &encode_tick(&kit(vec![1.0, 1.0, p.x, p.y, p.z, 1.0], 4.0), None),
+            &mut mg,
+            t,
+        );
+        for _ in 0..30 {
+            step_frame!();
+            if mg.subs.torpedo_items().is_empty() {
+                break;
+            }
+        }
+        assert!(
+            mg.subs.torpedo_items().is_empty(),
+            "the [1,…,1] record bursts the ghost away"
+        );
+        assert_eq!(
+            mg.actors[1].hp, hp0,
+            "the ghost burst decides nothing: the local foe is untouched"
+        );
+        assert!(
+            mg.paint.grid().iter().all(|&v| v != 1),
+            "a ghost torpedo never paints (JS `mute`)"
+        );
+        assert!(
+            !echo_seen,
+            "the ghost emitted no SubSpawn/SubEnd echoes of its own"
+        );
+    }
+
+    #[test]
+    fn tr34_2_waddle_dh_kills_the_real_one_and_broadcasts_the_end() {
+        // The full round trip (netmatch.js L157-159 `sendDevHit` +
+        // waddle.js `netHurt` L691 / `blockShot` L720): the host throws a
+        // real waddle (`'k'` op0 → guest ghosts it); a guest round dies on
+        // the ghost capsule, which keeps its own hp and rides `'dh'` to the
+        // owner; the owner's real waddle takes the damage, pops at 0 hp,
+        // and its `[2, gid, popped]` end record (waddle.js L706-712)
+        // travels back as `'k'` op2 to remove the ghost.
+        use crate::sub::SubKind;
+        use crate::sub::waddle::WaddleState;
+        use crate::weapon::SimEvent;
+
+        let f = fix();
+        let sim = f.sim();
+        let t = &f.tuning.player;
+        let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
+        let relay = FakeRelay::new();
+        let (mut trh, mut trg) = pair(&relay);
+        let (h, g) = (trh.id(), trg.id());
+        let cfg = cfg(roster111(&h, &g), "tidewater", &h);
+        let mut mh = match111(&f, 45, 120.0);
+        let mut mg = match111(&f, 45, 120.0);
+        let mut rh = Replication::new(&cfg, &h, &h);
+        let mut rg = Replication::new(&cfg, &g, &h);
+        rh.bind_match(&mut mh);
+        rg.bind_match(&mut mg);
+        for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+        }
+        assert_eq!(mh.phase, Phase::Active);
+
+        let base = sim.spawn_pads[0];
+        let far_a = vec3(base.x + 20.0, base.y, base.z + 20.0);
+        let far_b = vec3(base.x - 20.0, base.y, base.z - 20.0);
+        let echo = |evs: Vec<SimEvent>| -> bool {
+            evs.iter().any(|e| match e {
+                SimEvent::SubSpawn { sub_kind, .. } => sub_kind == "waddle",
+                SimEvent::SubEnd { sub_kind, .. } => *sub_kind == Some("waddle".to_string()),
+                _ => false,
+            })
+        };
+        let mut echo_seen = false;
+        macro_rules! pair_step {
+            () => {{
+                // Pin the host-side foes far from the throw: the real
+                // waddle must land, sense nobody and sit on its 1.1 s fuse
+                // (config.js L378) while the `'dh'` exchange runs.
+                mh.actors[1].pos = far_a;
+                mh.actors[2].pos = far_b;
+                mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
+                mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+                let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
+                let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
+                trh.advance(16.0);
+                trg.advance(0.0);
+                for (from, p) in drain_msgs(&mut trh) {
+                    rh.on_message(&from, &p, &mut mh, t);
+                }
+                for (from, p) in drain_msgs(&mut trg) {
+                    rg.on_message(&from, &p, &mut mg, t);
+                }
+                if echo(mg.subs.drain_events()) {
+                    echo_seen = true;
+                }
+            }};
+        }
+
+        // The host throws: slot 0 mints gid 1 (D-T34-5), the spawn record
+        // is `[0, gid, pos×3, vel×3]` (waddle.js L269).
+        mh.actors[0].ink = 100.0;
+        mh.actors[0].sub = SubKind::Waddle;
+        mh.subs.use_sub(
+            0,
+            1,
+            sim.collision,
+            &mut mh.actors,
+            &mut mh.paint,
+            &mut mh.projectiles,
+            t,
+            sb,
+            Some(rh.remote_mask()),
+            0.0,
+        );
+        let hp_full = sb.waddle.hp as f32;
+        let g_hp0 = mg.actors[1].hp;
+
+        let mut landed = None;
+        for _ in 0..240 {
+            pair_step!();
+            let host = mh.subs.waddle_items().first().map(|i| i.state);
+            let guest = mg
+                .subs
+                .waddle_items()
+                .first()
+                .map(|i| (i.ghost, i.team, i.src_nid, i.gid, i.hp, i.state));
+            if host.is_some_and(|s| s != WaddleState::Fly)
+                && guest.is_some_and(|x| x.5 != WaddleState::Fly)
+            {
+                landed = Some(guest.unwrap());
+                break;
+            }
+        }
+        let (ghost, team, src, gid, ghp, state) =
+            landed.expect("the throw round-tripped and both copies landed");
+        assert!(ghost, "the guest replays the throw as a ghost");
+        assert_eq!(
+            (team, src, gid),
+            (0, Some(0), 1),
+            "the ghost keys on (src_nid, gid)"
+        );
+        assert_eq!(ghp, hp_full, "the ghost lands at full hp");
+        assert_ne!(state, WaddleState::Fly);
+
+        // A guest round dies on the ghost capsule: blocked, hp kept,
+        // DeviceHit emitted (waddle.js `hurt` L608 → `netHurt` L691).
+        // `blockShot` compares `segmentCapsuleDist` (distance to the
+        // capsule CORE axis, physics.js L306) against 0.2, so the ray
+        // must end strictly inside 0.2 of the axis, at core height
+        // [0.17, 0.23] (radius 0.17, height 0.4).
+        let gp = mg.subs.waddle_items()[0].pos;
+        let blocked = mg.subs.block_shot(
+            gp + vec3(0.0, 0.2, -1.0),
+            gp + vec3(0.0, 0.2, -0.1),
+            1,
+            10.0,
+            false,
+            sb,
+        );
+        assert!(blocked, "the ghost capsule absorbs the round");
+        // NB: do NOT drain the queued `DeviceHit` here — `Match::update`
+        // (match_.rs L1135-1147) must see it to route `dh_out` → `'dh'`.
+        // The exact tuple (gid 1, kind "waddle", d 10) is verified
+        // end-to-end below: the host's `net_hurt` only matches that gid
+        // and only that damage lands.
+        assert_eq!(
+            mg.subs.waddle_items()[0].hp,
+            hp_full,
+            "the ghost keeps its own hp — the owner decides"
+        );
+
+        // The `'dh'` rides the relay to the owner: the guest's own copy
+        // ignores it, the host's real waddle takes the 10.
+        pair_step!();
+        assert_eq!(
+            mh.subs.waddle_items()[0].hp,
+            hp_full - 10.0,
+            "the owner applied the 'dh' damage"
+        );
+        assert_eq!(
+            mg.subs.waddle_items()[0].hp,
+            hp_full,
+            "the non-owner screen ignores the 'dh'"
+        );
+
+        // A lethal 30 pops the real one: `hurt` → `pop` → the dead splice
+        // emits `[2, gid, 1]` (waddle.js L706-712, `why == 'popped'`).
+        let gp = mg.subs.waddle_items()[0].pos;
+        assert!(
+            mg.subs.block_shot(
+                gp + vec3(0.0, 0.2, -1.0),
+                gp + vec3(0.0, 0.2, -0.1),
+                1,
+                30.0,
+                false,
+                sb,
+            ),
+            "the second round dies on the ghost again"
+        );
+        pair_step!(); // routes the lethal 'dh' to the host: hp 20 − 30 ≤ 0
+        assert_eq!(
+            mh.subs.waddle_items()[0].hp,
+            hp_full - 40.0,
+            "the owner applied the second hit"
+        );
+        mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
+        let end = mh
+            .kit_out
+            .iter()
+            .find(|k| k.kind == "waddle" && k.data.first() == Some(&2.0))
+            .expect("the pop splices the [2, gid, popped] end record");
+        assert_eq!(end.data, vec![2.0, 1.0, 1.0], "popped = 1 (JS `why`)");
+        // `rh.update` must run *before* the next `step_masked` (which
+        // clears `kit_out`, match_.rs L468) so the end record rides the
+        // broadcast tick. It then matures on the guest only once
+        // `rg.update` advances the playback clock, so drive a few full
+        // round-trip frames (the ghost's 40 s age-out is nowhere near —
+        // removal here can only be the op2 splice).
+        let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
+        trh.advance(16.0);
+        trg.advance(0.0);
+        for (from, p) in drain_msgs(&mut trh) {
+            rh.on_message(&from, &p, &mut mh, t);
+        }
+        for (from, p) in drain_msgs(&mut trg) {
+            rg.on_message(&from, &p, &mut mg, t);
+        }
+        for _ in 0..60 {
+            if mg.subs.waddle_items().is_empty() {
+                break;
+            }
+            pair_step!();
+        }
+        assert!(
+            mh.subs.waddle_items().is_empty(),
+            "the popped waddle is gone on the owner's screen"
+        );
+        assert!(
+            mg.subs.waddle_items().is_empty(),
+            "the end record removed the guest's ghost"
+        );
+
+        assert_eq!(
+            mg.actors[1].hp, g_hp0,
+            "the guest's own player is untouched"
+        );
+        assert!(
+            mg.paint.grid().iter().all(|&v| v != 1),
+            "the ghost waddle never painted"
+        );
+        assert!(
+            mh.paint.grid().iter().all(|&v| v != 1),
+            "the real waddle popped before it could blast"
+        );
+        assert!(
+            !echo_seen,
+            "the guest ghost emitted no SubSpawn/SubEnd echoes"
+        );
+    }
+
+    #[test]
+    fn tr34_2_boomerang_ghost_never_bursts_on_a_local_foe() {
+        // JS `kits/boomerang.js` `ghost` (L200-221) under the `'k'` mute
+        // wrap: the replay rides Out → Hover → Back → Orbit around its
+        // owner's proxy, but every burst / arm / shred decision is guarded
+        // on `!ghost` (boomerang.js L249-369) — a local foe in the flight
+        // line and under the hover takes nothing, and only the owner's
+        // `[1, …]` record ends it.
+        use crate::sub::boomerang::BoomerangState;
+        use crate::weapon::SimEvent;
+
+        let f = fix();
+        let sim = f.sim();
+        let t = &f.tuning.player;
+        let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
+        let (h, g) = ("HOST", "GUEST");
+        let cfg = cfg(roster111(h, g), "tidewater", h);
+        let mut mg = match111(&f, 46, 120.0);
+        let mut rg = Replication::new(&cfg, g, h);
+        rg.bind_match(&mut mg);
+        for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+        }
+        assert_eq!(mg.phase, Phase::Active);
+        let mut rec = Rec::default();
+
+        let kit = |data: Vec<f32>, ts: f32| Tick {
+            ts,
+            actors: Vec::new(),
+            events: vec![TimedEvent {
+                ts,
+                kind: TickEvent::Kit(KitRecord {
+                    nid: 0,
+                    kind: "boomerang".into(),
+                    data,
+                    sub_kind: None,
+                }),
+            }],
+        };
+        let echo = |evs: Vec<SimEvent>| -> bool {
+            evs.iter().any(|e| match e {
+                SimEvent::SubSpawn { sub_kind, .. } => sub_kind == "boomerang",
+                SimEvent::SubEnd { sub_kind, .. } => *sub_kind == Some("boomerang".to_string()),
+                _ => false,
+            })
+        };
+
+        let base = sim.spawn_pads[0];
+        let mut foe = vec3(base.x, base.y, base.z + 4.5);
+        let hp0 = mg.actors[1].hp;
+        let mut echo_seen = false;
+        let mut saw_armed = false;
+        macro_rules! step_frame {
+            () => {{
+                mg.actors[1].pos = foe;
+                mg.actors[1].invuln = 0.0;
+                mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+                let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec);
+                let evs = mg.subs.drain_events();
+                if echo(evs.clone()) {
+                    echo_seen = true;
+                }
+                if let Some(it) = mg.subs.boomerang_items().first()
+                    && it.state == BoomerangState::Armed
+                {
+                    saw_armed = true;
+                }
+            }};
+        }
+
+        // op0: `[0, gid, start×3, dir×3]` — the ghost re-plans the raycast
+        // on this world (boomerang.js L205-210 `planFrom`).
+        let st = vec3(base.x, base.y + 1.35, base.z + 0.3);
+        rg.on_message(
+            h,
+            &encode_tick(
+                &kit(vec![0.0, 1.0, st.x, st.y, st.z, 0.0, 0.0, 1.0], 2.0),
+                None,
+            ),
+            &mut mg,
+            t,
+        );
+        let mut spawned = None;
+        for frame in 0..60 {
+            step_frame!();
+            if let Some(it) = mg.subs.boomerang_items().first() {
+                spawned = Some((frame, it.ghost, it.team, it.src_nid, it.gid, it.state));
+                break;
+            }
+        }
+        let (frame, ghost, team, src, gid, state) =
+            spawned.expect("the ['k',…,[0,…]] record ghosts a boomerang");
+        assert!(frame > 0, "the ghost matures on the sender timeline");
+        assert!(ghost, "the replayed throw is a ghost (JS `mute` wrap)");
+        assert_eq!((team, src, gid), (0, Some(0), 1), "owner nid 0 → proxy 0");
+        assert_eq!(state, BoomerangState::Out);
+
+        // Out rides through the pinned foe (a real throw would ARM there,
+        // boomerang.js L257) and settles into Hover.
+        let mut hover = None;
+        for _ in 0..150 {
+            step_frame!();
+            match mg.subs.boomerang_items().first() {
+                Some(it) if it.state == BoomerangState::Hover => {
+                    hover = Some(it.pos);
+                    break;
+                }
+                None => break,
+                _ => {}
+            }
+        }
+        let hover = hover.expect("the ghost rides Out into Hover");
+
+        // Park the foe right under the hover: the 8 Hz shred (L283-309)
+        // would tick-damage and ink a real one's spot.
+        foe = hover + vec3(0.0, -0.4, -0.8);
+        let mut saw_back = false;
+        let mut saw_orbit = false;
+        for _ in 0..200 {
+            step_frame!();
+            if let Some(it) = mg.subs.boomerang_items().first() {
+                match it.state {
+                    BoomerangState::Back => saw_back = true,
+                    BoomerangState::Orbit => {
+                        saw_orbit = true;
+                        break;
+                    }
+                    _ => {}
+                }
+            } else {
+                break;
+            }
+        }
+        assert!(saw_back, "the ghost starts back after its hover");
+        assert!(
+            saw_orbit,
+            "the ghost homes onto its owner's proxy and orbits"
+        );
+
+        // Orbit past `orbitTime` (2.5 s): a real one bursts, the ghost just
+        // keeps circling (L368 `!it.ghost` guard).
+        let mut orbit_frames = 0;
+        for _ in 0..220 {
+            step_frame!();
+            match mg.subs.boomerang_items().first() {
+                Some(it) if it.state == BoomerangState::Orbit => orbit_frames += 1,
+                Some(_) => break,
+                None => break,
+            }
+            if orbit_frames > 160 {
+                break;
+            }
+        }
+        assert!(
+            orbit_frames > 150,
+            "the ghost orbits past its burst timer, unburst: {orbit_frames} frames"
+        );
+        assert_eq!(mg.actors[1].hp, hp0, "the ghost shredded / grazed nobody");
+
+        // The owner's `[1, …, 0]` burst record ends it — muted.
+        let p = mg.subs.boomerang_items()[0].pos;
+        rg.on_message(
+            h,
+            &encode_tick(&kit(vec![1.0, 1.0, p.x, p.y, p.z, 0.0], 6.0), None),
+            &mut mg,
+            t,
+        );
+        for _ in 0..30 {
+            step_frame!();
+            if mg.subs.boomerang_items().is_empty() {
+                break;
+            }
+        }
+        assert!(
+            mg.subs.boomerang_items().is_empty(),
+            "the [1,…,0] record bursts the ghost away"
+        );
+        assert_eq!(mg.actors[1].hp, hp0, "the ghost burst decides nothing");
+        assert!(!saw_armed, "a local foe never arms a ghost");
+        assert!(
+            mg.paint.grid().iter().all(|&v| v != 1),
+            "a ghost boomerang never paints (JS `mute`)"
+        );
+        assert!(
+            !echo_seen,
+            "the ghost emitted no SubSpawn/SubEnd echoes of its own"
+        );
     }
 }

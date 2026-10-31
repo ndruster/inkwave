@@ -24,7 +24,8 @@
 use glam::{Vec3, vec3};
 
 use crate::collision::{CollisionWorld, Contacts, GroundHit};
-use crate::tuning::PlayerTuning;
+use crate::sub::{SubKind, SubSystem};
+use crate::tuning::{PlayerTuning, SubSet};
 use crate::weapon::mitts::MittsKit;
 
 /// Fixed simulation step (JS runs the same logic per 60 Hz frame).
@@ -169,6 +170,20 @@ pub struct KitArmor {
     pub guard_arc_cos: f32,
 }
 
+/// JS `actor.status` (actor.js L43), batch-1 subset: the sub-weapon status
+/// effects (`subs.js` `track` / `poison`). `reveal` / `shield` are specials
+/// (Task 35) and stay out.
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+pub struct ActorStatus {
+    /// JS `status.track`: seconds of echo-orb tracking left.
+    pub track: f32,
+    /// JS `status.trackTeam` (−1 = none): the team that applied it — a fresh
+    /// track from the *same* team does not re-emit the `actor:tracked` event.
+    pub track_team: Option<usize>,
+    /// JS `status.poison`: seconds of murk-bomb poison left.
+    pub poison: f32,
+}
+
 #[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 struct PrevIntent {
     fire: bool,
@@ -255,6 +270,13 @@ pub struct Actor {
     /// every mitts-update frame, cleared on splat/reset.
     #[serde(default)]
     pub kit_armor: Option<KitArmor>,
+    /// JS `this.status` (actor.js L43): sub-weapon status effects (Task 34).
+    #[serde(default)]
+    pub status: ActorStatus,
+    /// JS `this.sub` — the equipped sub weapon (roster `sub`, batch 1). The
+    /// weapon runner spends the ink and deploys it on the sub release.
+    #[serde(default)]
+    pub sub: SubKind,
     events: Vec<ActorEvent>,
 }
 
@@ -308,6 +330,8 @@ impl Actor {
             dodge_vel: None,
             jump_swallowed: false,
             kit_armor: None,
+            status: ActorStatus::default(),
+            sub: SubKind::default(),
             events: Vec::new(),
         };
         a.reset(t);
@@ -351,6 +375,9 @@ impl Actor {
         self.dodge_vel = None;
         self.jump_swallowed = false;
         self.kit_armor = None;
+        // JS actor.js L111: `reset` clears track/poison but keeps `trackTeam`.
+        self.status.track = 0.0;
+        self.status.poison = 0.0;
     }
 
     /// JS `spawnAt(p, yaw)`: place on the ground (settle probe) with spawn
@@ -495,6 +522,12 @@ impl Actor {
         self.invuln
     }
 
+    /// JS `a.fireFacing = ...` (weapons.js L140: aiming a sub holds the
+    /// throw pose at 0.3 s): the weapon runner writes the facing hold timer.
+    pub(crate) fn set_fire_facing(&mut self, secs: f32) {
+        self.fire_facing = secs;
+    }
+
     /// Rising edge of the jump intent this frame (JS `actor.js` L310 gates the
     /// twins' `tryDodge` on `jumpBuffer > 0`; Task 30 uses the exact-press
     /// frame for the match-level dodge interception).
@@ -535,6 +568,16 @@ impl Actor {
         std::mem::take(&mut self.events)
     }
 
+    /// Peek whether a `Splatted` event is pending (JS `emit('splatted')` fires
+    /// inline, actor.js L240; the sprinkler-destroy hook of `subs.js` L60
+    /// needs the signal before the queue is drained).
+    #[must_use]
+    pub fn has_splat_event(&self) -> bool {
+        self.events
+            .iter()
+            .any(|e| matches!(e, ActorEvent::Splatted { .. }))
+    }
+
     /// Visual (smoothed) feet height — cameras follow this, not the raw pos.
     #[must_use]
     pub fn visual_y(&self) -> f32 {
@@ -555,6 +598,10 @@ impl Actor {
     /// Task 33 §4: `mitts` is this actor's Mitts kit (JS
     /// `MAIN_KITS[a.weapon.kind].jump` hook, actor.js L311-313, and the
     /// `hang` wall-cling freeze, L502-507); `None` for every other weapon.
+    /// Task 34: `sb` feeds the murk-bomb poison ladder (JS actor.js L354-359,
+    /// L448); `subs` is the world sub system for the curtain push
+    /// (`G.subs?.blockActor`, actor.js L332) — `None` in bare actor tests.
+    #[allow(clippy::too_many_arguments)]
     pub fn step(
         &mut self,
         dt: f32,
@@ -562,6 +609,8 @@ impl Actor {
         world: &SimWorld,
         ink: &dyn InkQuery,
         t: &PlayerTuning,
+        sb: &SubSet,
+        subs: Option<&SubSystem>,
         mut mitts: Option<&mut MittsKit>,
     ) {
         // JS runs this whole pipeline once per 60 Hz frame; variable dt would
@@ -661,7 +710,7 @@ impl Actor {
         self.on_enemy = on_enemy;
 
         // ---- horizontal movement
-        self.horizontal(dt, is_squid, on_enemy, input, t);
+        self.horizontal(dt, is_squid, on_enemy, input, t, sb);
         // JS L305-306: a dodge roll owns the horizontal velocity while it
         // lasts (the twins override; the runner wrote `dodge_vel` this frame).
         if let Some(dv) = self.dodge_vel {
@@ -718,6 +767,11 @@ impl Actor {
             self.grounded = false;
         }
         self.integrate(dt, is_squid, jumped, world, t, hang);
+        // JS actor.js L332 (`G.subs?.blockActor`): enemy ink curtains shove
+        // the kid back out to the side it is on (Task 34).
+        if let Some(s) = subs {
+            s.block_actor(self, t, sb);
+        }
         self.spawn_barrier(world);
 
         // ---- enemy ink damage + hp regen + ink tank refill
@@ -739,8 +793,23 @@ impl Actor {
             };
             self.hp = t.hp.min(self.hp + rate * dt);
         }
+        // JS actor.js L350-359: sub status decay first (the poison tick is
+        // spent *after* this frame's decay, so the last poison second drains
+        // without blocking the refill), then the refill ladder. JS L356 also
+        // counts `climbing` as swimming — wall climb is out of scope (Task
+        // 33 deviation list), so only `submerged` gates the swim branch.
+        if self.status.track > 0.0 {
+            self.status.track = (self.status.track - dt).max(0.0);
+        }
+        if self.status.poison > 0.0 {
+            self.status.poison = (self.status.poison - dt).max(0.0);
+            self.ink = (self.ink - sb.mist.ink_drain * dt).max(0.0);
+        }
         if self.submerged {
-            self.ink = t.ink_max.min(self.ink + t.ink_refill_swim * dt);
+            let k = if self.status.poison > 0.0 { 0.5 } else { 1.0 };
+            self.ink = t.ink_max.min(self.ink + t.ink_refill_swim * k * dt);
+        } else if self.status.poison > 0.0 {
+            // JS L357: poisoned — drain only, no idle refill at all.
         } else if !is_squid && self.last_fire > t.ink_refill_delay {
             self.ink = t.ink_max.min(self.ink + t.ink_refill_kid * dt);
         } else if is_squid {
@@ -791,6 +860,7 @@ impl Actor {
         on_enemy: bool,
         input: &ActorInput,
         t: &PlayerTuning,
+        sb: &SubSet,
     ) {
         let mv = input.move_dir;
         let mh = mv.x.hypot(mv.z);
@@ -875,6 +945,11 @@ impl Actor {
             vt = vt.min(t.enemy_ink_speed);
             big_a = big_a.min(t.enemy_ink_accel);
             big_d = t.enemy_ink_decel.max(0.0);
+        }
+        // JS actor.js L448: a poisoned kid moves slower (grounded rows only;
+        // the airborne branch above returns before this ladder, as in JS).
+        if self.status.poison > 0.0 {
+            vt *= sb.mist.slow;
         }
         if mh < 0.01 {
             // brake: strong at speed, easing into the stop
@@ -1421,7 +1496,16 @@ mod tests {
         let (mut sp_prev, mut x_prev) = (0.0_f32, 0.0_f32);
         let mut crossed: Option<(f32, f32)> = None;
         for k in 1..600 {
-            a.step(DT, &run_x(), &f.sim(), &NoInk, p, None);
+            a.step(
+                DT,
+                &run_x(),
+                &f.sim(),
+                &NoInk,
+                p,
+                &f.tuning.subs,
+                None,
+                None,
+            );
             let sp = a.vel.x.hypot(a.vel.z);
             if sp >= target && crossed.is_none() {
                 let frac = (target - sp_prev) / (sp - sp_prev);
@@ -1476,7 +1560,7 @@ mod tests {
         a.note_fired(); // just fired: refill blocked for inkRefillDelay
         let ink_at = |steps: u32, a: &mut Actor| {
             for _ in 0..steps {
-                a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
+                a.step(DT, &idle(), &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
             }
             a.ink
         };
@@ -1507,12 +1591,12 @@ mod tests {
             ..ActorInput::default()
         };
         for _ in 0..30 {
-            a.step(DT, &swim, &f.sim(), &OwnInk, p, None);
+            a.step(DT, &swim, &f.sim(), &OwnInk, p, &f.tuning.subs, None, None);
         }
         assert!(a.submerged, "squid on own ink must be submerged");
         let ink05 = a.ink;
         for _ in 0..60 {
-            a.step(DT, &swim, &f.sim(), &OwnInk, p, None);
+            a.step(DT, &swim, &f.sim(), &OwnInk, p, &f.tuning.subs, None, None);
         }
         let rate = a.ink - ink05;
         println!(
@@ -1535,13 +1619,13 @@ mod tests {
         close(f64::from(a.respawn_timer), 5.5, 1e-4, "respawn timer");
         // 5.4 s later: still dead
         for _ in 0..324 {
-            a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
+            a.step(DT, &idle(), &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
         }
         assert!(!a.alive, "must stay dead until respawnTime");
         // cross 5.5 s one frame at a time and catch the respawn frame
         let mut steps = 324;
         while !a.alive {
-            a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
+            a.step(DT, &idle(), &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
             steps += 1;
             assert!(
                 steps < 400,
@@ -1581,7 +1665,7 @@ mod tests {
         assert!(ev.contains(&ActorEvent::Respawn));
         // drops in and lands on the pad
         for _ in 0..240 {
-            a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
+            a.step(DT, &idle(), &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
         }
         assert!(a.grounded, "must land on the pad after drop-in");
     }
@@ -1596,7 +1680,7 @@ mod tests {
         a.pos = vec3(100.0, -2.0, 0.0);
         a.vel = Vec3::ZERO;
         a.drain_events();
-        a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
+        a.step(DT, &idle(), &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
         assert!(!a.alive, "falling below fallDeathY over water must splat");
         close(f64::from(a.respawn_timer), 5.5, 1e-4, "water respawn timer");
         let ev = a.drain_events();
@@ -1605,7 +1689,7 @@ mod tests {
             attacker: None
         }));
         for _ in 0..340 {
-            a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
+            a.step(DT, &idle(), &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
         }
         assert!(a.alive, "water splat respawns like a combat splat");
         assert_eq!(a.deaths, 1);
@@ -1619,7 +1703,7 @@ mod tests {
         b.drain_events();
         let mut respawn_frame = None;
         for k in 0..340 {
-            b.step(DT, &idle(), &f.sim(), &NoInk, p, None);
+            b.step(DT, &idle(), &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
             if respawn_frame.is_none() && b.alive {
                 respawn_frame = Some(k);
             }
@@ -1648,7 +1732,7 @@ mod tests {
         assert!(!a.damage(60.0, None, None, p));
         close(f64::from(a.hp), 40.0, 1e-6, "hp after hit");
         for _ in 0..72 {
-            a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
+            a.step(DT, &idle(), &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
         }
         assert!(
             (a.hp - 40.0).abs() < 1e-4,
@@ -1656,11 +1740,11 @@ mod tests {
             a.hp
         );
         for _ in 0..60 {
-            a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
+            a.step(DT, &idle(), &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
         }
         let hp2 = a.hp;
         for _ in 0..60 {
-            a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
+            a.step(DT, &idle(), &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
         }
         let rate = a.hp - hp2;
         println!("hp regen: rate={rate:.3}/s (expect 22)");
@@ -1674,7 +1758,16 @@ mod tests {
         let mut a = spawn_actor(&f, 0);
         a.invuln = 0.0;
         for _ in 0..180 {
-            a.step(DT, &run_x(), &f.sim(), &EnemyInk, p, None);
+            a.step(
+                DT,
+                &run_x(),
+                &f.sim(),
+                &EnemyInk,
+                p,
+                &f.tuning.subs,
+                None,
+                None,
+            );
         }
         assert!(a.on_enemy);
         // dps 20 with a 40-point cap → hp floors at 60, and ink alone never kills
@@ -1702,7 +1795,16 @@ mod tests {
         let mut a = spawn_actor(&f, 0);
         a.invuln = 0.0;
         for _ in 0..180 {
-            a.step(DT, &run_x(), &f.sim(), &NoInk, p, None);
+            a.step(
+                DT,
+                &run_x(),
+                &f.sim(),
+                &NoInk,
+                p,
+                &f.tuning.subs,
+                None,
+                None,
+            );
         }
         let sp0 = a.vel.x.hypot(a.vel.z);
         assert!(
@@ -1712,7 +1814,7 @@ mod tests {
         let x0 = a.pos.x;
         let mut steps = 0;
         while a.vel.x.hypot(a.vel.z) > 0.05 {
-            a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
+            a.step(DT, &idle(), &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
             steps += 1;
             assert!(steps < 600);
         }
@@ -1747,7 +1849,7 @@ mod tests {
             jump: true,
             ..ActorInput::default()
         };
-        a.step(DT, &jump, &f.sim(), &NoInk, p, None);
+        a.step(DT, &jump, &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
         assert!(!a.grounded, "jump must leave the ground");
         assert!(a.vel.y > 7.9, "jump vel applied (vy={})", a.vel.y);
         let mut apex = a.pos.y.max(0.0);
@@ -1755,7 +1857,7 @@ mod tests {
         for k in 1..600 {
             let y_prev = a.pos.y;
             let vy_prev = a.vel.y;
-            a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
+            a.step(DT, &idle(), &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
             apex = apex.max(a.pos.y);
             if a.grounded {
                 // linear crossing inside the landing step (fall gravity region)
@@ -1815,7 +1917,7 @@ mod tests {
         let (mut sp_prev, mut x_prev) = (0.0_f32, 0.0_f32);
         let mut crossed: Option<(f32, f32)> = None;
         for k in 1..600 {
-            a.step(DT, &swim, &f.sim(), &OwnInk, p, None);
+            a.step(DT, &swim, &f.sim(), &OwnInk, p, &f.tuning.subs, None, None);
             assert!(a.submerged);
             let sp = a.vel.x.hypot(a.vel.z);
             if sp >= target && crossed.is_none() {
@@ -1878,7 +1980,7 @@ mod tests {
             let inp = if first { &jump } else { &idle() };
             first = false;
             let vy_before = a.vel.y;
-            a.step(DT, inp, &f.sim(), &NoInk, p, None);
+            a.step(DT, inp, &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
             if a.vel.y > vy_before + 1.0 && !a.grounded {
                 jumped = true;
                 break;
@@ -1892,7 +1994,16 @@ mod tests {
         b.vel = vec3(6.0, 0.0, 0.0);
         let mut off = false;
         for _ in 0..30 {
-            b.step(DT, &run_x(), &f.sim(), &NoInk, p, None);
+            b.step(
+                DT,
+                &run_x(),
+                &f.sim(),
+                &NoInk,
+                p,
+                &f.tuning.subs,
+                None,
+                None,
+            );
             if !b.grounded {
                 off = true;
                 break;
@@ -1901,11 +2012,11 @@ mod tests {
         assert!(off, "must have run off the edge (pos.x={})", b.pos.x);
         // 2 more airborne frames (still well inside 0.12 s), then press jump
         for _ in 0..2 {
-            b.step(DT, &idle(), &f.sim(), &NoInk, p, None);
+            b.step(DT, &idle(), &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
         }
         assert!(!b.grounded);
         let vy_before = b.vel.y;
-        b.step(DT, &jump, &f.sim(), &NoInk, p, None);
+        b.step(DT, &jump, &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
         assert!(
             b.vel.y > vy_before + 1.0,
             "coyote jump must fire within coyoteTime (vy {} → {})",
@@ -1927,7 +2038,7 @@ mod tests {
             ..ActorInput::default()
         };
         for _ in 0..180 {
-            a.step(DT, &squid, &f.sim(), &NoInk, p, None); // dry floor: not submerged
+            a.step(DT, &squid, &f.sim(), &NoInk, p, &f.tuning.subs, None, None); // dry floor: not submerged
         }
         assert!(!a.submerged);
         let sp = a.vel.x.hypot(a.vel.z);
@@ -1951,7 +2062,7 @@ mod tests {
             ..ActorInput::default()
         };
         for _ in 0..30 {
-            a.step(DT, &swim, &f.sim(), &OwnInk, p, None);
+            a.step(DT, &swim, &f.sim(), &OwnInk, p, &f.tuning.subs, None, None);
         }
         assert_eq!(a.form, Form::Squid);
         // press fire while still holding squid → most recent press wins
@@ -1960,13 +2071,22 @@ mod tests {
             fire: true,
             ..ActorInput::default()
         };
-        a.step(DT, &both, &f.sim(), &OwnInk, p, None);
+        a.step(DT, &both, &f.sim(), &OwnInk, p, &f.tuning.subs, None, None);
         assert_eq!(a.form, Form::Kid, "fire pressed after squid pops out");
         assert_eq!(a.kid_t, 0.0, "emerge timer restarts");
         // fire gate stays shut until emergeDelay, then passes the buffer
         let mut gate_seen = false;
         for _ in 0..30 {
-            a.step(DT, &idle(), &f.sim(), &OwnInk, p, None);
+            a.step(
+                DT,
+                &idle(),
+                &f.sim(),
+                &OwnInk,
+                p,
+                &f.tuning.subs,
+                None,
+                None,
+            );
             if a.fire_gate.fire {
                 gate_seen = true;
             }
@@ -1983,7 +2103,7 @@ mod tests {
         // drop the actor inside the Bravo bubble (pad[1] = (0,0,24), R=4.2)
         a.pos = vec3(0.0, 0.0, 22.0);
         a.vel = Vec3::ZERO;
-        a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
+        a.step(DT, &idle(), &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
         let d = (a.pos.x.powi(2) + (a.pos.z - 24.0).powi(2)).sqrt();
         assert!(d >= 4.2 - 1e-3, "barrier must push out to the rim (d={d})");
     }
@@ -1997,20 +2117,29 @@ mod tests {
         a.invuln = 0.0;
         // build up forward speed on +x, then jump and steer to +z mid-air
         for _ in 0..180 {
-            a.step(DT, &run_x(), &f.sim(), &NoInk, p, None);
+            a.step(
+                DT,
+                &run_x(),
+                &f.sim(),
+                &NoInk,
+                p,
+                &f.tuning.subs,
+                None,
+                None,
+            );
         }
         let jump = ActorInput {
             jump: true,
             ..ActorInput::default()
         };
-        a.step(DT, &jump, &f.sim(), &NoInk, p, None);
+        a.step(DT, &jump, &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
         assert!(!a.grounded);
         let (vx0, vz0) = (a.vel.x, a.vel.z);
         let steer = ActorInput {
             move_dir: vec3(0.0, 0.0, 1.0),
             ..ActorInput::default()
         };
-        a.step(DT, &steer, &f.sim(), &NoInk, p, None);
+        a.step(DT, &steer, &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
         // kid airborne: target = max(run_speed, air_min_speed) = 6 toward +z;
         // dv = (−vx0, 6 − vz0), walked by air_accel·dt along the error.
         let (tvx, tvz) = (0.0, p.run_speed.max(p.air_min_speed));
@@ -2034,15 +2163,24 @@ mod tests {
         let mut a = spawn_actor(&f, 0);
         a.invuln = 0.0;
         for _ in 0..180 {
-            a.step(DT, &run_x(), &f.sim(), &NoInk, p, None);
+            a.step(
+                DT,
+                &run_x(),
+                &f.sim(),
+                &NoInk,
+                p,
+                &f.tuning.subs,
+                None,
+                None,
+            );
         }
         let jump = ActorInput {
             jump: true,
             ..ActorInput::default()
         };
-        a.step(DT, &jump, &f.sim(), &NoInk, p, None);
+        a.step(DT, &jump, &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
         let vx0 = a.vel.x;
-        a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
+        a.step(DT, &idle(), &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
         // airborne, no input: velocity error toward zero walks at air_decel·dt
         close(
             f64::from(vx0 - a.vel.x),
@@ -2059,11 +2197,20 @@ mod tests {
         let p = &f.tuning.player;
         let mut a = spawn_actor(&f, 0);
         a.invuln = 0.0;
-        a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
+        a.step(DT, &idle(), &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
         assert!(a.grounded);
         // inject a speed above the run cap (e.g. after a swim exit glide)
         a.vel.x = 9.0;
-        a.step(DT, &run_x(), &f.sim(), &NoInk, p, None);
+        a.step(
+            DT,
+            &run_x(),
+            &f.sim(),
+            &NoInk,
+            p,
+            &f.tuning.subs,
+            None,
+            None,
+        );
         // sp − vts = 3 > decelKnee → full brake rate: Δ = runDecel·dt
         close(
             f64::from(9.0 - a.vel.x),
@@ -2077,7 +2224,16 @@ mod tests {
         );
         // converges down to exactly the target speed
         for _ in 0..300 {
-            a.step(DT, &run_x(), &f.sim(), &NoInk, p, None);
+            a.step(
+                DT,
+                &run_x(),
+                &f.sim(),
+                &NoInk,
+                p,
+                &f.tuning.subs,
+                None,
+                None,
+            );
         }
         close(
             f64::from(a.vel.x),
@@ -2095,7 +2251,16 @@ mod tests {
         let mut a = spawn_actor(&f, 0);
         a.invuln = 0.0;
         for _ in 0..180 {
-            a.step(DT, &run_x(), &f.sim(), &NoInk, p, None);
+            a.step(
+                DT,
+                &run_x(),
+                &f.sim(),
+                &NoInk,
+                p,
+                &f.tuning.subs,
+                None,
+                None,
+            );
         }
         assert!(a.grounded && a.vel.x > 0.99 * p.run_speed);
         let vx0 = a.vel.x;
@@ -2105,7 +2270,7 @@ mod tests {
         };
         // first enemy-ink frame: ground probe from last frame + EnemyInk →
         // on_enemy, sp > 0.5 and ang = π > reverseAngle → plant-and-reverse
-        a.step(DT, &rev, &f.sim(), &EnemyInk, p, None);
+        a.step(DT, &rev, &f.sim(), &EnemyInk, p, &f.tuning.subs, None, None);
         assert!(a.on_enemy);
         let r_enemy = p.reverse_decel.max(p.enemy_ink_decel) * DT * 0.5;
         close(
@@ -2118,10 +2283,19 @@ mod tests {
         let mut b = spawn_actor(&f, 0);
         b.invuln = 0.0;
         for _ in 0..180 {
-            b.step(DT, &run_x(), &f.sim(), &NoInk, p, None);
+            b.step(
+                DT,
+                &run_x(),
+                &f.sim(),
+                &NoInk,
+                p,
+                &f.tuning.subs,
+                None,
+                None,
+            );
         }
         let vx1 = b.vel.x;
-        b.step(DT, &rev, &f.sim(), &NoInk, p, None);
+        b.step(DT, &rev, &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
         close(
             f64::from(vx1 - b.vel.x),
             f64::from(p.reverse_decel * DT),
@@ -2162,7 +2336,16 @@ mod tests {
         a.invuln = 0.0;
         let mut go_sp = Vec::new();
         for _ in 0..70 {
-            a.step(DT, &run_x(), &f.sim(), &NoInk, p, None);
+            a.step(
+                DT,
+                &run_x(),
+                &f.sim(),
+                &NoInk,
+                p,
+                &f.tuning.subs,
+                None,
+                None,
+            );
             go_sp.push(a.vel.x.hypot(a.vel.z) as f64);
         }
         // JS speedFirst6 (r3): [0.583, 1.343, 2.469, 3.636, 4.802, 5.634]
@@ -2183,7 +2366,7 @@ mod tests {
         let x0 = a.pos.x as f64;
         let mut stop_sp = Vec::new();
         for _ in 0..45 {
-            a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
+            a.step(DT, &idle(), &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
             stop_sp.push(a.vel.x.hypot(a.vel.z) as f64);
         }
         // JS stopFirst8: [5.033, 4.067, 3.1, 2.133, 1.168, 0.465, 0.011, 0]
@@ -2197,7 +2380,16 @@ mod tests {
         let mut b = spawn_actor(&f, 0);
         b.invuln = 0.0;
         for _ in 0..50 {
-            b.step(DT, &run_x(), &f.sim(), &NoInk, p, None);
+            b.step(
+                DT,
+                &run_x(),
+                &f.sim(),
+                &NoInk,
+                p,
+                &f.tuning.subs,
+                None,
+                None,
+            );
         }
         let rev = ActorInput {
             move_dir: vec3(-1.0, 0.0, 0.0),
@@ -2205,7 +2397,7 @@ mod tests {
         };
         let mut rev_vx = Vec::new();
         for _ in 0..50 {
-            b.step(DT, &rev, &f.sim(), &NoInk, p, None);
+            b.step(DT, &rev, &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
             rev_vx.push(b.vel.x as f64);
         }
         // JS tReverseZero = frame 4 (0.0667 s), tReverse90 = frame 9 (0.15 s)
@@ -2226,12 +2418,12 @@ mod tests {
             ..ActorInput::default()
         };
         // JS samples AFTER the frame, so r[0] is one frame after takeoff.
-        a.step(DT, &jump, &f.sim(), &NoInk, p, None);
+        a.step(DT, &jump, &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
         let y0 = a.pos.y as f64;
         let mut ys = vec![y0];
         let mut vys = vec![a.vel.y as f64];
         for _ in 0..60 {
-            a.step(DT, &idle(), &f.sim(), &NoInk, p, None);
+            a.step(DT, &idle(), &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
             ys.push(a.pos.y as f64);
             vys.push(a.vel.y as f64);
         }
@@ -2248,10 +2440,10 @@ mod tests {
         let mut grounded_seq = Vec::new();
         let mut b = spawn_actor(&f, 0);
         b.invuln = 0.0;
-        b.step(DT, &jump, &f.sim(), &NoInk, p, None);
+        b.step(DT, &jump, &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
         grounded_seq.push(b.grounded);
         for _ in 0..60 {
-            b.step(DT, &idle(), &f.sim(), &NoInk, p, None);
+            b.step(DT, &idle(), &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
             grounded_seq.push(b.grounded);
         }
         for (i, &g) in grounded_seq.iter().enumerate() {
@@ -2277,7 +2469,7 @@ mod tests {
         probe.vel = Vec3::ZERO;
         let mut land_f = None;
         for i in 0..80 {
-            probe.step(DT, &idle(), &f.sim(), &NoInk, p, None);
+            probe.step(DT, &idle(), &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
             if land_f.is_none() && probe.grounded {
                 land_f = Some(i);
             }
@@ -2303,7 +2495,7 @@ mod tests {
                 } else {
                     idle()
                 };
-                a.step(DT, &inp, &f.sim(), &NoInk, p, None);
+                a.step(DT, &inp, &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
                 if i > land_f && a.vel.y > 3.0 {
                     jumped = true;
                 }
@@ -2327,7 +2519,7 @@ mod tests {
             ..ActorInput::default()
         };
         for _ in 0..20 {
-            a.step(DT, &squid, &f.sim(), &OwnInk, p, None);
+            a.step(DT, &squid, &f.sim(), &OwnInk, p, &f.tuning.subs, None, None);
         }
         assert!(a.submerged);
         let swim = ActorInput {
@@ -2337,7 +2529,7 @@ mod tests {
         };
         let mut sp = Vec::new();
         for _ in 0..55 {
-            a.step(DT, &swim, &f.sim(), &OwnInk, p, None);
+            a.step(DT, &swim, &f.sim(), &OwnInk, p, &f.tuning.subs, None, None);
             sp.push(a.vel.x.hypot(a.vel.z) as f64);
         }
         // JS first8: [0.8, 1.647, 2.6, 3.653, 4.72, 5.787, 6.853, 7.92]
@@ -2363,7 +2555,7 @@ mod tests {
             ..ActorInput::default()
         };
         for _ in 0..45 {
-            a.step(DT, &fwd, &f.sim(), &NoInk, p, None);
+            a.step(DT, &fwd, &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
         }
         assert!(a.yaw.abs() < 1e-3, "yaw settled to 0 on the +z lane");
         let right = ActorInput {
@@ -2384,7 +2576,7 @@ mod tests {
         let mut vang = Vec::new();
         let mut yaws = Vec::new();
         for _ in 0..50 {
-            a.step(DT, &right, &f.sim(), &NoInk, p, None);
+            a.step(DT, &right, &f.sim(), &NoInk, p, &f.tuning.subs, None, None);
             let (vx, vz) = (a.vel.x as f64, a.vel.z as f64);
             sp.push(vx.hypot(vz));
             vang.push(vx.atan2(vz));

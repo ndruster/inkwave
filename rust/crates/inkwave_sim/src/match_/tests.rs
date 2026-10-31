@@ -71,6 +71,7 @@ fn tr8_1_full_run_settles_with_result_and_restart_zeroes() {
     let sim = f.sim();
     let t = &f.tuning.player;
     let w = &f.tuning.weapons;
+    let sb = &f.tuning.subs;
     let mut m = Match::new(6.0, 0xABCD_1234, &sim, t, &f.tuning.match_config);
     let mut inputs = vec![ActorInput::default(); 8];
     let max_steps = ((INTRO_TIME + 6.0 + FINISH_TIME) * 60.0) as usize + 120;
@@ -84,7 +85,7 @@ fn tr8_1_full_run_settles_with_result_and_restart_zeroes() {
             inputs[0].fire = true;
             inputs[1].fire = true;
         }
-        m.step(DT, &inputs, &sim, t, w);
+        m.step(DT, &inputs, &sim, t, w, sb);
         if m.phase == Phase::End {
             settled = true;
             break;
@@ -153,12 +154,13 @@ fn clock_emits_final_countdown_and_skips_one_minute() {
     let sim = f.sim();
     let t = &f.tuning.player;
     let w = &f.tuning.weapons;
+    let sb = &f.tuning.subs;
     let mut m = Match::new(8.0, 3, &sim, t, &f.tuning.match_config);
     let idle = [];
     let mut counts = Vec::new();
     let mut one_minute = false;
     for _ in 0..((INTRO_TIME + 8.0 + FINISH_TIME) * 60.0) as usize + 60 {
-        m.step(DT, &idle, &sim, t, w);
+        m.step(DT, &idle, &sim, t, w, sb);
         for e in m.events.drain(..) {
             match e {
                 MatchEvent::Countdown { n } => counts.push(n),
@@ -182,6 +184,7 @@ fn tr8_2_intro_barrier_holds_until_active() {
     let sim = f.sim();
     let t = &f.tuning.player;
     let w = &f.tuning.weapons;
+    let sb = &f.tuning.subs;
     let mut m = Match::new(6.0, 11, &sim, t, &f.tuning.match_config);
     let idle = [];
     assert_eq!(m.phase, Phase::Intro);
@@ -190,7 +193,7 @@ fn tr8_2_intro_barrier_holds_until_active() {
     let pad = sim.spawn_pads[0];
     m.actors[0].pos = vec3(pad.x, pad.y, pad.z + 9.0);
     m.actors[0].vel = Vec3::ZERO;
-    m.step(DT, &idle, &sim, t, w);
+    m.step(DT, &idle, &sim, t, w, sb);
     let d = xz_dist(m.actors[0].pos, pad);
     assert!(
         d <= sim.spawn_barrier + 1e-3,
@@ -199,7 +202,7 @@ fn tr8_2_intro_barrier_holds_until_active() {
 
     // Run the intro out; the clamp keeps releasing as soon as play starts.
     for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-        m.step(DT, &idle, &sim, t, w);
+        m.step(DT, &idle, &sim, t, w, sb);
         if m.phase == Phase::Active {
             break;
         }
@@ -210,7 +213,7 @@ fn tr8_2_intro_barrier_holds_until_active() {
     m.actors[0].pos = vec3(pad.x, pad.y, pad.z + 9.0);
     m.actors[0].vel = Vec3::ZERO;
     for _ in 0..5 {
-        m.step(DT, &idle, &sim, t, w);
+        m.step(DT, &idle, &sim, t, w, sb);
     }
     let d = xz_dist(m.actors[0].pos, pad);
     assert!(d > 8.5, "barrier must be lifted during play, got {d}");
@@ -226,12 +229,13 @@ fn respawn_is_gated_outside_play() {
     let sim = f.sim();
     let t = &f.tuning.player;
     let w = &f.tuning.weapons;
+    let sb = &f.tuning.subs;
     let mut m = Match::new(6.0, 12, &sim, t, &f.tuning.match_config);
     let idle = [];
     // A dead actor with an expired timer must NOT respawn during the intro.
     m.actors[3].alive = false;
     m.actors[3].respawn_timer = 0.01;
-    m.step(DT, &idle, &sim, t, w);
+    m.step(DT, &idle, &sim, t, w, sb);
     assert!(!m.actors[3].alive, "intro holds respawns (JS canRespawn)");
     // The gate pins the expired timer just above zero (it can never reach the
     // respawn call), unlike a full `respawn_time` re-arm.
@@ -243,14 +247,14 @@ fn respawn_is_gated_outside_play() {
 
     // Once play starts the same actor respawns on its timer.
     for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-        m.step(DT, &idle, &sim, t, w);
+        m.step(DT, &idle, &sim, t, w, sb);
         if m.phase == Phase::Active {
             break;
         }
     }
     let steps = (t.respawn_time * 60.0) as usize + 30;
     for _ in 0..steps {
-        m.step(DT, &idle, &sim, t, w);
+        m.step(DT, &idle, &sim, t, w, sb);
     }
     assert!(m.actors[3].alive, "respawned during play");
     let pad = sim.spawn_pads[0];
@@ -264,12 +268,13 @@ fn kill_routes_splash_credit_splat_count_and_bus() {
     let sim = f.sim();
     let t = &f.tuning.player;
     let w = &f.tuning.weapons;
+    let sb = &f.tuning.subs;
     let mut m = Match::new(30.0, 0x5EED, &sim, t, &f.tuning.match_config);
     let mut inputs = vec![ActorInput::default(); 8];
 
     // Get to play.
     for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-        m.step(DT, &inputs, &sim, t, w);
+        m.step(DT, &inputs, &sim, t, w, sb);
         if m.phase == Phase::Active {
             break;
         }
@@ -288,7 +293,7 @@ fn kill_routes_splash_credit_splat_count_and_bus() {
             inp.fire = false;
         }
         inputs[0].fire = true;
-        m.step(DT, &inputs, &sim, t, w);
+        m.step(DT, &inputs, &sim, t, w, sb);
         if !m.actors[4].alive {
             killed = Some(step);
             break;
@@ -338,10 +343,11 @@ fn dead_actor_fires_nothing() {
     let sim = f.sim();
     let t = &f.tuning.player;
     let w = &f.tuning.weapons;
+    let sb = &f.tuning.subs;
     let mut m = Match::new(30.0, 0xBAD, &sim, t, &f.tuning.match_config);
     let mut inputs = vec![ActorInput::default(); 8];
     for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-        m.step(DT, &inputs, &sim, t, w);
+        m.step(DT, &inputs, &sim, t, w, sb);
         if m.phase == Phase::Active {
             break;
         }
@@ -354,7 +360,7 @@ fn dead_actor_fires_nothing() {
             inp.fire = false;
         }
         inputs[0].fire = true;
-        m.step(DT, &inputs, &sim, t, w);
+        m.step(DT, &inputs, &sim, t, w, sb);
         if m.actors[0].fire_gate.fire {
             warmed = true;
             break;
@@ -373,7 +379,7 @@ fn dead_actor_fires_nothing() {
         }
         inputs[0].fire = true;
         drop(m.projectiles.drain_events());
-        m.step(DT, &inputs, &sim, t, w);
+        m.step(DT, &inputs, &sim, t, w, sb);
         let pev = m.projectiles.drain_events();
         fired_after_death += pev
             .iter()
@@ -406,10 +412,11 @@ fn water_death_inherits_recent_attacker() {
     let sim = f.sim();
     let t = &f.tuning.player;
     let w = &f.tuning.weapons;
+    let sb = &f.tuning.subs;
     let mut m = Match::new(30.0, 0xA11E, &sim, t, &f.tuning.match_config);
     let idle = [];
     for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-        m.step(DT, &idle, &sim, t, w);
+        m.step(DT, &idle, &sim, t, w, sb);
         if m.phase == Phase::Active {
             break;
         }
@@ -421,7 +428,7 @@ fn water_death_inherits_recent_attacker() {
     );
     m.actors[4].pos = vec3(100.0, -2.0, 0.0);
     m.actors[4].vel = Vec3::ZERO;
-    m.step(DT, &idle, &sim, t, w);
+    m.step(DT, &idle, &sim, t, w, sb);
     assert!(!m.actors[4].alive, "drowned");
     let log = m
         .kills
@@ -446,9 +453,10 @@ fn soft_push_separates_overlapping_bodies() {
     let sim = f.sim();
     let t = &f.tuning.player;
     let w = &f.tuning.weapons;
+    let sb = &f.tuning.subs;
     let mut m = Match::new(6.0, 13, &sim, t, &f.tuning.match_config);
     for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-        m.step(DT, &[], &sim, t, w);
+        m.step(DT, &[], &sim, t, w, sb);
         if m.phase == Phase::Active {
             break;
         }
@@ -456,7 +464,7 @@ fn soft_push_separates_overlapping_bodies() {
     let a0 = m.actors[0].pos;
     m.actors[1].pos = vec3(a0.x + 0.3, a0.y, a0.z);
     m.actors[1].vel = Vec3::ZERO;
-    m.step(DT, &[], &sim, t, w);
+    m.step(DT, &[], &sim, t, w, sb);
     let d = xz_dist(m.actors[0].pos, m.actors[1].pos);
     assert!(d > 0.45, "pair pushed apart: {d}");
 }
@@ -470,9 +478,10 @@ fn soft_push_mask_weights_follow_js_ternary() {
     let sim = f.sim();
     let t = &f.tuning.player;
     let w = &f.tuning.weapons;
+    let sb = &f.tuning.subs;
     let mut m = Match::new(6.0, 13, &sim, t, &f.tuning.match_config);
     for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-        m.step(DT, &[], &sim, t, w);
+        m.step(DT, &[], &sim, t, w, sb);
         if m.phase == Phase::Active {
             break;
         }
@@ -488,14 +497,14 @@ fn soft_push_mask_weights_follow_js_ternary() {
     // could only come from the push).
     let (p0, p1) = overlap(&mut m);
     let both_remote = [true, true];
-    m.step_masked(DT, &[], Some(&both_remote), &sim, t, w);
+    m.step_masked(DT, &[], Some(&both_remote), &sim, t, w, sb);
     assert_eq!(m.actors[0].pos, p0, "proxy A is not pushed");
     assert_eq!(m.actors[1].pos, p1, "proxy B is not pushed");
 
     // Local vs proxy: the local actor absorbs the whole separation.
     let (p0, p1) = overlap(&mut m);
     let one_remote = [false, true];
-    m.step_masked(DT, &[], Some(&one_remote), &sim, t, w);
+    m.step_masked(DT, &[], Some(&one_remote), &sim, t, w, sb);
     let d = xz_dist(m.actors[0].pos, m.actors[1].pos);
     assert!(d > 0.45, "pair pushed apart: {d}");
     assert_eq!(m.actors[1].pos, p1, "the proxy stays put");
@@ -512,6 +521,7 @@ fn tr8_3_gameplay_state_serde_roundtrips() {
     let sim = f.sim();
     let t = &f.tuning.player;
     let w = &f.tuning.weapons;
+    let sb = &f.tuning.subs;
     let mut m = Match::new(6.0, 0x00C0_FFEE, &sim, t, &f.tuning.match_config);
     let mut inputs = vec![ActorInput::default(); 8];
     // Run into mid-play with live projectiles, paint and bus events.
@@ -523,7 +533,7 @@ fn tr8_3_gameplay_state_serde_roundtrips() {
         if live {
             inputs[0].fire = true;
         }
-        m.step(DT, &inputs, &sim, t, w);
+        m.step(DT, &inputs, &sim, t, w, sb);
     }
     assert_eq!(m.phase, Phase::Active);
     assert!(m.paint.coverage()[0] > 0.0);

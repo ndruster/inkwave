@@ -79,8 +79,10 @@ use glam::{Vec3, vec3};
 use crate::actor::{Actor, FireGate, Form};
 use crate::collision::CollisionWorld;
 use crate::paint::{PaintGrid, SplatKind, SplatOpts};
+use crate::sub::{SubKind, SubSystem, ink_cost};
 use crate::tuning::{
-    Blaster, Brush, Bucket, Charger, PlayerTuning, Roller, Spinner, Spritzer, Twins, WeaponSet,
+    Blaster, Brush, Bucket, Charger, PlayerTuning, Roller, Spinner, Spritzer, SubSet, Twins,
+    WeaponSet,
 };
 use crate::weapon::brolly::{BrollyKit, CanopyState, LaunchedCanopy};
 
@@ -560,6 +562,86 @@ pub enum SimEvent {
         kind: String,
         data: Vec<f32>,
     },
+    /// A sub device entered the world (JS `netRec(a, 'subs', [op, gid, kind,
+    /// ...])`, subs.js L77/L103 → replication `['k', nid, 'subs', data]`).
+    /// `data` is the JS record array with the kind string lifted out to
+    /// `sub_kind` (the wire `data` payload is numeric-only) and the kind's
+    /// slot kept as a `0.0` placeholder so the element indices match JS.
+    SubSpawn {
+        owner_slot: usize,
+        team: usize,
+        sub_kind: String,
+        data: Vec<f32>,
+    },
+    /// A sub device ended (JS `netRec(it.owner, 'subs', [2, gid])`,
+    /// subs.js L165). `data` is `[2, gid]`. `sub_kind` is `Some(kit)` for
+    /// the five kit subs (the wire kind IS the kit id) and `None` for the
+    /// classic `subs` devices (the kind rides `data[2]`).
+    SubEnd {
+        owner_slot: usize,
+        team: usize,
+        sub_kind: Option<String>,
+        data: Vec<f32>,
+    },
+    /// A sub was deployed (JS `emit('sub:use', ...)`, subs.js L78/L104) —
+    /// local presentation only, never forwarded (not in the netmatch
+    /// `FORWARD` list).
+    SubUse {
+        owner_slot: usize,
+        team: usize,
+        kind: SubKind,
+    },
+    /// A splat bomb left a hand (JS `recBomb` → `['b', nid, kind, r2×6]`,
+    /// weapons.js L1463 / netmatch.js L139-141). `kind` is `'bomb'` (the
+    /// storm special never reaches the sim in Task 34, D-T34-1/D-T34-6).
+    BombSpawn {
+        owner_slot: usize,
+        team: usize,
+        kind: String,
+        pos: Vec3,
+        vel: Vec3,
+    },
+    /// A hit landed on one of *another screen's* devices (JS `sendDevHit` →
+    /// `{k:'dh', kind, id, d}`, netmatch.js L157-159). `kind` is the device
+    /// wire kind (`'subs'` / `'waddle'` / `'torpedo'` / `'torpedoArea'`);
+    /// `gid` is the device's owner-side id; the replication layer rewrites
+    /// it to the wire form (D-T34-5).
+    DeviceHit {
+        owner_slot: usize,
+        team: usize,
+        kind: String,
+        gid: u32,
+        d: f32,
+    },
+}
+
+/// JS `runner.shaker` hold state (`newState`, shaker.js L166-170) — the
+/// shaker bomb's charge meter. The presentation fields (`t0` / `fizz` /
+/// `loop` / `axis` / `botLevel` / `botMax`) and the stat / FX counters
+/// (`jumps` / `shakes` / `kick`) are dropped: they never feed the sim.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub(crate) struct ShakerCharge {
+    /// JS `st.meter` — the 0..=1 charge fill.
+    meter: f32,
+    /// JS `st.level` — 1..=3, stepped by the meter thresholds.
+    level: u32,
+    /// JS `st.t1` — last hold timestamp (staleness + release window).
+    t1: f32,
+    /// JS `st.budget` — the rate-cap budget.
+    budget: f32,
+    /// JS `st.jumpPrev` — previous-frame jump intent (edge detect).
+    jump_prev: bool,
+    /// JS `st.yawPrev` — previous-frame aim yaw (waggle detect).
+    yaw_prev: f32,
+    /// JS `st.lookSign` — last fast-turn direction.
+    look_sign: i32,
+    /// JS `st.lastWag` — last counted waggle time.
+    last_wag: f32,
+}
+
+/// `pending_kit_level` serde default (the shaker's un-charged level).
+fn default_kit_level() -> u32 {
+    1
 }
 
 /// Per-actor weapon state machine (JS `WeaponRunner` L32): the common
@@ -667,6 +749,23 @@ pub struct WeaponRunner {
     // runner itself (`charging` / `charge` / `charge_t`, weapons.js L40-41).
     pub(crate) bow: Option<Box<bow::BowKit>>,
     pub(crate) mitts: Option<Box<mitts::MittsKit>>,
+    // ---- Task 34: sub aiming (JS `aimingSub`, weapons.js L139-155).
+    /// JS `this.aimingSub` — the sub button is held, the throw pose is on.
+    pub(crate) aiming_sub: bool,
+    /// D-T31-1 deploy flag (mirrors `charger_release`): the runner paid the
+    /// ink for a non-bomb sub; the match layer calls
+    /// [`crate::sub::SubSystem::use_sub`] with the full actor list (the
+    /// runner has no access to it).
+    pub(crate) pending_sub: bool,
+    /// JS `runner.shaker` (shaker.js L166) — the shaker bomb's live hold
+    /// charge; the release reads the level off it (shaker.js L359).
+    #[serde(default)]
+    pub(crate) shaker: Option<ShakerCharge>,
+    /// D-T34 kit deploy level: the shaker's charge level (1..=3). Every
+    /// other kit deploys at 1; the match layer hands this to
+    /// [`crate::sub::SubSystem::use_sub`].
+    #[serde(default = "default_kit_level")]
+    pub(crate) pending_kit_level: u32,
 }
 
 impl Default for WeaponRunner {
@@ -691,6 +790,8 @@ impl Default for WeaponRunner {
             stream_cd: 0.0,
             charger_release: None,
             turret: false,
+            aiming_sub: false,
+            pending_sub: false,
             lock_t: 0.0,
             dodge_t: 0.0,
             roll_lock: 0.0,
@@ -711,6 +812,8 @@ impl Default for WeaponRunner {
             blade_wave: None,
             bow: None,
             mitts: None,
+            shaker: None,
+            pending_kit_level: 1,
         }
     }
 }
@@ -1022,6 +1125,7 @@ impl WeaponRunner {
         actor: &mut Actor,
         kind: WeaponKind,
         w: &WeaponSet,
+        sb: &SubSet,
         move_dir: Vec3,
         world: &CollisionWorld,
         projectiles: &mut ProjectileSim,
@@ -1034,6 +1138,7 @@ impl WeaponRunner {
         arrows: &mut Vec<bow::BowArrow>,
         fists: &mut Vec<mitts::MittsFist>,
         jump_held: bool,
+        sub_blocked: bool,
     ) {
         // ---- JS L110-116 common decay. JS `inp` here is the *gated* `winp`
         // (actor.js L370-373: `fire = intent.fire || buffered`, suppressed
@@ -1140,6 +1245,157 @@ impl WeaponRunner {
                 remote,
                 ps_time,
             ),
+        }
+
+        // ---- Task 34: JS L133-155 sub weapon. Bomb Barrage (JS L136-137)
+        // is not wired (D-T34-6): `bar` is always null, so the ink path
+        // always runs. The `sub` / `sub_released` edges ride `FireGate`
+        // (actor.rs L820-823, the JS input layer's own edge computation).
+        let sub_kind = actor.sub;
+        // JS L133: `if (this.aimingSub && SK?.hold) SK.hold(...)` — the
+        // shaker is the only kit with a gameplay hold (the charge meter
+        // feeds the release level, shaker.js L359).
+        if self.aiming_sub && sub_kind == SubKind::Shaker {
+            self.shaker_hold(dt, actor, sb, t, jump_held, ps_time);
+        }
+        if gate.sub && !self.aiming_sub {
+            self.aiming_sub = true;
+            // JS L140: the empty-tank chirp fires on the press edge for
+            // every sub kind (`a.isLocal` is always true for runner-owned
+            // actors — proxies never run a runner).
+            if actor.ink < ink_cost(sub_kind, sb) {
+                projectiles.push_event(SimEvent::LowInk {
+                    owner_slot: actor.slot,
+                });
+            }
+        }
+        if self.aiming_sub {
+            // JS L143: holding the sub keeps the throw pose facing the aim.
+            actor.set_fire_facing(0.3);
+        }
+        if gate.sub_released && self.aiming_sub {
+            self.aiming_sub = false;
+            // JS L145-146: a kit sub that refuses ("can't use") keeps its
+            // ink; `sub:cantuse` is presentation-only, so the sim is silent.
+            if !sub_blocked {
+                let cost = ink_cost(sub_kind, sb);
+                if actor.ink >= cost {
+                    actor.ink -= cost;
+                    // JS L149: `a.lastFire = 0` (the idle-refill clock resets
+                    // on a throw too).
+                    actor.note_fired();
+                    if sub_kind == SubKind::Bomb {
+                        // JS L152: the splat bomb stays in the projectile
+                        // system; everything else deploys through `G.subs`.
+                        projectiles.throw_bomb(actor, sb);
+                    } else {
+                        self.pending_sub = true;
+                        // JS `use` (shaker.js L358-360): the release level
+                        // rides the fresh charge (dropped after the throw);
+                        // every other kit deploys at 1.
+                        self.pending_kit_level = if sub_kind == SubKind::Shaker {
+                            let lvl = self
+                                .shaker
+                                .as_ref()
+                                .filter(|st| ps_time - st.t1 < 0.25)
+                                .map_or(1, |st| st.level);
+                            self.shaker = None;
+                            lvl
+                        } else {
+                            1
+                        };
+                    }
+                }
+            }
+        }
+        if !gate.sub && !gate.sub_released {
+            // JS L155: the button went up without a release edge (e.g. the
+            // actor splatted mid-throw) — drop the aim.
+            self.aiming_sub = false;
+        }
+    }
+
+    /// JS `hold` (shaker.js L192-222) minus the presentation branches (the
+    /// clink / `sub:charge` emit, the fizz loop, the hand FX and the bot
+    /// hold). Deviation D-T34-10: the gamepad-axis waggles (`waggles`
+    /// L181-187) read raw stick axes the sim input layer does not model;
+    /// only the aim-yaw reversal waggles are ported.
+    fn shaker_hold(
+        &mut self,
+        dt: f32,
+        actor: &Actor,
+        sb: &SubSet,
+        t: &PlayerTuning,
+        jump_held: bool,
+        now: f32,
+    ) {
+        let cfg = &sb.shaker;
+        // JS L194: a stale charge (the hold was interrupted) drops — the
+        // fizzle FX is presentation-only.
+        if self.shaker.is_some_and(|st| now - st.t1 > 0.15) {
+            self.shaker = None;
+        }
+        let st = self.shaker.get_or_insert(ShakerCharge {
+            meter: 0.0,
+            level: 1,
+            t1: now,
+            budget: 0.1,
+            jump_prev: jump_held,
+            yaw_prev: actor.aim_yaw,
+            look_sign: 0,
+            last_wag: -9.0,
+        });
+        st.t1 = now;
+        // JS L197: the barrage free-ink branch is not wired (D-T34-6).
+        let paid = actor.ink >= cfg.ink_cost;
+        let jp = jump_held && !st.jump_prev;
+        st.jump_prev = jump_held;
+        // JS `waggles` L175-180: a fast aim-turn reversal counts once.
+        let mut dy = actor.aim_yaw - st.yaw_prev;
+        while dy > std::f32::consts::PI {
+            dy -= std::f32::consts::TAU;
+        }
+        while dy < -std::f32::consts::PI {
+            dy += std::f32::consts::TAU;
+        }
+        st.yaw_prev = actor.aim_yaw;
+        let mut wag = 0.0f32;
+        if dt > 0.0 && (dy / dt).abs() > 3.0 {
+            let s = dy.signum() as i32;
+            if s != st.look_sign {
+                if st.look_sign != 0 && now - st.last_wag > 0.05 {
+                    wag = 1.0;
+                    st.last_wag = now;
+                }
+                st.look_sign = s;
+            }
+        }
+        if paid && st.meter < 1.0 {
+            let mv = ((actor.vel.x.hypot(actor.vel.z) - 1.0) / (t.run_speed - 1.0)).clamp(0.0, 1.0);
+            let mut add = (dt / cfg.charge_time) * (1.0 + cfg.move_boost * mv);
+            if jp {
+                add += cfg.jump_boost;
+            }
+            if wag > 0.0 {
+                add += wag * cfg.shake_boost;
+            }
+            // JS L206: bursts of presses can't beat the rate cap.
+            st.budget = (st.budget + cfg.max_rate * dt).min(0.3);
+            add = add.min(st.budget);
+            st.budget -= add;
+            st.meter = (st.meter + add).min(1.0);
+        }
+        let lv = if st.meter >= 1.0 {
+            3
+        } else if st.meter >= 0.5 {
+            2
+        } else {
+            1
+        };
+        if lv > st.level {
+            st.level = lv;
+            // JS L216-219: the clink + `sub:charge` emit are presentation
+            // only (never forwarded) — the sim stays silent.
         }
     }
 
@@ -2111,11 +2367,36 @@ pub(crate) struct DropSpec {
     pub delay: f32,
 }
 
+/// A splat bomb in flight / armed (JS `this.bombs` entries, weapons.js
+/// L1462). The bomb family lives on the projectile stream because its
+/// physics shares the round integrator; the `storm` special variant never
+/// exists in the sim (D-T34-1 / D-T34-6), so `kind` is always `'bomb'`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Bomb {
+    pub kind: String,
+    pub owner_slot: usize,
+    pub team: usize,
+    pub pos: Vec3,
+    pub vel: Vec3,
+    pub age: f32,
+    /// JS `fuse`: `-1` until the bomb first lands on a floor, then the
+    /// countdown to the blast (weapons.js L1735-1741).
+    pub fuse: f32,
+    /// JS `b.ghost` (netmatch `ghostBomb`, weapons.js L877-885): a remote
+    /// player's visual copy — it flies and explodes, but the mute wrap
+    /// means it paints nothing and hurts nothing on this screen (the
+    /// owner's screen decides the damage).
+    pub ghost: bool,
+}
+
 /// Global projectile system (JS `Projectiles`): owns the live rounds, the
 /// event queue and the RNG stream.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct ProjectileSim {
     pub list: Vec<Projectile>,
+    /// Task 34: live splat bombs (JS `this.bombs`, weapons.js L1462).
+    #[serde(default)]
+    pub bombs: Vec<Bomb>,
     events: Vec<SimEvent>,
     pub rng: Rng,
     /// Accumulated stepped time — the kit's clock (JS `G.time`, used by the
@@ -2150,6 +2431,7 @@ impl ProjectileSim {
     pub fn new(seed: u64) -> Self {
         Self {
             list: Vec::new(),
+            bombs: Vec::new(),
             events: Vec::new(),
             rng: Rng::new(seed),
             time: 0.0,
@@ -2702,6 +2984,8 @@ impl ProjectileSim {
         actors: &mut [Actor],
         paint: &mut PaintGrid,
         t: &PlayerTuning,
+        sb: &SubSet,
+        subs: Option<&mut SubSystem>,
         remote: Option<&[bool]>,
     ) {
         // JS L1241-1244: range and damage follow the charge.
@@ -2711,8 +2995,17 @@ impl ProjectileSim {
         } else {
             lerp(cw.damage_min, cw.damage_max * 0.62, charge)
         };
-        let hit = world.raycast(m, dir, range, true);
+        let mut hit = world.raycast(m, dir, range, true);
         let mut len = if hit.hit { hit.dist } else { range };
+        // JS L1245: an enemy curtain / device cuts the beam short and cancels
+        // the world hit; the beam still paints out to the cut distance.
+        if let Some(s) = subs {
+            let cut = s.block_ray(m, dir, len, team, dmg, false, sb);
+            if cut < len {
+                len = cut;
+                hit.hit = false;
+            }
+        }
         // JS L1247-1257: the first enemy along the beam (nearest wins).
         let mut victim: Option<(usize, f32)> = None;
         {
@@ -2900,6 +3193,7 @@ impl ProjectileSim {
     /// Reverse iteration like JS (L1567): a despawn swaps the tail element
     /// into the hole and the loop continues below it, so that element is not
     /// re-stepped this frame — matching JS's `list[i] = list[last]; pop()`.
+    #[allow(clippy::too_many_arguments)]
     pub fn step(
         &mut self,
         dt: f32,
@@ -2908,12 +3202,25 @@ impl ProjectileSim {
         paint: &mut PaintGrid,
         t: &PlayerTuning,
         w: &WeaponSet,
+        sb: &SubSet,
     ) {
         let mut owner = ShieldOwner {
             runners: &mut [],
             launched: &mut [],
         };
-        self.step_masked(dt, world, actors, paint, t, w, None, &[], &mut owner);
+        self.step_masked(
+            dt,
+            world,
+            actors,
+            paint,
+            t,
+            w,
+            sb,
+            None,
+            None,
+            &[],
+            &mut owner,
+        );
     }
 
     /// [`Self::step`] with the online actor mask (Task 21): `remote[i]`
@@ -2931,6 +3238,8 @@ impl ProjectileSim {
         paint: &mut PaintGrid,
         t: &PlayerTuning,
         w: &WeaponSet,
+        sb: &SubSet,
+        mut subs: Option<&mut SubSystem>,
         remote: Option<&[bool]>,
         shields: &[Shield],
         owner: &mut ShieldOwner,
@@ -2946,7 +3255,20 @@ impl ProjectileSim {
         let mut i = self.list.len();
         while i > 0 {
             i -= 1;
-            if self.step_one(dt, world, actors, paint, t, w, i, remote, shields, owner) {
+            if self.step_one(
+                dt,
+                world,
+                actors,
+                paint,
+                t,
+                w,
+                sb,
+                subs.as_deref_mut(),
+                i,
+                remote,
+                shields,
+                owner,
+            ) {
                 // JS lets the per-throw `volley.hit` Set die with its blobs
                 // (the object is shared, weapons.js L1316/L1599): drop the
                 // group's hit record when its last blob despawns.
@@ -2960,6 +3282,246 @@ impl ProjectileSim {
                     }
                 }
                 self.list.swap_remove(i);
+            }
+        }
+        // JS `update` L1576: `_updateBombs` runs after the rounds loop.
+        self.step_bombs(dt, world, actors, paint, t, sb, subs, remote);
+    }
+
+    /// JS `throwBomb` (weapons.js L1449-1465): a splat bomb leaves the hand
+    /// at `pos.y + 1.35` on the shared lob arc, `fuse: -1` until it lands.
+    /// The JS `spin` random draws are presentation-only and not consumed
+    /// (module docs). The `recBomb` record (L1463) rides
+    /// [`SimEvent::BombSpawn`].
+    pub(crate) fn throw_bomb(&mut self, a: &Actor, sb: &SubSet) {
+        let pos = vec3(a.pos.x, a.pos.y + 1.35, a.pos.z);
+        let vel = throw_velocity(a, sb.bomb.throw_speed);
+        self.bombs.push(Bomb {
+            kind: "bomb".to_string(),
+            owner_slot: a.slot,
+            team: a.team,
+            pos,
+            vel,
+            age: 0.0,
+            fuse: -1.0,
+            ghost: false,
+        });
+        self.push_event(SimEvent::BombSpawn {
+            owner_slot: a.slot,
+            team: a.team,
+            kind: "bomb".to_string(),
+            pos,
+            vel,
+        });
+    }
+
+    /// JS `ghostBomb` (weapons.js L877-885, netmatch `'b'` inbound): the
+    /// visual copy of a remote player's bomb. `storm` records are dropped
+    /// upstream (D-T34-1).
+    pub fn ghost_bomb(
+        &mut self,
+        kind: String,
+        pos: Vec3,
+        vel: Vec3,
+        owner_slot: usize,
+        team: usize,
+    ) {
+        self.bombs.push(Bomb {
+            kind,
+            owner_slot,
+            team,
+            pos,
+            vel,
+            age: 0.0,
+            fuse: -1.0,
+            ghost: true,
+        });
+    }
+
+    /// JS `_updateBombs` (weapons.js L1711-1758) minus the storm / boss /
+    /// presentation branches. Bombs step after the rounds (JS `update`
+    /// L1576).
+    #[allow(clippy::too_many_arguments)]
+    fn step_bombs(
+        &mut self,
+        dt: f32,
+        world: &CollisionWorld,
+        actors: &mut [Actor],
+        paint: &mut PaintGrid,
+        t: &PlayerTuning,
+        sb: &SubSet,
+        mut subs: Option<&mut SubSystem>,
+        remote: Option<&[bool]>,
+    ) {
+        let mut i = self.bombs.len();
+        while i > 0 {
+            i -= 1;
+            let mut exploded = false;
+            {
+                let b = &mut self.bombs[i];
+                b.age += dt;
+                b.vel.y -= 24.0 * dt;
+                let prev = b.pos;
+                b.pos += b.vel * dt;
+                let hit = world.segment(prev, b.pos, false);
+                if hit.hit {
+                    let n = hit.normal;
+                    b.pos = hit.point + n * 0.21;
+                    let vn = b.vel.dot(n);
+                    b.vel += n * (-vn * 1.35);
+                    b.vel *= if n.y > 0.6 { 0.45 } else { 0.6 };
+                    if n.y > 0.6 && b.fuse < 0.0 {
+                        // JS L1735: the first floor touch arms the fuse.
+                        b.fuse = sb.bomb.fuse;
+                    }
+                }
+                if b.fuse >= 0.0 {
+                    b.fuse -= dt;
+                    if b.fuse <= 0.0 {
+                        exploded = true;
+                    }
+                }
+            }
+            let mut dead = false;
+            if exploded {
+                let b = self.bombs[i].clone();
+                let mut blast = |c: Vec3, r: f32, d: f32, team: usize, muted: bool| {
+                    if let Some(su) = subs.as_deref_mut() {
+                        su.damage_area(c, r, d, team, muted);
+                    }
+                };
+                self.explode_bomb(&b, world, actors, paint, t, sb, &mut blast, remote);
+                dead = true;
+            }
+            if !dead && self.bombs[i].pos.y < t.water_y - 1.8 {
+                // JS L1758: a bomb that sails under the sea vanishes
+                // silently — no blast, no credit.
+                dead = true;
+            }
+            if dead {
+                self.bombs.swap_remove(i);
+            }
+        }
+    }
+
+    /// JS `_explodeBomb` (weapons.js L1481-1507) minus the FX / audio /
+    /// boss / rumble branches. The ghost mute wrap (L1752) is mirrored by
+    /// `b.ghost`: the splats draw their seeds and paint nothing
+    /// (paint.js L470), the device damage is dropped (`SubSystem::
+    /// damage_area` mute guard) and every hit routes to `'drop'` — the
+    /// owner's screen decides (netmatch.js L711-717).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn explode_bomb(
+        &mut self,
+        b: &Bomb,
+        world: &CollisionWorld,
+        actors: &mut [Actor],
+        paint: &mut PaintGrid,
+        t: &PlayerTuning,
+        sb: &SubSet,
+        dev_blast: &mut dyn FnMut(Vec3, f32, f32, usize, bool),
+        remote: Option<&[bool]>,
+    ) {
+        let s = &sb.bomb;
+        let c = b.pos;
+        let mut area = 0.0;
+        // JS L1483-1486: the main splat at `c.y + 0.2`, then five satellite
+        // splats at `c.y + 0.5` — RNG order `[seed, (a, r, radius, seed)×5]`.
+        let seed = self.rng.next_f32();
+        if !b.ghost {
+            let opts = SplatOpts {
+                seed,
+                stretch: None,
+                stretch_amt: None,
+                kind: None,
+            };
+            area += paint.splat(
+                world,
+                vec3(c.x, c.y + 0.2, c.z),
+                s.paint_radius,
+                b.team,
+                &opts,
+            );
+        }
+        for _ in 0..5 {
+            let a = self.rng.next_f32() * std::f32::consts::TAU;
+            let rr = s.paint_radius * (0.6 + self.rng.next_f32() * 0.4);
+            let rad = 0.7 + self.rng.next_f32() * 0.5;
+            let seed = self.rng.next_f32();
+            if !b.ghost {
+                let opts = SplatOpts {
+                    seed,
+                    stretch: None,
+                    stretch_amt: None,
+                    kind: None,
+                };
+                area += paint.splat(
+                    world,
+                    vec3(c.x + a.cos() * rr, c.y + 0.5, c.z + a.sin() * rr),
+                    rad,
+                    b.team,
+                    &opts,
+                );
+            }
+        }
+        if area > 0.0 {
+            self.push_event(SimEvent::Turf {
+                owner_slot: b.owner_slot,
+                team: b.team,
+                area,
+            });
+        }
+        // JS L1488: the blast hurts enemy devices (60 dmg) before the
+        // player loop.
+        dev_blast(c, s.radius, 60.0, b.team, b.ghost);
+        // JS L1500-1506: enemies inside the blast cone, line-of-sight
+        // gated, quadratic falloff from `damage_min` to `damage_max`.
+        let mut hits: Vec<(usize, f32)> = Vec::new();
+        for (vi, e) in actors.iter().enumerate() {
+            if e.team == b.team || !e.alive {
+                continue;
+            }
+            let ep = vec3(e.pos.x, e.pos.y + 0.7, e.pos.z);
+            let d = ep.distance(c);
+            if d > s.radius {
+                continue;
+            }
+            if !world.los(vec3(c.x, c.y + 0.3, c.z), ep) {
+                continue;
+            }
+            let k = 1.0 - ((d - 0.8) / (s.radius - 0.8)).clamp(0.0, 1.0);
+            hits.push((vi, lerp(s.damage_min, s.damage_max, k * k)));
+        }
+        for (vi, dmg) in hits {
+            if b.ghost {
+                continue; // `shouldApplyHit`: attacker remote → 'drop'
+            }
+            let (vs, vt) = (actors[vi].slot, actors[vi].team);
+            let send = remote.is_some_and(|m| m.get(vi).copied().unwrap_or(false));
+            if send {
+                self.push_event(SimEvent::HitSend {
+                    attacker_slot: b.owner_slot,
+                    victim_slot: vs,
+                    victim_team: vt,
+                    team: b.team,
+                    damage: dmg,
+                });
+            } else {
+                let atk_pos = actor_pos_by_slot(actors, b.owner_slot);
+                let outcome = apply_hit(
+                    &mut actors[vi],
+                    dmg,
+                    Some((b.team, b.owner_slot)),
+                    atk_pos,
+                    t,
+                );
+                self.push_event(SimEvent::Hit {
+                    attacker_slot: b.owner_slot,
+                    victim_slot: vs,
+                    team: b.team,
+                    damage: dmg,
+                    killed: outcome.killed,
+                });
             }
         }
     }
@@ -3028,6 +3590,8 @@ impl ProjectileSim {
         paint: &mut PaintGrid,
         t: &PlayerTuning,
         w: &WeaponSet,
+        sb: &SubSet,
+        subs: Option<&mut SubSystem>,
         idx: usize,
         remote: Option<&[bool]>,
         shields: &[Shield],
@@ -3256,6 +3820,23 @@ impl ProjectileSim {
                 });
             }
             dead = true;
+        }
+
+        // ---- enemy curtains / devices absorb the shot (JS weapons.js L1617:
+        // `G.subs.blockShot(p.prev, p.pos, p.team, p.damage || 10)`). A ghost
+        // round passes the `|| 10` damage but is muted inside, so the geometry
+        // still swallows the shot while the hurt is discarded.
+        if !dead {
+            let (prev, pos, team, damage, ghost) = {
+                let p = &self.list[idx];
+                (p.prev, p.pos, p.team, p.damage, p.ghost)
+            };
+            if let Some(s) = subs {
+                let dmg = if damage != 0.0 { damage } else { 10.0 };
+                if s.block_shot(prev, pos, team, dmg, ghost, sb) {
+                    dead = true;
+                }
+            }
         }
 
         // ---- world segment hit (JS `G.physics.segment(prev, pos, skipGrates)`).
@@ -3523,7 +4104,7 @@ pub(crate) fn actor_pos_by_slot(actors: &[Actor], slot: usize) -> Option<Vec3> {
 /// only sees live enemies. JS still emits `hit` when invulnerability blocks
 /// the damage (`victim.damage()` returns false), which [`HitOutcome::blocked`]
 /// records; `killed` mirrors JS (the `victim.damage()` return).
-fn apply_hit(
+pub(crate) fn apply_hit(
     v: &mut Actor,
     dmg: f32,
     attacker: Option<(usize, usize)>,
@@ -3555,6 +4136,20 @@ pub struct HitOutcome {
     /// this point — the scan loop filters them first (JS L1593), matching
     /// JS `applyHit`'s early return at L1546.
     pub blocked: bool,
+}
+
+/// JS `throwVelocity` (weapons.js L1443-1447): the lob arc shared by thrown
+/// subs and splat bombs — aim yaw/pitch with a fixed +0.28 pitch bias, plus
+/// 40 % of the thrower's own velocity.
+#[must_use]
+pub(crate) fn throw_velocity(a: &Actor, speed: f32) -> Vec3 {
+    let pitch = (a.aim_pitch + 0.28).clamp(-0.3, 1.1);
+    let cp = pitch.cos();
+    vec3(
+        a.aim_yaw.sin() * cp * speed + a.vel.x * 0.4,
+        pitch.sin() * speed + 1.5,
+        a.aim_yaw.cos() * cp * speed + a.vel.z * 0.4,
+    )
 }
 
 /// JS `Physics.pointCapsuleDist`: distance from `p` to the vertical capsule

@@ -60,6 +60,7 @@ struct Fix {
     pads: [Vec3; 2],
     t: PlayerTuning,
     w: WeaponSet,
+    sb: crate::tuning::SubSet,
 }
 
 fn deck() -> Brush {
@@ -73,6 +74,7 @@ fn fix() -> Fix {
         pads: [vec3(0.0, 0.0, -20.0), vec3(0.0, 0.0, 20.0)],
         t: tuning.player,
         w: tuning.weapons,
+        sb: tuning.subs,
     }
 }
 
@@ -83,6 +85,7 @@ fn fix_wall() -> Fix {
         pads: [vec3(0.0, 0.0, -20.0), vec3(0.0, 0.0, 20.0)],
         t: tuning.player,
         w: tuning.weapons,
+        sb: tuning.subs,
     }
 }
 
@@ -93,6 +96,7 @@ fn fix_slab() -> Fix {
         pads: [vec3(0.0, 0.0, -20.0), vec3(0.0, 0.0, 20.0)],
         t: tuning.player,
         w: tuning.weapons,
+        sb: tuning.subs,
     }
 }
 
@@ -148,6 +152,7 @@ fn frame(
         a,
         WeaponKind::Mitts,
         &f.w,
+        &f.sb,
         Vec3::ZERO,
         &f.world,
         ps,
@@ -160,6 +165,7 @@ fn frame(
         &mut Vec::new(),
         fists,
         jump_held,
+        false,
     );
     ps.drain_events()
 }
@@ -761,7 +767,16 @@ fn tr33_2_step_jump_swallowed_by_charge() {
         fire: true,
         ..Default::default()
     };
-    a.step(DT, &input, &f.sim(), &NoInk, &f.t, Some(&mut k));
+    a.step(
+        DT,
+        &input,
+        &f.sim(),
+        &NoInk,
+        &f.t,
+        &f.sb,
+        None,
+        Some(&mut k),
+    );
     assert!(k.charging, "the press became a crouch");
     assert!(a.vel.y.abs() <= MM, "no jump velocity");
     assert!(!a.grounded || a.vel.y <= MM);
@@ -770,7 +785,16 @@ fn tr33_2_step_jump_swallowed_by_charge() {
     let mut b = kid(&f);
     let mut k2 = kit(w);
     k2.ink_min = 1000.0;
-    b.step(DT, &input, &f.sim(), &NoInk, &f.t, Some(&mut k2));
+    b.step(
+        DT,
+        &input,
+        &f.sim(),
+        &NoInk,
+        &f.t,
+        &f.sb,
+        None,
+        Some(&mut k2),
+    );
     assert!(!k2.charging);
     // The jump sets vel.y = jumpVel, then `_integrate` spends one gravity
     // step in the same frame (actor.js jump → integrate).
@@ -1190,6 +1214,8 @@ fn tr33_2_hang_freezes_velocity() {
         &f.sim(),
         &NoInk,
         &f.t,
+        &f.sb,
+        None,
         Some(&mut k),
     );
     assert!(a.vel.length() <= MM, "hang zeroes the velocity");
@@ -1293,6 +1319,7 @@ fn tr33_2_land_splash_needs_los() {
         pads: [vec3(0.0, 0.0, -20.0), vec3(0.0, 0.0, 20.0)],
         t: tuning.player,
         w: tuning.weapons,
+        sb: tuning.subs,
     };
     let w = &f.w.mitts;
     let mut ps = ProjectileSim::new(0x1A4E);

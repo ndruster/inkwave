@@ -62,7 +62,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::actor::{Actor, ActorEvent, ActorInput, FireGate, Form, SimWorld, SplatCause};
 use crate::paint::{PaintGrid, SplatOpts};
-use crate::tuning::{MatchConfig, PlayerTuning, WeaponSet};
+use crate::sub::{SubKind, SubSystem};
+use crate::tuning::{MatchConfig, PlayerTuning, SubSet, WeaponSet};
 use crate::weapon::blade::BladeWave;
 use crate::weapon::brolly::{HELD_R, LAUNCH_R, LaunchedCanopy, held_shield};
 use crate::weapon::{
@@ -207,7 +208,40 @@ pub enum MatchEvent {
 pub struct KitSpawn {
     pub owner: (usize, usize),
     pub kind: String,
+    /// Sub-system kind string for `kind == "subs"` records — JS packs the
+    /// mixed array `['k', nid, 'subs', [op, gid, kindStr, …]]` (subs.js
+    /// L77/L103); the wire layer writes it back at `data[2]`. `None` for
+    /// the main-weapon kits.
+    #[serde(default)]
+    pub sub_kind: Option<String>,
     pub data: Vec<f32>,
+}
+
+/// A splat bomb that left a local hand this frame, waiting for the
+/// replication layer to record `['b', nid, kind, r2×6]` (JS `recBomb`,
+/// weapons.js L1463 / netmatch.js L124-127). `owner` is the `(team, slot)`
+/// identity; the wire layer resolves it to the roster `nid`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BombSpawnOut {
+    pub owner: (usize, usize),
+    pub kind: String,
+    pub pos: Vec3,
+    pub vel: Vec3,
+}
+
+/// A hit a local shot landed on another screen's ghost device, waiting for
+/// the replication layer to send `{k:'dh', kind, id, d}` to the device's
+/// owner (JS `sendDevHit`, netmatch.js L157-159). `kind` is the device
+/// wire kind (`'subs'` / `'waddle'` / `'torpedo'` / `'torpedoArea'`);
+/// `gid` is the wire-form device id (the ghost's own, D-T34-5); `owner` is
+/// the `(team, slot)` identity of the ghost's owner actor.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeviceHitOut {
+    pub owner: (usize, usize),
+    #[serde(default)]
+    pub kind: String,
+    pub gid: u32,
+    pub d: f32,
 }
 
 /// A Turf War match: the roster (spec: 8 slots, 4v4), the paint grid, the
@@ -246,6 +280,21 @@ pub struct Match {
     /// [`Match::step_masked`] so the offline path never grows it.
     #[serde(default)]
     pub kit_out: Vec<KitSpawn>,
+    /// Sub-system devices (JS `SUBS` singleton, subs.js L56; Task 34).
+    /// Seeded with its own salt so the device stream is independent of the
+    /// projectile (`seed`) and judge (`seed ^ 0x5bd1_e995`) streams.
+    #[serde(default)]
+    pub subs: SubSystem,
+    /// Splat-bomb throws produced this frame (JS `recBomb` runs inline in
+    /// the sim step); drained by `Replicator::update`, cleared at the top
+    /// of [`Match::step_masked`] like [`Match::kit_out`].
+    #[serde(default)]
+    pub bomb_out: Vec<BombSpawnOut>,
+    /// Ghost-device hits produced this frame (JS `sendDevHit` runs inline
+    /// at hit time); drained by `Replicator::update`, cleared at the top
+    /// of [`Match::step_masked`].
+    #[serde(default)]
+    pub dh_out: Vec<DeviceHitOut>,
     pub paint: PaintGrid,
     pub projectiles: ProjectileSim,
     /// Seeded stream for the judge tie-break + splash seeds (JS `Math.random`).
@@ -322,6 +371,9 @@ impl Match {
             arrows: Vec::new(),
             fists: Vec::new(),
             kit_out: Vec::new(),
+            subs: SubSystem::new(seed ^ 0x9e37_79b9),
+            bomb_out: Vec::new(),
+            dh_out: Vec::new(),
             paint: PaintGrid::new(world.collision),
             projectiles: ProjectileSim::new(seed),
             rng: Rng::new(seed ^ 0x5bd1_e995),
@@ -414,6 +466,12 @@ impl Match {
         self.arrows.clear();
         self.fists.clear();
         self.kit_out.clear();
+        // JS rebuilds the whole `Match` (and with it the `SUBS` singleton);
+        // the sim resets it in place with the same seed salt as the
+        // constructor.
+        self.subs = SubSystem::new(self.seed ^ 0x9e37_79b9);
+        self.bomb_out.clear();
+        self.dh_out.clear();
         for (a, r) in self.actors.iter_mut().zip(self.runners.iter_mut()) {
             r.reset();
             a.reset(t);
@@ -439,8 +497,9 @@ impl Match {
         world: &SimWorld,
         t: &PlayerTuning,
         w: &WeaponSet,
+        sb: &SubSet,
     ) {
-        self.step_masked(dt, inputs, None, world, t, w);
+        self.step_masked(dt, inputs, None, world, t, w, sb);
     }
 
     /// [`Self::step`] with the online ownership mask (Task 21 replication,
@@ -449,6 +508,7 @@ impl Match {
     /// (L228). Proxies run no physics, no weapon runner and no input; their
     /// state is written by the playback layer (Task 22) through
     /// [`crate::net::replication`]. `None` = offline (every actor local).
+    #[allow(clippy::too_many_arguments)]
     pub fn step_masked(
         &mut self,
         dt: f32,
@@ -457,6 +517,7 @@ impl Match {
         world: &SimWorld,
         t: &PlayerTuning,
         w: &WeaponSet,
+        sb: &SubSet,
     ) {
         // JS runs the whole match once per 60 Hz frame; variable dt would
         // desync the clock, timers and the fixed-step contract.
@@ -471,6 +532,8 @@ impl Match {
         // step): the replication layer drains it in the same frame, offline
         // matches simply drop it next frame.
         self.kit_out.clear();
+        self.bomb_out.clear();
+        self.dh_out.clear();
         self.state_t += dt;
         match self.phase {
             Phase::Init => {}
@@ -566,6 +629,8 @@ impl Match {
                 world,
                 &self.paint,
                 t,
+                sb,
+                Some(&self.subs),
                 self.runners[i].mitts.as_deref_mut(),
             );
             // Intro confinement (spec TR-8.2; deviation — see module docs).
@@ -591,6 +656,9 @@ impl Match {
             // Task 32: the melee scans (roller / brush / blade) need the rest
             // of the roster alongside the runner's own actor — `FoeScan`
             // splits the slice around the index (spec §6).
+            // JS L145: `SK?.blocked?.(a, sub)` — the kit refusal check
+            // needs the device lists, which only the match layer has.
+            let sub_blocked = self.subs.kit_blocked(self.actors[i].sub, i);
             let (a, mut foes) = FoeScan::split_around(&mut self.actors, i);
             let r = &mut self.runners[i];
             if !a.alive {
@@ -614,6 +682,7 @@ impl Match {
                 a,
                 self.kinds[i],
                 w,
+                sb,
                 inp.move_dir,
                 world.collision,
                 &mut self.projectiles,
@@ -626,6 +695,7 @@ impl Match {
                 &mut self.arrows,
                 &mut self.fists,
                 inp.jump,
+                sub_blocked,
             );
             // A brolly launch this frame joins the world canopy list (JS
             // `addLaunched` → `LAUNCHED.push`, brolly.js L285).
@@ -663,7 +733,31 @@ impl Match {
                     &mut self.actors,
                     &mut self.paint,
                     t,
+                    sb,
+                    Some(&mut self.subs),
                     remote,
+                );
+            }
+            // D-T34-9 deploy timing (D-T31-1 precedent): the runner has no
+            // world / paint / subs handles, so `SUBS.use(a, sub)` (JS
+            // `weaponRunner.update` L152-155 calls it inline) is deferred to
+            // this same-frame, same-actor-loop position. The runner already
+            // paid the ink and set `pending_sub` (weapons.js L150-155).
+            if self.runners[i].pending_sub {
+                self.runners[i].pending_sub = false;
+                let kit_level = self.runners[i].pending_kit_level;
+                let ps_time = self.projectiles.time;
+                self.subs.use_sub(
+                    i,
+                    kit_level,
+                    world.collision,
+                    &mut self.actors,
+                    &mut self.paint,
+                    &mut self.projectiles,
+                    t,
+                    sb,
+                    remote,
+                    ps_time,
                 );
             }
         }
@@ -856,6 +950,8 @@ impl Match {
             &mut self.paint,
             t,
             w,
+            sb,
+            Some(&mut self.subs),
             remote,
             &shields,
             &mut owner,
@@ -882,9 +978,36 @@ impl Match {
             self.launched[li].block_actors(&mut self.actors, t.radius);
         }
 
+        // JS `'splatted'` listener (subs.js L60): a splatted owner loses
+        // their live sprinkler. `owner_splatted_destroy` *peeks* the actor
+        // splat events (no drain), so it runs before the subs step and the
+        // `[2, gid]` end record lands in the same frame — JS's listener
+        // fires the instant the actor dies, which is always earlier in the
+        // frame than `SUBS.update`.
+        self.subs.owner_splatted_destroy(&self.actors);
+
+        // JS tick order (subs.js header note): the sub devices step after
+        // the projectiles — blasts and sprays see this frame's rounds.
+        let ps_time = self.projectiles.time;
+        self.subs.update(
+            dt,
+            world.collision,
+            &mut self.actors,
+            &mut self.paint,
+            &mut self.projectiles,
+            t,
+            sb,
+            remote,
+            ps_time,
+        );
+
         // ---- scoring drains (JS `on('hit'/'weapon:impact')` + `_credit`).
         let pev = self.projectiles.drain_events();
         self.route_turf(&pev);
+        let sev = self.subs.drain_events();
+        // A sub blast's turf credit rides the sub event queue (subs.js
+        // `_credit`, L594) — route it like the projectile queue.
+        self.route_turf(&sev);
 
         // ---- proxy hits: JS `applyHit` route `'send'` (weapons.js L1551,
         // netmatch.js `shouldApplyHit` L711-717). The shooter decided the hit;
@@ -940,7 +1063,87 @@ impl Match {
                     self.kit_out.push(KitSpawn {
                         owner: (*team, *owner_slot),
                         kind: kind.clone(),
+                        sub_kind: None,
                         data: data.clone(),
+                    });
+                }
+                // JS `recBomb` (weapons.js L1463, netmatch.js L124-127): a
+                // splat bomb leaving a *local* hand rides the timeline as
+                // `['b', nid, kind, r2×6]`; the replication layer drains
+                // `bomb_out` and applies the JS `recBomb` local-actor guard.
+                SimEvent::BombSpawn {
+                    owner_slot,
+                    team,
+                    kind,
+                    pos,
+                    vel,
+                } => {
+                    self.bomb_out.push(BombSpawnOut {
+                        owner: (*team, *owner_slot),
+                        kind: kind.clone(),
+                        pos: *pos,
+                        vel: *vel,
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        // ---- sub-system records (JS `netRec(a, 'subs', …)` runs inline in
+        // the subs step, subs.js L77/L103/L165): spawns and ends ride the
+        // `['k', nid, 'subs', data]` timeline; a hit on another screen's
+        // ghost device rides the `{k:'dh'}` direct channel (netmatch.js
+        // L157-159). `sub:use` is local presentation only — it is not in
+        // the netmatch `FORWARD` list (L47), so the sim drops it (D-T34-4).
+        for e in &sev {
+            match e {
+                SimEvent::SubSpawn {
+                    owner_slot,
+                    team,
+                    sub_kind,
+                    data,
+                } => {
+                    // Kit subs ride the wire with the kit id as the kind
+                    // (`['k', nid, 'shaker', …]`, kits/registry.js); the
+                    // classic subs keep `kind: 'subs'` with the kind string
+                    // lifted into `sub_kind`.
+                    let kit = SubKind::from_id_str(sub_kind).is_some_and(|k| k.is_kit());
+                    self.kit_out.push(KitSpawn {
+                        owner: (*team, *owner_slot),
+                        kind: if kit {
+                            sub_kind.clone()
+                        } else {
+                            "subs".to_string()
+                        },
+                        sub_kind: if kit { None } else { Some(sub_kind.clone()) },
+                        data: data.clone(),
+                    });
+                }
+                SimEvent::SubEnd {
+                    owner_slot,
+                    team,
+                    sub_kind,
+                    data,
+                } => {
+                    self.kit_out.push(KitSpawn {
+                        owner: (*team, *owner_slot),
+                        kind: sub_kind.clone().unwrap_or_else(|| "subs".to_string()),
+                        sub_kind: None,
+                        data: data.clone(),
+                    });
+                }
+                SimEvent::DeviceHit {
+                    owner_slot,
+                    team,
+                    kind,
+                    gid,
+                    d,
+                } => {
+                    self.dh_out.push(DeviceHitOut {
+                        owner: (*team, *owner_slot),
+                        kind: kind.clone(),
+                        gid: *gid,
+                        d: *d,
                     });
                 }
                 _ => {}
@@ -1106,9 +1309,10 @@ impl Match {
         world: &SimWorld,
         t: &PlayerTuning,
         w: &WeaponSet,
+        sb: &SubSet,
     ) {
         while !self.paused && self.elapsed() < target && self.phase != Phase::End {
-            self.step(crate::actor::FIXED_DT, inputs, world, t, w);
+            self.step(crate::actor::FIXED_DT, inputs, world, t, w, sb);
         }
     }
 }

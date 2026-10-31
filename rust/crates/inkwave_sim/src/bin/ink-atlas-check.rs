@@ -64,7 +64,14 @@ fn main() {
                 inputs[i] = bots[i].hold(&m.actors[i]);
             }
         }
-        m.step(FIXED_DT, &inputs, &sim, &tuning.player, &tuning.weapons);
+        m.step(
+            FIXED_DT,
+            &inputs,
+            &sim,
+            &tuning.player,
+            &tuning.weapons,
+            &tuning.subs,
+        );
         steps += 1;
 
         for s in m.paint.drain_ink() {

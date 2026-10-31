@@ -58,6 +58,7 @@ struct Fix {
     pads: [Vec3; 2],
     t: PlayerTuning,
     w: WeaponSet,
+    sb: crate::tuning::SubSet,
 }
 
 fn deck() -> Brush {
@@ -71,6 +72,7 @@ fn fix() -> Fix {
         pads: [vec3(0.0, 0.0, -20.0), vec3(0.0, 0.0, 20.0)],
         t: tuning.player,
         w: tuning.weapons,
+        sb: tuning.subs,
     }
 }
 
@@ -82,6 +84,7 @@ fn fix_slab() -> Fix {
         pads: [vec3(0.0, 0.0, -20.0), vec3(0.0, 0.0, 20.0)],
         t: tuning.player,
         w: tuning.weapons,
+        sb: tuning.subs,
     }
 }
 
@@ -137,6 +140,7 @@ fn frame(
         a,
         WeaponKind::Bow,
         &f.w,
+        &f.sb,
         Vec3::ZERO,
         &f.world,
         ps,
@@ -148,6 +152,7 @@ fn frame(
         ps_time,
         arrows,
         &mut Vec::new(),
+        false,
         false,
     );
     ps.drain_events()

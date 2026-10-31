@@ -52,6 +52,7 @@ struct Fix {
     pads: [Vec3; 2],
     t: PlayerTuning,
     w: WeaponSet,
+    sb: crate::tuning::SubSet,
 }
 
 fn fix() -> Fix {
@@ -61,6 +62,7 @@ fn fix() -> Fix {
         pads: [vec3(0.0, 0.0, -20.0), vec3(0.0, 0.0, 20.0)],
         t: tuning.player,
         w: tuning.weapons,
+        sb: tuning.subs,
     }
 }
 
@@ -132,8 +134,8 @@ impl Sim {
             let [s, v] = self.actors.as_mut_slice() else {
                 unreachable!("two actors");
             };
-            s.step(DT, inp, &sim, &zero, &self.f.t, None);
-            v.step(DT, &idle(), &sim, &zero, &self.f.t, None);
+            s.step(DT, inp, &sim, &zero, &self.f.t, &self.f.sb, None, None);
+            v.step(DT, &idle(), &sim, &zero, &self.f.t, &self.f.sb, None, None);
             let gate = s.fire_gate;
             self.runners[0].update(
                 DT,
@@ -141,6 +143,7 @@ impl Sim {
                 s,
                 WeaponKind::Shooter,
                 &self.f.w,
+                &self.f.sb,
                 Vec3::ZERO,
                 &self.f.world,
                 &mut self.ps,
@@ -153,6 +156,7 @@ impl Sim {
                 &mut Vec::new(),
                 &mut Vec::new(),
                 false,
+                false,
             );
         }
         self.ps.step(
@@ -162,6 +166,7 @@ impl Sim {
             &mut self.paint,
             &self.f.t,
             &self.f.w,
+            &self.f.sb,
         );
     }
 }
@@ -268,6 +273,7 @@ fn tr7_2_ink_gating_and_shots_to_empty() {
             &mut a,
             WeaponKind::Shooter,
             &f.w,
+            &f.sb,
             Vec3::ZERO,
             &f.world,
             &mut ps,
@@ -279,6 +285,7 @@ fn tr7_2_ink_gating_and_shots_to_empty() {
             0.0,
             &mut Vec::new(),
             &mut Vec::new(),
+            false,
             false,
         );
         fired += ps
@@ -308,6 +315,7 @@ fn tr7_2_ink_gating_and_shots_to_empty() {
             &mut a,
             WeaponKind::Shooter,
             &f.w,
+            &f.sb,
             Vec3::ZERO,
             &f.world,
             &mut ps,
@@ -319,6 +327,7 @@ fn tr7_2_ink_gating_and_shots_to_empty() {
             0.0,
             &mut Vec::new(),
             &mut Vec::new(),
+            false,
             false,
         );
         low += ps
@@ -386,7 +395,7 @@ fn tr7_3_straight_phase_then_parabola_and_range_cutoff() {
             );
             straight_steps += 1;
         }
-        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
+        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w, &f.sb);
         if let Some(p) = ps.list.first() {
             max_err = max_err.max(p.pos.distance(ref_pos));
             if age <= straight {
@@ -438,7 +447,7 @@ fn tr7_4_impact_paints_the_face_queryable_by_the_grid() {
     ps.fire_shooter(&a, &f.w.shooter, 0.0, None);
     let mut impacts = Vec::new();
     for _ in 0..30 {
-        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
+        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w, &f.sb);
         for e in ps.drain_events() {
             if let SimEvent::Impact {
                 pos,
@@ -573,6 +582,7 @@ fn runner_bloom_and_spread_track_upstream_formulas() {
         &mut a,
         WeaponKind::Shooter,
         w,
+        &f.sb,
         Vec3::ZERO,
         &f.world,
         &mut ps,
@@ -584,6 +594,7 @@ fn runner_bloom_and_spread_track_upstream_formulas() {
         0.0,
         &mut Vec::new(),
         &mut Vec::new(),
+        false,
         false,
     );
     assert!(r.bloom < 1.0);
@@ -606,6 +617,7 @@ fn runner_move_speed_uses_firing_penalty() {
         &mut a,
         WeaponKind::Shooter,
         &f.w,
+        &f.sb,
         Vec3::ZERO,
         &f.world,
         &mut ps,
@@ -617,6 +629,7 @@ fn runner_move_speed_uses_firing_penalty() {
         0.0,
         &mut Vec::new(),
         &mut Vec::new(),
+        false,
         false,
     );
     assert_eq!(
@@ -677,7 +690,7 @@ fn tr29_2_fire_round_straight_then_parabola_and_life_cutoff() {
             ref_vel.y -= spec.grav * DT;
         }
         ref_pos += ref_vel * DT;
-        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
+        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w, &f.sb);
         if let Some(p) = ps.list.first() {
             max_err = max_err.max(p.pos.distance(ref_pos));
             if age <= spec.straight_time {
@@ -758,7 +771,7 @@ fn tr29_2_trail_drips_paint_the_deck_under_a_fixed_seed() {
     let mut impacts = 0usize;
     let mut turf = 0usize;
     for _ in 0..40 {
-        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
+        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w, &f.sb);
         for e in ps.drain_events() {
             match e {
                 SimEvent::Impact { .. } => impacts += 1,
@@ -795,7 +808,7 @@ fn tr29_2_trail_drips_paint_the_deck_under_a_fixed_seed() {
     ps2.fire_round(&a, &spec, 0.0, None);
     let mut drips2: Vec<(f32, f32)> = Vec::new();
     for _ in 0..40 {
-        ps2.step(DT, &f.world, &mut [], &mut pg2, &f.t, &f.w);
+        ps2.step(DT, &f.world, &mut [], &mut pg2, &f.t, &f.w, &f.sb);
         let _ = ps2.drain_events();
         for s in pg2.drain_ink() {
             drips2.push((s.center.z, s.radius));
@@ -987,6 +1000,7 @@ fn tr29_2_kind_table_and_dispatch_skeleton() {
             &mut a,
             WeaponKind::Charger,
             &f.w,
+            &f.sb,
             Vec3::ZERO,
             &f.world,
             &mut ps,
@@ -998,6 +1012,7 @@ fn tr29_2_kind_table_and_dispatch_skeleton() {
             0.0,
             &mut Vec::new(),
             &mut Vec::new(),
+            false,
             false,
         );
     }
@@ -1031,6 +1046,7 @@ fn tr30_1_twins_cadence_ink_and_bloom() {
             &mut a,
             WeaponKind::Twins,
             &f.w,
+            &f.sb,
             Vec3::ZERO,
             &f.world,
             &mut ps,
@@ -1042,6 +1058,7 @@ fn tr30_1_twins_cadence_ink_and_bloom() {
             0.0,
             &mut Vec::new(),
             &mut Vec::new(),
+            false,
             false,
         );
         for e in ps.drain_events() {
@@ -1055,7 +1072,7 @@ fn tr30_1_twins_cadence_ink_and_bloom() {
             // D-4: the twins bloom step is the hardcoded +0.25 (JS L511).
             assert!((r.spread_deg(true, WeaponKind::Twins, &f.w) - 6.0 * 0.625).abs() < MM);
         }
-        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
+        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w, &f.sb);
     }
     assert_eq!(shots, 12, "60 frames at fireInterval 0.085 = 12 shots");
     assert!(
@@ -1086,7 +1103,7 @@ fn tr30_1_twins_hit_damage_30() {
     ps.fire_twin(&actors[0], &f.w.twins, 0.0, -1, &f.world);
     let mut hits = Vec::new();
     for _ in 0..30 {
-        ps.step(DT, &f.world, &mut actors, &mut pg, &f.t, &f.w);
+        ps.step(DT, &f.world, &mut actors, &mut pg, &f.t, &f.w, &f.sb);
         hits.extend(ps.drain_events().into_iter().filter_map(|e| match e {
             SimEvent::Hit {
                 victim_slot,
@@ -1124,6 +1141,7 @@ fn tr30_1_twins_roll_plants_the_turret() {
         &mut a,
         WeaponKind::Twins,
         &f.w,
+        &f.sb,
         Vec3::ZERO,
         &f.world,
         &mut ps,
@@ -1135,6 +1153,7 @@ fn tr30_1_twins_roll_plants_the_turret() {
         0.0,
         &mut Vec::new(),
         &mut Vec::new(),
+        false,
         false,
     );
     let _ = ps.drain_events();
@@ -1163,6 +1182,7 @@ fn tr30_1_twins_roll_plants_the_turret() {
             &mut a,
             WeaponKind::Twins,
             &f.w,
+            &f.sb,
             Vec3::ZERO,
             &f.world,
             &mut ps,
@@ -1175,8 +1195,9 @@ fn tr30_1_twins_roll_plants_the_turret() {
             &mut Vec::new(),
             &mut Vec::new(),
             false,
+            false,
         );
-        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
+        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w, &f.sb);
     }
     let v_mid = r.dodge_velocity(WeaponKind::Twins, &f.w).unwrap();
     assert!((v_mid.length() - v0 * 0.7).abs() < 0.05);
@@ -1188,6 +1209,7 @@ fn tr30_1_twins_roll_plants_the_turret() {
             &mut a,
             WeaponKind::Twins,
             &f.w,
+            &f.sb,
             Vec3::ZERO,
             &f.world,
             &mut ps,
@@ -1200,8 +1222,9 @@ fn tr30_1_twins_roll_plants_the_turret() {
             &mut Vec::new(),
             &mut Vec::new(),
             false,
+            false,
         );
-        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
+        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w, &f.sb);
     }
     assert_eq!(r.dodge_t, 0.0);
     assert!(r.turret, "roll ends planted while the trigger is held");
@@ -1217,6 +1240,7 @@ fn tr30_1_twins_roll_plants_the_turret() {
         &mut a,
         WeaponKind::Twins,
         &f.w,
+        &f.sb,
         Vec3::ZERO,
         &f.world,
         &mut ps,
@@ -1228,6 +1252,7 @@ fn tr30_1_twins_roll_plants_the_turret() {
         0.0,
         &mut Vec::new(),
         &mut Vec::new(),
+        false,
         false,
     );
     let planted = ps.list.last().unwrap();
@@ -1244,6 +1269,7 @@ fn tr30_1_twins_roll_plants_the_turret() {
         &mut a,
         WeaponKind::Twins,
         &f.w,
+        &f.sb,
         vec3(1.0, 0.0, 0.0),
         &f.world,
         &mut ps,
@@ -1256,6 +1282,7 @@ fn tr30_1_twins_roll_plants_the_turret() {
         &mut Vec::new(),
         &mut Vec::new(),
         false,
+        false,
     );
     assert!(!r.turret, "walking un-plants");
     // Releasing the trigger also un-plants.
@@ -1266,6 +1293,7 @@ fn tr30_1_twins_roll_plants_the_turret() {
         &mut a,
         WeaponKind::Twins,
         &f.w,
+        &f.sb,
         Vec3::ZERO,
         &f.world,
         &mut ps,
@@ -1277,6 +1305,7 @@ fn tr30_1_twins_roll_plants_the_turret() {
         0.0,
         &mut Vec::new(),
         &mut Vec::new(),
+        false,
         false,
     );
     assert!(!r.turret, "releasing the trigger un-plants");
@@ -1311,6 +1340,7 @@ fn tr30_1_twins_roll_chain_lockout_and_refill() {
             &mut a,
             WeaponKind::Twins,
             &f.w,
+            &f.sb,
             md,
             &f.world,
             &mut ps,
@@ -1323,8 +1353,9 @@ fn tr30_1_twins_roll_chain_lockout_and_refill() {
             &mut Vec::new(),
             &mut Vec::new(),
             false,
+            false,
         );
-        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
+        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w, &f.sb);
     }
     assert!(r.dodge_t > 0.0, "the queued roll chained on");
     assert_eq!(r.rolls_used, 0, "both charges spent");
@@ -1342,6 +1373,7 @@ fn tr30_1_twins_roll_chain_lockout_and_refill() {
             &mut a,
             WeaponKind::Twins,
             &f.w,
+            &f.sb,
             Vec3::ZERO,
             &f.world,
             &mut ps,
@@ -1354,8 +1386,9 @@ fn tr30_1_twins_roll_chain_lockout_and_refill() {
             &mut Vec::new(),
             &mut Vec::new(),
             false,
+            false,
         );
-        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
+        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w, &f.sb);
     }
     assert_eq!(r.rolls_used, 0);
     assert!(r.roll_lock <= 0.0);
@@ -1396,6 +1429,7 @@ fn tr30_1_blaster_cadence_ink_and_fields() {
             &mut a,
             WeaponKind::Blaster,
             &f.w,
+            &f.sb,
             Vec3::ZERO,
             &f.world,
             &mut ps,
@@ -1408,13 +1442,14 @@ fn tr30_1_blaster_cadence_ink_and_fields() {
             &mut Vec::new(),
             &mut Vec::new(),
             false,
+            false,
         );
         shots += ps
             .drain_events()
             .into_iter()
             .filter(|e| matches!(e, SimEvent::Fire { .. }))
             .count();
-        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
+        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w, &f.sb);
     }
     assert_eq!(shots, 2, "fireInterval 0.78 → two shots in a second");
     assert!((a.ink - (f.t.ink_max - 18.0)).abs() < MM, "inkPerShot 9");
@@ -1459,7 +1494,7 @@ fn tr30_1_blaster_direct_hit_kills() {
     let mut hit = None;
     let mut burst = None;
     for _ in 0..30 {
-        ps.step(DT, &f.world, &mut actors, &mut pg, &f.t, &f.w);
+        ps.step(DT, &f.world, &mut actors, &mut pg, &f.t, &f.w, &f.sb);
         for e in ps.drain_events() {
             if let SimEvent::Hit {
                 victim_slot,
@@ -1510,7 +1545,7 @@ fn tr30_1_blaster_airburst_splash_falloff() {
     let mut burst_pos = None;
     let mut hit = None;
     for _ in 0..45 {
-        ps.step(DT, &f.world, &mut actors, &mut pg, &f.t, &f.w);
+        ps.step(DT, &f.world, &mut actors, &mut pg, &f.t, &f.w, &f.sb);
         for e in ps.drain_events() {
             match e {
                 SimEvent::Impact { pos, radius, .. } => {
@@ -1559,7 +1594,7 @@ fn tr30_1_blaster_burst_paints_the_deck() {
     ps.fire_blaster(&a, &f.w.blaster, 0.0);
     let mut painted = 0.0f32;
     for _ in 0..30 {
-        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w);
+        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w, &f.sb);
         for e in ps.drain_events() {
             if let SimEvent::Impact { area, radius, .. } = e {
                 assert_eq!(radius, f.w.blaster.burst_radius);
@@ -1592,6 +1627,7 @@ fn hold(
             a,
             k,
             &f.w,
+            &f.sb,
             Vec3::ZERO,
             &f.world,
             ps,
@@ -1603,6 +1639,7 @@ fn hold(
             0.0,
             &mut Vec::new(),
             &mut Vec::new(),
+            false,
             false,
         );
     }
@@ -1616,6 +1653,7 @@ fn release(r: &mut WeaponRunner, a: &mut Actor, k: WeaponKind, f: &Fix, ps: &mut
         a,
         k,
         &f.w,
+        &f.sb,
         Vec3::ZERO,
         &f.world,
         ps,
@@ -1627,6 +1665,7 @@ fn release(r: &mut WeaponRunner, a: &mut Actor, k: WeaponKind, f: &Fix, ps: &mut
         0.0,
         &mut Vec::new(),
         &mut Vec::new(),
+        false,
         false,
     );
 }
@@ -1748,6 +1787,8 @@ fn tr31_1_charger_hitscan_damage_and_events() {
         &mut actors,
         &mut pg,
         &f.t,
+        &f.sb,
+        None,
         None,
     );
     let evs = ps.drain_events();
@@ -1811,6 +1852,8 @@ fn tr31_1_charger_hitscan_damage_and_events() {
         &mut actors,
         &mut pg,
         &f.t,
+        &f.sb,
+        None,
         None,
     );
     let killed = ps
@@ -1837,6 +1880,8 @@ fn tr31_1_charger_hitscan_damage_and_events() {
         &mut actors,
         &mut pg2,
         &f.t,
+        &f.sb,
+        None,
         None,
     );
     let len = ps
@@ -1951,6 +1996,7 @@ fn tr31_2_bucket_windup_and_blob_taper() {
         &mut a,
         WeaponKind::Bucket,
         &f.w,
+        &f.sb,
         Vec3::ZERO,
         &f.world,
         &mut ps,
@@ -1962,6 +2008,7 @@ fn tr31_2_bucket_windup_and_blob_taper() {
         0.0,
         &mut Vec::new(),
         &mut Vec::new(),
+        false,
         false,
     );
     assert_eq!(r.flick, 0.0, "the throw wound up on the tap");
@@ -2170,6 +2217,8 @@ fn tr31_2_volley_passthrough_and_below_falloff() {
         &mut pg,
         &f.t,
         &f.w,
+        &f.sb,
+        None,
         None,
         &[],
         &mut owner,
@@ -2196,6 +2245,8 @@ fn tr31_2_volley_passthrough_and_below_falloff() {
             &mut pg,
             &f.t,
             &f.w,
+            &f.sb,
+            None,
             None,
             &[],
             &mut owner,
@@ -2224,6 +2275,8 @@ fn tr31_2_volley_passthrough_and_below_falloff() {
         &mut pg,
         &f.t,
         &f.w,
+        &f.sb,
+        None,
         None,
         &[],
         &mut owner,

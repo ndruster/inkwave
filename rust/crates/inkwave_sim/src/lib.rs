@@ -23,6 +23,7 @@ pub mod nav;
 // Task 15 — PROTO v1 boundary types (docs + shapes only, no transport).
 pub mod net;
 pub mod paint;
+pub mod sub;
 pub mod tuning;
 pub mod weapon;
 

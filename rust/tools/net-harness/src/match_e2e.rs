@@ -520,6 +520,7 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
     let tuning = embedded_tuning();
     let tp = &tuning.player;
     let ws = &tuning.weapons;
+    let sb = &tuning.subs;
     let sp = &ws.shooter;
     let layout = embedded_tidewater();
     let world = CollisionWorld::from_layout(&layout);
@@ -700,6 +701,7 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
                 &sim,
                 tp,
                 ws,
+                sb,
             );
             let rest = rep[i].update(
                 FIXED_DT,
@@ -707,6 +709,7 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
                 &sim,
                 tp,
                 ws,
+                sb,
                 sess[i].transport_mut().expect("live transport"),
             );
             m[i].events.extend(rest);
