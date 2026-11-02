@@ -12,9 +12,10 @@
 //! contract wants a stable seed).
 
 use crate::actor::{Actor, SimWorld};
-use crate::match_::{Match, SPAWN_RING_N, SPAWN_RING_PHI, SPAWN_RING_R};
+use crate::geometry::ZoneLayout;
+use crate::match_::{Match, MatchMode, SPAWN_RING_N, SPAWN_RING_PHI, SPAWN_RING_R};
 use crate::net::session::{RosterEntry, StartCfg};
-use crate::tuning::{MatchConfig, PlayerTuning};
+use crate::tuning::{MatchConfig, PlayerTuning, ZonesTuning};
 use crate::weapon::{WeaponKind, WeaponRunner};
 
 /// FNV-1a 64-bit over the match id (deviation ⑤).
@@ -57,6 +58,13 @@ fn weapon_special(weapon: &str) -> (&'static str, f32) {
     (id, cost as f32)
 }
 
+/// `ZONES` tuning for the net builder — D-T35-2 pattern: a `OnceLock` over
+/// the embedded artifact so the builder never re-parses the tuning JSON.
+fn embedded_zones_tuning() -> ZonesTuning {
+    static ZT: std::sync::OnceLock<ZonesTuning> = std::sync::OnceLock::new();
+    *ZT.get_or_init(|| crate::embedded_tuning().zones)
+}
+
 /// JS `new Match({roster: cfg.roster, …})` + `setup()` (match.js `_setupRoster`
 /// L107-113, placement L85-91): one actor per roster entry **in roster order**
 /// (the contract that keeps the replication layer's parallel arrays aligned),
@@ -64,6 +72,17 @@ fn weapon_special(weapon: &str) -> (&'static str, f32) {
 /// cleared (the intro is the protection). The base [`Match::new`] scaffold
 /// (paint grid / projectiles / rng / clock) is reused; its balanced demo
 /// roster is replaced wholesale.
+///
+/// Task 36 batch 3: `cfg.mode == "zones"` builds through
+/// [`Match::with_roster_mode`] with [`MatchMode::Zones`] (JS main.js L792
+/// `mode: cfg.mode` → match.js L20/L96-99 `new ZoneControl(this)`). The zone
+/// geometry comes from the stage layout's `zones` key (`zone_layout`, the
+/// extractor's merge of ZONE_DEFS, maps.js L118-119); a zones cfg on a stage
+/// without one degrades to Turf inside `with_roster_mode` (D-T36-1).
+/// `zones_tuning` overrides the `ZONES` rules slice — a test-only seam (the
+/// net-harness shortens `overtime_max` so a sudden-death scenario settles in
+/// bounded time, ≡ the duration shortening convention); the app passes `None`
+/// and gets the embedded tuning.
 #[must_use]
 pub fn build_net_match(
     cfg: &StartCfg,
@@ -71,8 +90,24 @@ pub fn build_net_match(
     sim: &SimWorld,
     t: &PlayerTuning,
     mc: &MatchConfig,
+    zone_layout: Option<&ZoneLayout>,
+    zones_tuning: Option<ZonesTuning>,
 ) -> Match {
-    let mut m = Match::new(cfg.duration.max(1) as f32, seed, sim, t, mc);
+    let mut m = if cfg.mode == "zones" {
+        Match::with_roster_mode(
+            cfg.duration.max(1) as f32,
+            seed,
+            sim,
+            t,
+            mc,
+            mc.team_size.max(1) as usize,
+            MatchMode::Zones,
+            zone_layout,
+            Some(zones_tuning.unwrap_or_else(embedded_zones_tuning)),
+        )
+    } else {
+        Match::new(cfg.duration.max(1) as f32, seed, sim, t, mc)
+    };
     m.actors = cfg
         .roster
         .iter()

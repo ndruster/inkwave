@@ -374,7 +374,7 @@ pub(crate) fn splat_cue(ev: &MatchEvent, local_team: usize) -> Option<Sfx> {
 #[must_use]
 pub(crate) fn phase_cue(
     ev: &MatchEvent,
-    result: Option<MatchResult>,
+    result: Option<&MatchResult>,
     local_team: usize,
 ) -> Option<Sfx> {
     match ev {
@@ -456,7 +456,7 @@ pub fn audio_sfx(
             if let Some(c) = splat_cue(ev, a.team) {
                 cues.push(c);
             }
-            if let Some(c) = phase_cue(ev, demo.m.result, a.team) {
+            if let Some(c) = phase_cue(ev, demo.m.result.as_ref(), a.team) {
                 cues.push(c);
             }
         }
@@ -611,14 +611,18 @@ mod tests {
             winner: 0,
             points: [0.0, 0.0],
             elapsed: 90.0,
+            zones: None,
         };
-        let lose = MatchResult { winner: 1, ..win };
+        let lose = MatchResult {
+            winner: 1,
+            ..win.clone()
+        };
         assert_eq!(
-            phase_cue(&MatchEvent::Phase(Phase::End), Some(win), 0),
+            phase_cue(&MatchEvent::Phase(Phase::End), Some(&win), 0),
             Some(Sfx::Victory)
         );
         assert_eq!(
-            phase_cue(&MatchEvent::Phase(Phase::End), Some(lose), 0),
+            phase_cue(&MatchEvent::Phase(Phase::End), Some(&lose), 0),
             Some(Sfx::Defeat)
         );
         // End before the judge settles (result None) stays silent.

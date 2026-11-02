@@ -46,12 +46,18 @@ use inkwave_sim::net::session::{
     map_no_bots,
 };
 use inkwave_sim::net::transport::{FakeRelay, FakeTransport, LinkSim, Transport};
-use inkwave_sim::tuning::{PlayerTuning, Tuning};
+use inkwave_sim::tuning::{PlayerTuning, Tuning, ZonesTuning};
 use inkwave_sim::{embedded_tidewater, embedded_tuning};
 
 /// The session type of one harness client (the tr24 pattern,
 /// `match_link.rs` L418-428: shared virtual clock through one `FakeRelay`).
 pub type HSess = NetSession<FakeTransport, Box<dyn FnMut() -> FakeTransport>>;
+
+/// The zones decision fields the agreement check compares frame by frame
+/// (objective name, holder / last holder, final lock, overtime, winner,
+/// reason — the `count` / `penalty` numbers ride separate tolerances, see
+/// `run_match`).
+type ZonesDecision = (String, i8, i8, bool, bool, Option<usize>, Option<String>);
 
 fn hsess(relay: &FakeRelay, sim: Option<LinkSim>, seed: u64) -> HSess {
     let r = relay.clone();
@@ -108,6 +114,10 @@ pub struct MatchOpts {
     /// Match clock length in seconds (test-only shortening, ≡ the `duration
     /// = 600 / 40` override in `net-test.mjs` L85).
     pub duration: f64,
+    /// Lobby game mode (`"turf"` / `"zones"`, session.js L244; the zones
+    /// duration override rides the same test-only shortening seam —
+    /// Task 36 batch 3).
+    pub mode: String,
     pub drop: Option<DropAt>,
     /// Collect the kink / path-error smoothness stats (TR-25.2).
     pub stats: bool,
@@ -121,6 +131,7 @@ impl MatchOpts {
             sim: None,
             seed,
             duration: 15.0,
+            mode: "turf".to_string(),
             drop: None,
             stats: false,
         }
@@ -182,7 +193,7 @@ impl MatchReport {
                 c.live,
                 f64::from(c.coverage[0]) * 100.0,
                 f64::from(c.coverage[1]) * 100.0,
-                c.result.map(|r| r.winner),
+                c.result.as_ref().map(|r| r.winner),
                 c.state,
                 c.rtt,
                 c.adopted_host,
@@ -568,6 +579,7 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
     }
     sess[0].set_settings(SettingsPatch {
         duration: Some(opts.duration),
+        mode: Some(opts.mode.clone()),
         ..Default::default()
     });
     for _ in 0..200 {
@@ -606,11 +618,37 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
     assert_eq!(cfg.roster.len(), 8, "bots pad the roster to 8");
     let seed = fnv1a(&cfg.id);
 
+    // Task 36 batch 3: the turf-oriented harness bots never hold a zone to
+    // the `control` share, so a zones match always runs to the overtime cap
+    // (`_overtime` → `_tiebreak`, zones.js L346 / L357-361). The production
+    // cap is `overtimeMax = 300` s (tuning.json L1280); the scenario shortens
+    // it through the builder's test-only `zones_tuning` seam — the same
+    // convention as the duration override above (net-test.mjs L85) — so the
+    // sudden-death path (`zt -1` → `ze` over the wire) settles in bounded
+    // time without touching the app-side tuning.
+    const TEST_ZONES_OT_MAX: u32 = 20;
+    let zones_mode = opts.mode == "zones";
+    let zones_override = if zones_mode {
+        let mut zt = tuning.zones;
+        zt.overtime_max = TEST_ZONES_OT_MAX;
+        Some(zt)
+    } else {
+        None
+    };
+
     let mut m: Vec<Match> = Vec::new();
     let mut rep: Vec<Replication> = Vec::new();
     let mut local_idx: Vec<usize> = Vec::new();
     for s in &mut sess {
-        let (mm, rr, li) = build_side(&cfg, s, &sim, tp, &tuning);
+        let (mm, rr, li) = build_side(
+            &cfg,
+            s,
+            &sim,
+            tp,
+            &tuning,
+            layout.zones.as_ref(),
+            zones_override,
+        );
         m.push(mm);
         rep.push(rr);
         local_idx.push(li);
@@ -652,8 +690,27 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
     }
 
     // -- the lockstep match loop ----------------------------------------------
+    // Zones can run past the horn into overtime (zones.js `timeUp` → `_zt`,
+    // ended by retake / neutralise / comeback, capped at `overtimeMax`): the
+    // loop budget carries the (test-shortened) cap plus a 5 s margin, so the
+    // sudden-death path still settles inside the scenario (Task 36 batch 3).
+    let ot_headroom = if zones_mode {
+        f64::from(TEST_ZONES_OT_MAX) + 5.0
+    } else {
+        0.0
+    };
     let max_frames =
-        ((f64::from(INTRO_TIME) + opts.duration + f64::from(FINISH_TIME)) * 60.0) as usize + 900;
+        ((f64::from(INTRO_TIME) + opts.duration + f64::from(FINISH_TIME) + ot_headroom) * 60.0)
+            as usize
+            + 900;
+    let mut zones_state_ok = true;
+    // Lagged-replay bookkeeping for the zones agreement check below: the
+    // host's decision tuple from the previous frame and how many frames it
+    // has been unchanged (a follower must catch up within one tick —
+    // `TICK_DT` = 3 frames — so 12 quiet frames is ample slack).
+    const ZONES_LAG: usize = 12;
+    let mut zones_prev: Option<ZonesDecision> = None;
+    let mut zones_quiet = 0usize;
     let drop_frame = opts.drop.map(|d| (d.at_s * 60.0) as usize);
     // Stats buffers: `own[j]` = frames of actor `j` from its owning client;
     // `remote[c][j]` = client `c`'s rendered frames of a non-owned actor
@@ -753,6 +810,89 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
                 seed,
             );
         }
+        // Zones agreement (Task 36 batch 3): the host's rules decisions ride
+        // the event timeline — `rep.update` drains `ZoneControl::net_out`
+        // *after* the tick send (JS `recZone` inside `Match.update`, which
+        // runs after `NetMatch.update`'s `_sendTick`, netmatch.js L148), so
+        // every `zz/zo/zp/za/zf/zt/ze` lands on the followers within one tick
+        // interval (`TICK_DT` = 1/20 s = 3 frames) plus relay slack. The
+        // check: whenever the host's decision fields have been unchanged for
+        // `ZONES_LAG` frames, every follower must hold the identical decision
+        // state. `count` / `penalty` are predicted between the 2 Hz `zs`
+        // corrections (zones.js L272-281) and ride the same lagged pipeline,
+        // so they keep the snapshot tolerances: one ceil step on the count,
+        // the r3 quantisation plus one tick of drift on the penalty.
+        if zones_mode
+            && zones_state_ok
+            && let Some(h) = (0..n).find(|i| !gone[*i] && rep[*i].is_host())
+            && let Some(hs) = m[h].zones.as_ref().map(|z| z.state())
+        {
+            let dec: ZonesDecision = (
+                hs.active.clone(),
+                hs.owner,
+                hs.last_owner,
+                hs.final_lock,
+                hs.overtime,
+                hs.winner,
+                hs.reason.clone(),
+            );
+            if zones_prev.as_ref() != Some(&dec) {
+                zones_prev = Some(dec);
+                zones_quiet = 0;
+            } else {
+                zones_quiet += 1;
+            }
+            if zones_quiet >= ZONES_LAG {
+                for i in 0..n {
+                    if i == h || gone[i] {
+                        continue;
+                    }
+                    let Some(gs) = m[i].zones.as_ref().map(|z| z.state()) else {
+                        zones_state_ok = false;
+                        break;
+                    };
+                    if gs.active != hs.active
+                        || gs.owner != hs.owner
+                        || gs.last_owner != hs.last_owner
+                        || gs.final_lock != hs.final_lock
+                        || gs.overtime != hs.overtime
+                        || gs.winner != hs.winner
+                        || gs.reason != hs.reason
+                        || (gs.count[0] - hs.count[0]).abs() > 1
+                        || (gs.count[1] - hs.count[1]).abs() > 1
+                        || (gs.penalty[0] - hs.penalty[0]).abs() > 0.05
+                        || (gs.penalty[1] - hs.penalty[1]).abs() > 0.05
+                    {
+                        eprintln!(
+                            "zones divergence frame {frame} guest {i}: \
+                             active {}/{} owner {}/{} last {}/{} lock {}/{} \
+                             ot {}/{} win {:?}/{:?} reason {:?}/{:?} \
+                             count {:?}/{:?} pen {:?}/{:?}",
+                            hs.active,
+                            gs.active,
+                            hs.owner,
+                            gs.owner,
+                            hs.last_owner,
+                            gs.last_owner,
+                            hs.final_lock,
+                            gs.final_lock,
+                            hs.overtime,
+                            gs.overtime,
+                            hs.winner,
+                            gs.winner,
+                            hs.reason,
+                            gs.reason,
+                            hs.count,
+                            gs.count,
+                            hs.penalty,
+                            gs.penalty,
+                        );
+                        zones_state_ok = false;
+                        break;
+                    }
+                }
+            }
+        }
         // The authoritative clock is the live host's: once it judges, the
         // settlement bus takes over.
         if let Some(h) = (0..n).find(|i| !gone[*i] && rep[*i].is_host()) {
@@ -794,7 +934,7 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
             live: !gone[i],
             coverage: m[i].paint.coverage(),
             grid_fnv: fnv1a_bytes(m[i].paint.grid()),
-            result: m[i].result,
+            result: m[i].result.clone(),
             state: sess[i].state(),
             rtt: sess[i].transport_mut().map_or(0.0, |t| t.rtt()),
             adopted_host: rep[i].adopted_host,
@@ -855,9 +995,9 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
     // bound: `wire::round_int` per actor (replication.rs L1119) is ±0.5 m²,
     // × `pointsPerM2 = 1` (tuning.json L24) over 4 actors per team ⇒ the
     // per-team rebuild error is < 2.0 points (review A3).
-    let host_res = m[host_i].result.expect("host judged");
+    let host_res = m[host_i].result.as_ref().expect("host judged");
     let res_ok = live.iter().all(|i| {
-        m[*i].result.is_some_and(|r| {
+        m[*i].result.as_ref().is_some_and(|r| {
             r.winner == host_res.winner
                 && r.coverage == host_res.coverage
                 && r.elapsed == host_res.elapsed
@@ -872,6 +1012,36 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
 
     let painted = host_res.coverage[0] + host_res.coverage[1] > 0.01;
     checks.push(("the bots actually painted turf", painted));
+
+    if zones_mode {
+        checks.push((
+            "zones decisions replayed on every follower within one tick",
+            zones_state_ok,
+        ));
+        // The settled outcome rides the host's `res` (the wire `ZonesResult`
+        // arm, batch 2): every live client must end on the same winner /
+        // reason / overtime, counts within one ceil step (the wire carries
+        // r3'd floats) and penalty within the r3 quantisation (< 1e-3).
+        let hz = host_res.zones.as_ref();
+        let zres_ok = hz.is_some_and(|hz| {
+            live.iter().all(|i| {
+                m[*i]
+                    .result
+                    .as_ref()
+                    .and_then(|r| r.zones.as_ref())
+                    .is_some_and(|gz| {
+                        gz.winner == hz.winner
+                            && gz.reason == hz.reason
+                            && gz.overtime == hz.overtime
+                            && (gz.counts[0] - hz.counts[0]).abs() <= 1
+                            && (gz.counts[1] - hz.counts[1]).abs() <= 1
+                            && (gz.penalty[0] - hz.penalty[0]).abs() < 1e-3
+                            && (gz.penalty[1] - hz.penalty[1]).abs() < 1e-3
+                    })
+            })
+        });
+        checks.push(("every live client settled the same zones outcome", zres_ok));
+    }
 
     // Guest drop: the abandoned actor must still be in the host's roster
     // (adoption, not removal) and must have kept moving as a bot.
@@ -916,11 +1086,21 @@ fn build_side(
     sim: &SimWorld,
     tp: &PlayerTuning,
     tuning: &Tuning,
+    zone_layout: Option<&inkwave_sim::geometry::ZoneLayout>,
+    zones_tuning: Option<ZonesTuning>,
 ) -> (Match, Replication, usize) {
     let my = s.my_id().expect("my_id").to_string();
     let host = s.host_id().expect("host_id").to_string();
     let seed = fnv1a(&cfg.id);
-    let mut m = build_net_match(cfg, seed, sim, tp, &tuning.match_config);
+    let mut m = build_net_match(
+        cfg,
+        seed,
+        sim,
+        tp,
+        &tuning.match_config,
+        zone_layout,
+        zones_tuning,
+    );
     let mut r = Replication::new(cfg, &my, &host);
     r.bind_match(&mut m);
     for (i, e) in cfg.roster.iter().enumerate() {

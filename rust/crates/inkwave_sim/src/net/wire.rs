@@ -820,9 +820,10 @@ pub fn decode_direct(v: &JVal) -> Option<DirectMsg> {
 // HostMsg (host-broadcast authoritative)
 // ---------------------------------------------------------------------------
 
-/// Encode a host [`HostMsg`] to its `{k:…}` JSON. Turf War only: `Result`
-/// omits the zones/boss extras (`mode`/`bo` are `undefined` for turf, so JS
-/// drops them from `JSON.stringify`).
+/// Encode a host [`HostMsg`] to its `{k:…}` JSON. Turf `Result` omits the
+/// zones/boss extras (`mode`/`bo` are `undefined` for turf, so JS drops them
+/// from `JSON.stringify`); the zones form carries `mode/zc/zp/zr/zo/zl`
+/// (sendResult L652-653). Boss (`bo`) stays an M2+ placeholder.
 #[must_use]
 pub fn encode_host(m: &HostMsg) -> String {
     match m {
@@ -839,11 +840,14 @@ pub fn encode_host(m: &HostMsg) -> String {
         // The clock rides the tick as `c`, not a standalone message — encode it
         // as the `[state, r2(time)]` array for completeness.
         HostMsg::Clock { phase, t } => encode_clock(phase, *t),
-        // {k:'res', cov, win, st} (L652-654); turf form drops mode/bo.
+        // {k:'res', cov, win, mode, zc, zp, zr, zo, zl, st} (L652-654).
+        // Turf form drops mode/bo (JS `undefined` keys); the zones extras
+        // sit between `win` and `st` in JS literal order (L652-653).
         HostMsg::Result {
             coverage,
             winner,
             stats,
+            zones,
         } => {
             let cov = arr([num(dec(coverage[0])), num(dec(coverage[1]))]);
             let st = arr(stats.iter().map(|r| {
@@ -856,12 +860,42 @@ pub fn encode_host(m: &HostMsg) -> String {
                     "0".to_string(), // weakHits (M2+ ⇒ 0)
                 ])
             }));
-            obj(&[
+            let mut pairs = vec![
                 ("k", js_str("res")),
                 ("cov", cov),
                 ("win", num(f64::from(*winner))),
-                ("st", st),
-            ])
+            ];
+            if let Some(z) = zones {
+                pairs.push(("mode", js_str("zones")));
+                pairs.push((
+                    "zc",
+                    arr([num(z.counts[0] as f64), num(z.counts[1] as f64)]),
+                ));
+                pairs.push(("zp", arr([num(dec(z.penalty[0])), num(dec(z.penalty[1]))])));
+                // JS `zr: result.reason` — an `undefined` reason is dropped
+                // from `JSON.stringify`, mirroring `State`'s `t` handling.
+                if let Some(reason) = &z.reason {
+                    pairs.push(("zr", js_str(reason)));
+                }
+                pairs.push(("zo", num(if z.overtime { 1.0 } else { 0.0 })));
+                // `zl: result.log` — `{t, team, start, end, penalty, next}`
+                // objects, raw values (zones.js L234/L389, match.js L257).
+                pairs.push((
+                    "zl",
+                    arr(z.log.iter().map(|l| {
+                        obj(&[
+                            ("t", num(dec(l.t))),
+                            ("team", num(l.team as f64)),
+                            ("start", num(dec(l.start))),
+                            ("end", num(dec(l.end))),
+                            ("penalty", num(dec(l.penalty))),
+                            ("next", num(dec(l.next))),
+                        ])
+                    })),
+                ));
+            }
+            pairs.push(("st", st));
+            obj(&pairs)
         }
         // {k:'end'} (L666)
         HostMsg::End => obj(&[("k", js_str("end"))]),
@@ -906,6 +940,60 @@ pub fn decode_host(v: &JVal) -> Option<HostMsg> {
                         .collect()
                 })
                 .unwrap_or_default();
+            // `mode:'zones'` carries the settlement extras (sendResult
+            // L652-653); boss (`mode:'boss'`) stays out of scope, and turf
+            // has no `mode` key at all.
+            let zones = match v.field("mode").and_then(JVal::as_str) {
+                Some("zones") => {
+                    let counts = v
+                        .field("zc")
+                        .and_then(JVal::as_array)
+                        .map(|a| {
+                            [
+                                a.first().and_then(JVal::as_f64).unwrap_or(0.0) as i64,
+                                a.get(1).and_then(JVal::as_f64).unwrap_or(0.0) as i64,
+                            ]
+                        })
+                        .unwrap_or([0, 0]);
+                    let penalty = v
+                        .field("zp")
+                        .and_then(JVal::as_array)
+                        .map(|a| {
+                            [
+                                a.first().and_then(JVal::as_f64).unwrap_or(0.0) as f32,
+                                a.get(1).and_then(JVal::as_f64).unwrap_or(0.0) as f32,
+                            ]
+                        })
+                        .unwrap_or([0.0; 2]);
+                    let log = v
+                        .field("zl")
+                        .and_then(JVal::as_array)
+                        .map(|rows| {
+                            rows.iter()
+                                .filter_map(|r| {
+                                    let g = |k: &str| r.field(k).and_then(JVal::as_f64);
+                                    Some(crate::match_::ZonePenaltyLog {
+                                        t: g("t")? as f32,
+                                        team: g("team")? as usize,
+                                        start: g("start")? as f32,
+                                        end: g("end")? as f32,
+                                        penalty: g("penalty")? as f32,
+                                        next: g("next")? as f32,
+                                    })
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    Some(super::ZonesResult {
+                        counts,
+                        penalty,
+                        reason: v.field("zr").and_then(JVal::as_str).map(|s| s.to_string()),
+                        overtime: v.field("zo").and_then(JVal::as_f64).unwrap_or(0.0) != 0.0,
+                        log,
+                    })
+                }
+                _ => None,
+            };
             Some(HostMsg::Result {
                 coverage: [
                     cov.first().and_then(JVal::as_f64).unwrap_or(0.0) as f32,
@@ -913,6 +1001,7 @@ pub fn decode_host(v: &JVal) -> Option<HostMsg> {
                 ],
                 winner: v.field("win").and_then(JVal::as_f64).unwrap_or(0.0) as u8,
                 stats,
+                zones,
             })
         }
         "end" => Some(HostMsg::End),
@@ -1316,6 +1405,37 @@ mod tests {
             let rec = decode_record(a.as_array().unwrap())
                 .unwrap_or_else(|| panic!("event {name} failed to decode"));
             assert_eq!(encode_record(&rec), s, "event {name}");
+        }
+    }
+
+    #[test]
+    fn zone_seq_records_round_trip_to_golden_wire() {
+        // Task 36 batch 3: every case is a record produced by the **real** JS
+        // `ZoneControl` host driver (gen.mjs `zone_seq`), captured as the exact
+        // `['z', e]` wire array (netmatch.js L148 — the `_rec` timestamp is the
+        // tick envelope's job, not the record's). decode→encode must be
+        // byte-identical, and the sequence must cover all eight net tags
+        // (zones.js `_net`: zz / zo / zp / za / zf / zt / zs / ze).
+        let seq = fixtures()["fixtures"]["zone_seq"]
+            .as_array()
+            .unwrap_or_else(|| panic!("fixtures.zone_seq missing"));
+        assert!(seq.len() >= 8, "zone_seq too short: {}", seq.len());
+        let mut tags = std::collections::HashSet::new();
+        for case in seq {
+            let s = case.as_str().unwrap();
+            let a = parse_json(s).unwrap();
+            let rec = decode_record(a.as_array().unwrap())
+                .unwrap_or_else(|| panic!("zone record failed to decode: {s}"));
+            assert_eq!(encode_record(&rec), s, "zone record {s}");
+            if let TickEvent::Zone(z) = &rec
+                && let JVal::Arr(inner) = &z.payload
+                && let Some(JVal::Str(t)) = inner.first()
+            {
+                tags.insert(t.clone());
+            }
+        }
+        for t in ["zz", "zo", "zp", "za", "zf", "zt", "zs", "ze"] {
+            assert!(tags.contains(t), "zone_seq never covers tag {t}");
         }
     }
 

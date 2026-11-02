@@ -93,7 +93,7 @@ fn tr8_1_full_run_settles_with_result_and_restart_zeroes() {
     }
     assert!(settled, "match must settle inside the step budget");
 
-    let r = m.result.expect("end carries a result");
+    let r = m.result.clone().expect("end carries a result");
     assert!(
         (r.elapsed - 6.0).abs() < 0.1,
         "clock ran the full duration: {}",

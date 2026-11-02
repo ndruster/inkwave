@@ -95,6 +95,27 @@ fn tr25_host_migration() {
     assert!(rep.ok(), "the migrated match settled consistently");
 }
 
+/// Task 36 batch 3 — Zone Control online: the host runs the rules and
+/// records every decision, the guests replay them; the decision state must
+/// agree on every frame and the settled zones outcome must be identical
+/// across ends. 120 s of match clock exercises ≥1 rotation (rotateMin..
+/// rotateMax = 30..60 s inside the 90 s pre-final window, zones.js L154-157),
+/// the last-30-s lock (`zf`) and the horn; the turf-oriented bots never hold
+/// a zone to the `control` share, so the level horn goes to sudden death
+/// (`zt -1`) and the test-shortened overtime cap (`overtime_max` 300 → 20 s
+/// through the builder's `zones_tuning` seam) ends it on the `ze` record —
+/// the tiebreak winner rides the wire to every guest.
+#[test]
+fn tr36_zones_match_three_clients() {
+    let mut opts = MatchOpts::plain(3, 4242);
+    opts.mode = "zones".to_string();
+    opts.duration = 120.0;
+    let rep = run_match(&opts);
+    rep.print();
+    assert!(rep.clients.iter().all(|c| c.live));
+    assert!(rep.ok(), "the zones match settles consistently");
+}
+
 /// TR-25.3 guest drop: a guest's socket dies mid-match; its actor is adopted
 /// as a bot on the host and keeps playing to settlement.
 #[test]

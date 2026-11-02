@@ -58,17 +58,22 @@
 //!     the length as given — the caller (Task 9 CLI / menu) must pass a
 //!     legal value.
 
+pub mod zones;
+
+pub use zones::{MatchMode, ZoneControl, ZoneEvent, ZoneOutcome, ZonePenaltyLog, ZoneSnapshot};
+
 use serde::{Deserialize, Serialize};
 
 use crate::actor::{Actor, ActorEvent, ActorInput, FireGate, Form, SimWorld, SplatCause};
+use crate::geometry::ZoneLayout;
 use crate::paint::{PaintGrid, SplatOpts};
 use crate::sub::{SubKind, SubSystem};
-use crate::tuning::{MatchConfig, PlayerTuning, SubSet, WeaponSet};
+use crate::tuning::{MatchConfig, PlayerTuning, SubSet, WeaponSet, ZonesTuning};
 use crate::weapon::blade::BladeWave;
 use crate::weapon::brolly::{HELD_R, LAUNCH_R, LaunchedCanopy, held_shield};
 use crate::weapon::{
-    FoeScan, ProjectileSim, Rng, Shield, ShieldOwner, ShieldTarget, SimEvent, WeaponKind,
-    WeaponRunner,
+    FoeScan, MUZZLE_EYE_Y, ProjectileSim, Rng, Shield, ShieldOwner, ShieldTarget, SimEvent,
+    WeaponKind, WeaponRunner,
 };
 use crate::weapon::{bow, mitts};
 use glam::{Vec3, vec3};
@@ -100,6 +105,11 @@ pub const SUPERJUMP_LAND_R: f32 = 1.4;
 pub const SUPERJUMP_LAND_LIFT: f32 = 0.3;
 /// JS specials.js L744: `finish(true)`'s instant-fade opacity (`0.001`).
 pub const MARKER_FADE_NOW: f32 = 0.001;
+/// Task 36 `_zoneTurf` approximation (D-T36-3): JS probes `actor.aimPoint`
+/// (match.js L140), the aim ray's collision target the sim does not model
+/// (D-T35-9 precedent). The sim substitutes a fixed probe point along the
+/// eye-height aim ray at this distance.
+pub const AIM_PROBE_DIST: f32 = 6.0;
 
 /// Match lifecycle phase (JS `state`; see module docs for the spec mapping).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,16 +127,23 @@ pub enum Phase {
 }
 
 /// Turf-war settlement (JS `_judge` `result`, extended per the module docs).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+/// Not `Copy` since Task 36: the zones branch carries the [`ZoneOutcome`] log.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MatchResult {
     /// Coverage fractions `[team0, team1]` (JS `paint.coverage()`).
     pub coverage: [f32; 2],
     /// Winning team (tie broken on the seeded RNG stream, JS L269).
     pub winner: usize,
     /// Per-team turf points: `Σ stats.turf × pointsPerM2` (spec score line).
+    /// `[0, 0]` in Zone Control mode (JS zones `_judge` has no points line,
+    /// match.js L254-257).
     pub points: [f32; 2],
     /// Elapsed match time when the clock hit zero (spec "终局时间").
     pub elapsed: f32,
+    /// Zone Control settlement (JS zones-mode `_judge` result fields folded
+    /// in, match.js L254-257); `None` in turf mode.
+    #[serde(default)]
+    pub zones: Option<ZoneOutcome>,
 }
 
 /// One splat record (JS `match.events` entry, match.js L185; identity only).
@@ -225,6 +242,9 @@ pub enum MatchEvent {
         #[serde(default)]
         len: Option<f32>,
     },
+    /// Zone Control rules event (Task 36; JS `emit('zones:*')`, zones.js
+    /// L31-36). The HUD does not consume these yet (batch 3+).
+    Zone(ZoneEvent),
 }
 
 /// A kit world-object spawn queued for the net layer (JS `recKit`,
@@ -353,6 +373,24 @@ pub struct Match {
     pub follower: bool,
     last_minute_fired: bool,
     last_count: i32,
+    /// Match mode (JS `match.mode`, match.js L20; boss / practice stay out of
+    /// scope and read as Turf).
+    #[serde(default)]
+    pub mode: MatchMode,
+    /// Zone Control rules engine (JS `match.zones`, match.js L96-99). Only
+    /// present in [`MatchMode::Zones`]; rebuilt by [`Match::restart`] from
+    /// [`Match::zone_layout`] / [`Match::zones_tuning`] (JS rebuilds the whole
+    /// match). Not serialisable — the net layer replays it through
+    /// [`ZoneControl::net_event`] instead (batch 3).
+    #[serde(skip)]
+    pub zones: Option<ZoneControl>,
+    /// Stage zone layout kept for the restart rebuild (`None` → the JS
+    /// placeholder layout, zones.js L68-73).
+    #[serde(skip, default)]
+    pub zone_layout: Option<ZoneLayout>,
+    /// Zone rules kept for the restart rebuild (only in Zones mode).
+    #[serde(skip, default)]
+    zones_tuning: Option<ZonesTuning>,
 }
 
 impl Match {
@@ -371,7 +409,8 @@ impl Match {
     }
 
     /// [`Match::new`] with an explicit per-team roster size (tests use small
-    /// rosters; team balance = equal sizes by construction).
+    /// rosters; team balance = equal sizes by construction). Turf mode (JS
+    /// `opts.mode` absent, match.js L20).
     #[must_use]
     pub fn with_roster(
         duration: f32,
@@ -381,6 +420,50 @@ impl Match {
         mc: &MatchConfig,
         team_size: usize,
     ) -> Self {
+        Self::with_roster_mode(
+            duration,
+            seed,
+            world,
+            t,
+            mc,
+            team_size,
+            MatchMode::Turf,
+            None,
+            None,
+        )
+    }
+
+    /// [`Match::with_roster`] with the mode selector (Task 36; JS `opts.mode
+    /// === 'zones'` + `new ZoneControl(this)`, match.js L20/L96-99).
+    /// `duration <= 0` in Zones mode takes `ZONES.duration` (JS
+    /// `opts.duration || ZONES.duration`, match.js L21). A Zones request
+    /// without `zones_tuning` degrades to Turf (the sim has no ambient
+    /// `ZONES` config; D-T36-1).
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_roster_mode(
+        duration: f32,
+        seed: u64,
+        world: &SimWorld,
+        t: &PlayerTuning,
+        mc: &MatchConfig,
+        team_size: usize,
+        mode: MatchMode,
+        zone_layout: Option<&ZoneLayout>,
+        zones_tuning: Option<ZonesTuning>,
+    ) -> Self {
+        let (mode, zones_tuning) = match (mode, zones_tuning) {
+            (MatchMode::Zones, Some(zt)) => (MatchMode::Zones, Some(zt)),
+            (MatchMode::Zones, None) => (MatchMode::Turf, None),
+            (m, zt) => (m, zt),
+        };
+        let duration = if mode == MatchMode::Zones && duration <= 0.0 {
+            zones_tuning
+                .expect("Zones mode carries tuning after the guard")
+                .duration as f32
+        } else {
+            duration
+        };
         let mut actors = Vec::with_capacity(team_size * 2);
         for team in 0..2 {
             for slot in 0..team_size {
@@ -422,7 +505,27 @@ impl Match {
             follower: false,
             last_minute_fired: false,
             last_count: 99,
+            mode,
+            zones: None,
+            zone_layout: zone_layout.cloned(),
+            zones_tuning,
         };
+        // JS setup() L96-99: `if (this.mode === 'zones') this.zones = new
+        // ZoneControl(this)` — built after the roster/paint exist, before
+        // `start()` (the clock is still at full length).
+        if mode == MatchMode::Zones {
+            let zt = m.zones_tuning.expect("Zones mode carries tuning");
+            m.zones = Some(ZoneControl::new(
+                &m.paint,
+                world.collision,
+                m.zone_layout.as_ref(),
+                world.spawn_pads[0],
+                &zt,
+                m.time,
+                m.follower,
+                &mut m.rng,
+            ));
+        }
         m.start();
         m
     }
@@ -479,6 +582,41 @@ impl Match {
         self.duration - self.time
     }
 
+    /// JS `endZones` (match.js L144-147): the zones rules decided the match
+    /// (knockout / time-up end) — freeze the clock and enter the finish
+    /// settle window.
+    ///
+    /// D-T36-4: the JS `match.zoneResult` mirror (`{winner, reason}`) is not
+    /// ported — [`Match::judge`] reads [`ZoneControl`]'s winner / reason
+    /// directly. The arguments only exist to mirror the JS call shape.
+    pub fn end_zones(&mut self, _winner: usize, _reason: &str) {
+        if self.phase == Phase::Active {
+            self.time = self.time.max(0.0);
+            self.set_phase(Phase::Finish);
+        }
+    }
+
+    /// JS `_zoneTurf` (match.js L136-141): ink laid while the actor stands
+    /// on (or aims into) the live objective counts as objective play.
+    fn zone_turf_credit(&mut self, team: usize, slot: usize, area: f32) {
+        let Some(z) = self.zones.as_ref() else { return };
+        if self.phase != Phase::Active || area <= 0.0 {
+            return;
+        }
+        let Some(idx) = find_actor(&self.actors, team, slot) else {
+            return;
+        };
+        // JS L139-140: `on(actor.pos) || on(actor.aimPoint)`. The sim has no
+        // aimPoint (D-T36-3), so the aim probe point stands in for it.
+        let on = {
+            let a = &self.actors[idx];
+            z.point_in_active(a.pos) || z.point_in_active(aim_probe(a))
+        };
+        if on {
+            self.actors[idx].zone_turf += area;
+        }
+    }
+
     /// Restart in place (spec "可 restart" / TR-8.1 归零): fresh clock, roster
     /// re-placed on the pads, paint / projectiles / stats cleared. JS tears
     /// the `Match` down and builds a new one; the sim reuses the object so
@@ -495,6 +633,22 @@ impl Match {
         self.paint = PaintGrid::new(world.collision);
         self.projectiles = ProjectileSim::new(self.seed);
         self.rng = Rng::new(self.seed ^ 0x5bd1_e995);
+        // JS tears the whole match down (and with it `match.zones`,
+        // match.js L96-99): rebuild the rules engine on the fresh grid.
+        if self.mode == MatchMode::Zones
+            && let Some(zt) = self.zones_tuning
+        {
+            self.zones = Some(ZoneControl::new(
+                &self.paint,
+                world.collision,
+                self.zone_layout.as_ref(),
+                world.spawn_pads[0],
+                &zt,
+                self.time,
+                self.follower,
+                &mut self.rng,
+            ));
+        }
         // JS `clearAll()` (brolly.js L487-490): world canopies die with the
         // match; the runner kits are released by `r.reset()` below.
         self.launched.clear();
@@ -520,6 +674,7 @@ impl Match {
             a.turf = 0.0;
             a.splats = 0;
             a.deaths = 0;
+            a.zone_turf = 0.0;
             Self::place_on_pad(a, world, t);
         }
         self.set_phase(Phase::Intro);
@@ -583,23 +738,84 @@ impl Match {
                 }
             }
             Phase::Active => {
-                self.time -= dt;
-                if !self.last_minute_fired && self.time <= 60.0 && self.duration > 60.0 {
-                    self.last_minute_fired = true;
-                    self.events.push(MatchEvent::OneMinute);
+                // JS L197-212 (Zone Control): the rules engine runs first —
+                // a knockout ends the match, overtime freezes the clock at 0.
+                let mut zone_end: Option<(usize, String)> = None;
+                let mut stop_clock = false;
+                if self.zones.is_some() {
+                    // Split-borrow the fields the rules engine drives.
+                    let Self {
+                        zones,
+                        paint,
+                        actors,
+                        rng,
+                        events,
+                        time,
+                        duration,
+                        follower,
+                        ..
+                    } = self;
+                    let z = zones.as_mut().expect("checked above");
+                    // JS L143 reads `match.follower` live; the replication
+                    // layer sets it after construction, so sync every frame.
+                    z.follower = *follower;
+                    let r = z.update(
+                        dt,
+                        *time,
+                        *duration,
+                        paint,
+                        world.collision,
+                        actors,
+                        remote,
+                        rng,
+                    );
+                    for ev in z.drain_events() {
+                        events.push(MatchEvent::Zone(ev));
+                    }
+                    // D-T36-2: the flood fronts advance every Active frame
+                    // here (JS steps them inside PaintSystem.update, main.js
+                    // — outside the match state machine).
+                    paint.step_floods(dt);
+                    if r.is_some() {
+                        zone_end = r;
+                    } else if z.overtime {
+                        stop_clock = true; // JS L200: the clock stays at 0
+                    }
                 }
-                let c = self.time.ceil() as i32;
-                if self.time <= self.final_countdown && c != self.last_count && c > 0 {
-                    self.last_count = c;
-                    self.events.push(MatchEvent::Countdown { n: c });
+                if let Some((w, reason)) = &zone_end {
+                    self.end_zones(*w, reason);
                 }
-                if self.time <= 0.0 {
-                    self.time = 0.0;
-                    // JS L211: online, only the host calls time — a guest
-                    // clock hitting zero waits for the host's
-                    // `{k:'st', s:'finish'}` (netmatch `_hostState` L648).
-                    if !self.follower {
-                        self.set_phase(Phase::Finish);
+                if !stop_clock && zone_end.is_none() {
+                    self.time -= dt;
+                    if !self.last_minute_fired && self.time <= 60.0 && self.duration > 60.0 {
+                        self.last_minute_fired = true;
+                        self.events.push(MatchEvent::OneMinute);
+                    }
+                    let c = self.time.ceil() as i32;
+                    if self.time <= self.final_countdown && c != self.last_count && c > 0 {
+                        self.last_count = c;
+                        self.events.push(MatchEvent::Countdown { n: c });
+                    }
+                    if self.time <= 0.0 {
+                        self.time = 0.0;
+                        // JS L211: `!this.follower && (!this.zones ||
+                        // this.zones.timeUp())` — online only the host calls
+                        // time, and in Zones mode the rules may start
+                        // overtime instead of ending the match.
+                        if !self.follower {
+                            let mut end: Option<(usize, String)> = None;
+                            if let Some(z) = self.zones.as_mut() {
+                                end = z.time_up();
+                                for ev in z.drain_events() {
+                                    self.events.push(MatchEvent::Zone(ev));
+                                }
+                            }
+                            if let Some((w, reason)) = end {
+                                self.end_zones(w, &reason);
+                            } else if self.zones.is_none() {
+                                self.set_phase(Phase::Finish);
+                            }
+                        }
                     }
                 }
             }
@@ -1135,6 +1351,8 @@ impl Match {
                         owner_slot: slot,
                         area,
                     });
+                    // JS match.js L130: every `turf` emit also feeds `_zoneTurf`.
+                    self.zone_turf_credit(team, slot, area);
                 }
             }
             if !keep {
@@ -1631,6 +1849,8 @@ impl Match {
                         owner_slot: aslot,
                         area,
                     });
+                    // JS match.js L130: every `turf` emit also feeds `_zoneTurf`.
+                    self.zone_turf_credit(at, aslot, area);
                 }
             }
             self.kills.push(KillLog {
@@ -1671,6 +1891,38 @@ impl Match {
     /// JS `_judge`: coverage → winner (seeded tie-break) → `judge` phase.
     fn judge(&mut self) {
         let cov = self.paint.coverage();
+        if let Some(z) = &self.zones {
+            // JS L254-260: the zones rules own the settlement; an undecided
+            // winner (`Z.winner ?? …`) rolls on the seeded RNG stream.
+            let winner = match z.winner {
+                Some(w) => w,
+                None => {
+                    if self.rng.next_f32() < 0.5 {
+                        0
+                    } else {
+                        1
+                    }
+                }
+            };
+            let outcome = ZoneOutcome {
+                winner,
+                reason: z.reason.clone(),
+                counts: [z.count[0].ceil() as i64, z.count[1].ceil() as i64],
+                penalty: z.penalty,
+                overtime: z.overtime,
+                log: z.log.clone(),
+            };
+            self.result = Some(MatchResult {
+                coverage: cov,
+                winner,
+                // JS zones result has no points line (match.js L256-257).
+                points: [0.0, 0.0],
+                elapsed: self.elapsed(),
+                zones: Some(outcome),
+            });
+            self.set_phase(Phase::End);
+            return;
+        }
         let winner = if cov[0] == cov[1] {
             if self.rng.next_f32() < 0.5 { 0 } else { 1 }
         } else if cov[0] > cov[1] {
@@ -1689,6 +1941,7 @@ impl Match {
             winner,
             points,
             elapsed: self.elapsed(),
+            zones: None,
         });
         self.set_phase(Phase::End);
     }
@@ -1731,6 +1984,8 @@ impl Match {
                     owner_slot,
                     area,
                 });
+                // JS match.js L130: every `turf` emit also feeds `_zoneTurf`.
+                self.zone_turf_credit(team, owner_slot, area);
             }
         }
     }
@@ -1759,6 +2014,14 @@ impl Match {
 #[must_use]
 pub fn find_actor(actors: &[Actor], team: usize, slot: usize) -> Option<usize> {
     actors.iter().position(|a| a.team == team && a.slot == slot)
+}
+
+/// D-T36-3: JS probes `actor.aimPoint` (match.js L140) — the aim ray's
+/// collision target the sim does not model (D-T35-9 precedent). The sim
+/// substitutes a fixed-distance point on the eye-height aim ray.
+#[must_use]
+fn aim_probe(a: &Actor) -> Vec3 {
+    vec3(a.pos.x, a.pos.y + MUZZLE_EYE_Y, a.pos.z) + a.aim_dir() * AIM_PROBE_DIST
 }
 
 /// JS `Match.update` L231-244: pairwise horizontal separation push (both

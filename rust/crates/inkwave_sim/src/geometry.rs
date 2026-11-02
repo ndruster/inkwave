@@ -242,6 +242,79 @@ pub struct LayoutMeta {
     pub surface_slots: HashMap<String, u16>,
 }
 
+/// Zone Control zone layout (Task 36 §1): the extractor merges `ZONE_DEFS`
+/// (src/world/zones-data.js L14-51) into the layout per maps.js L118-119 and
+/// serialises it under the top-level `zones` key.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ZoneLayout {
+    /// One or two centre zones (both must be held when there are two;
+    /// zones-data.js L3).
+    pub center: Vec<ZoneDef>,
+    /// Alpha's side zone; Bravo's is its 180° mirror (zones-data.js L4).
+    pub side: ZoneDef,
+}
+
+/// One zone: outline part(s) + the floor-height band that counts
+/// (zones-data.js L5: `{ poly }` or `{ polys }`, `y0`…`y1`).
+///
+/// The raw `poly`/`polys` shape is normalised at deserialisation time into
+/// [`ZoneDef::parts`] following the JS idiom `z.polys || [z.poly]`
+/// (zones.js `partsOf`; an empty `polys` array is truthy in JS and wins).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(from = "ZoneDefRaw")]
+pub struct ZoneDef {
+    parts: Vec<Vec<[f32; 2]>>,
+    /// Lower floor height that counts (world metres).
+    pub y0: Option<f32>,
+    /// Upper floor height that counts (world metres).
+    pub y1: Option<f32>,
+}
+
+impl ZoneDef {
+    /// Outline parts, normalised from `poly` | `polys` (JS `partsOf`).
+    #[must_use]
+    pub fn parts(&self) -> &[Vec<[f32; 2]>] {
+        &self.parts
+    }
+
+    /// Build a zone directly (Task 36: `mirror_zone` zones.js L56 and the
+    /// placeholder layout zones.js L68-73 synthesise defs the extractor
+    /// never serialises).
+    #[must_use]
+    pub fn new(parts: Vec<Vec<[f32; 2]>>, y0: Option<f32>, y1: Option<f32>) -> Self {
+        Self { parts, y0, y1 }
+    }
+}
+
+/// Wire form of [`ZoneDef`] (verbatim ZONE_DEFS entry).
+#[derive(Deserialize)]
+struct ZoneDefRaw {
+    #[serde(default)]
+    poly: Option<Vec<[f32; 2]>>,
+    #[serde(default)]
+    polys: Option<Vec<Vec<[f32; 2]>>>,
+    #[serde(default)]
+    y0: Option<f32>,
+    #[serde(default)]
+    y1: Option<f32>,
+}
+
+impl From<ZoneDefRaw> for ZoneDef {
+    fn from(r: ZoneDefRaw) -> Self {
+        // JS: `z.polys || [z.poly]` — polys wins when present (even empty).
+        let parts = match r.polys {
+            Some(v) => v,
+            None => r.poly.map(|p| vec![p]).unwrap_or_default(),
+        };
+        Self {
+            parts,
+            y0: r.y0,
+            y1: r.y1,
+        }
+    }
+}
+
 /// A full extracted stage layout document.
 #[derive(Debug, Clone, Deserialize)]
 pub struct StageLayout {
@@ -250,6 +323,9 @@ pub struct StageLayout {
     pub stage: StageInfo,
     /// Positional: index == upstream block id.
     pub primitives: Vec<Brush>,
+    /// Zone Control zones (absent on stages without a ZONE_DEFS entry).
+    #[serde(default)]
+    pub zones: Option<ZoneLayout>,
     pub meta: LayoutMeta,
 }
 
@@ -408,6 +484,53 @@ mod tests {
                     && common.tag.as_deref() == Some("townhall-wall"))
         });
         assert!(wall, "mirrored townhall-wall box missing");
+    }
+
+    // Task 36 §1: the merged ZONE_DEFS entry deserialises verbatim into
+    // `zones` (zones-data.js L21-24, tidewater's hand-drawn zones).
+    #[test]
+    fn tidewater_zones() {
+        let l = layout();
+        let z = l.zones.expect("tidewater carries hand-drawn zones");
+        assert_eq!(z.center.len(), 1);
+        let c = &z.center[0];
+        // circle(0, 0, 8.55) at the default 24 segments.
+        assert_eq!(c.parts().len(), 1);
+        assert_eq!(c.parts()[0].len(), 24);
+        assert_eq!(c.parts()[0][0], [8.55, 0.0]); // cos(0)·r, sin(0)·r
+        assert_eq!(c.y0, Some(0.8));
+        assert_eq!(c.y1, Some(1.3));
+        // rect(10, 17.5, -20, -10) (zones-data.js L6).
+        assert_eq!(
+            z.side.parts(),
+            &[vec![
+                [10.0, -20.0],
+                [17.5, -20.0],
+                [17.5, -10.0],
+                [10.0, -10.0]
+            ]][..]
+        );
+        assert_eq!(z.side.y0, Some(-0.5));
+        assert_eq!(z.side.y1, Some(0.3));
+    }
+
+    // JS `partsOf = z.polys || [z.poly]` normalisation (zones.js).
+    #[test]
+    fn zone_def_parts_normalisation() {
+        let one: ZoneDef = serde_json::from_str(r#"{ "poly": [[0, 0], [1, 0], [1, 1]] }"#).unwrap();
+        assert_eq!(one.parts().len(), 1);
+        assert_eq!(one.parts()[0].len(), 3);
+        assert_eq!(one.y0, None);
+        let multi: ZoneDef =
+            serde_json::from_str(r#"{ "polys": [[[0, 0]], [[1, 1]]], "y0": -0.3, "y1": 0.4 }"#)
+                .unwrap();
+        assert_eq!(multi.parts().len(), 2);
+        assert_eq!(multi.y0, Some(-0.3));
+        assert_eq!(multi.y1, Some(0.4));
+        // `polys` wins when both are present (JS `||` on a truthy array).
+        let both: ZoneDef =
+            serde_json::from_str(r#"{ "poly": [[9, 9]], "polys": [[[0, 0], [1, 1]]] }"#).unwrap();
+        assert_eq!(both.parts(), &[vec![[0.0, 0.0], [1.0, 1.0]]][..]);
     }
 
     // --- helpers ---

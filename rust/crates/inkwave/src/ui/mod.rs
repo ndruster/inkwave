@@ -21,7 +21,7 @@ use bevy::picking::pointer::PointerButton;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use inkwave_sim::actor::{ActorInput, SplatCause};
-use inkwave_sim::match_::{MatchEvent, MatchResult, Phase};
+use inkwave_sim::match_::{MatchEvent, MatchResult, Phase, ZoneOutcome};
 use inkwave_sim::tuning::Tuning;
 
 use crate::actors::team_color;
@@ -251,14 +251,62 @@ pub fn team_names(t: &Tuning) -> [String; 2] {
 /// Results headline + the two percent lines (hud.js L541/550-551). The sim's
 /// `judge` breaks ties with the seeded RNG so `winner` is always 0/1 — no
 /// "IT'S A TIE!" branch here (upstream hud.js L541 has one; recorded sim
-/// deviation).
+/// deviation). Task 36 batch 3: a zones result runs the `_judgeZones` mirror
+/// below instead (hud.js L1096-1126).
 #[must_use]
 pub fn results_text(res: &MatchResult, names: &[String; 2]) -> (String, String, String) {
+    if let Some(z) = &res.zones {
+        return zones_text(res.winner, z, names);
+    }
     (
         format!("{} WINS!", names[res.winner].to_uppercase()),
         pct(res.coverage[0]),
         pct(res.coverage[1]),
     )
+}
+
+/// JS `_judgeZones` text mirror (hud.js L1096-1126, the static end state of
+/// the reveal): the headline is the winner line (L1115) with the reason sub
+/// of L1114 appended (`knockout` rides the KO stamp there — shown as
+/// `KNOCKOUT!`); the two side lines are the final counts with the `whole()`
+/// rounding (L1099: `max(0, ceil(v - 1e-6))`) and the penalty caption
+/// (L1108-1110).
+fn zones_text(winner: usize, z: &ZoneOutcome, names: &[String; 2]) -> (String, String, String) {
+    let sub = match z.reason.as_deref() {
+        Some("knockout") => " · KNOCKOUT!",
+        Some("comeback") => " · OVERTIME COMEBACK!",
+        Some("retake") => " · RETAKEN IN OVERTIME",
+        Some("neutralised") => " · HELD ON THROUGH OVERTIME",
+        Some("overtime-cap") => " · OVERTIME LIMIT",
+        _ if z.overtime => " · OVERTIME",
+        _ => "",
+    };
+    // JS `whole` (L1099): ceil minus a 1e-6 epsilon, floored at 0.
+    let whole = |v: f64| (v - 1e-6).ceil().max(0.0) as i64;
+    let line = |t: usize| {
+        let cnt = whole(z.counts[t] as f64);
+        let pen = whole(f64::from(z.penalty[t]));
+        if pen > 0 {
+            format!("{cnt}  COUNT LEFT · +{pen} PENALTY")
+        } else {
+            format!("{cnt}  COUNT LEFT")
+        }
+    };
+    (
+        format!("{} WINS!{sub}", names[winner].to_uppercase()),
+        line(0),
+        line(1),
+    )
+}
+
+/// Results bar width in percent: turf coverage; a zones result runs the
+/// `_judgeZones` fill (hud.js L1136: `p = (100 - cnt) / 100`) — the
+/// counted-off progress of each team's final count.
+fn res_bar(res: &MatchResult, t: usize) -> f32 {
+    match &res.zones {
+        Some(z) => (100.0 - z.counts[t].clamp(0, 100) as f32).clamp(0.0, 100.0),
+        None => res.coverage[t] * 100.0,
+    }
 }
 
 /// Per-actor results rows: tag, splats, deaths, turf m² (no trailing newline).
@@ -1573,16 +1621,24 @@ pub fn ui_update(
                 "feed1" if on_hud => (feed_line(&feed, 1), None),
                 "feed2" if on_hud => (feed_line(&feed, 2), None),
                 "feed3" if on_hud => (feed_line(&feed, 3), None),
-                "res_title" if on_results => demo.m.result.map_or((String::new(), None), |r| {
-                    let (title, _, _) = results_text(&r, &names);
-                    (title, Some(team_color(r.winner)))
-                }),
+                "res_title" if on_results => {
+                    demo.m.result.as_ref().map_or((String::new(), None), |r| {
+                        let (title, _, _) = results_text(r, &names);
+                        (title, Some(team_color(r.winner)))
+                    })
+                }
                 "res_a" if on_results => (
-                    demo.m.result.map_or(String::new(), |r| pct(r.coverage[0])),
+                    demo.m.result.as_ref().map_or(String::new(), |r| {
+                        let (_, a, _) = results_text(r, &names);
+                        a
+                    }),
                     None,
                 ),
                 "res_b" if on_results => (
-                    demo.m.result.map_or(String::new(), |r| pct(r.coverage[1])),
+                    demo.m.result.as_ref().map_or(String::new(), |r| {
+                        let (_, _, b) = results_text(r, &names);
+                        b
+                    }),
                     None,
                 ),
                 "res_stats" if on_results => (stats_rows(&demo), None),
@@ -1615,8 +1671,8 @@ pub fn ui_update(
             "cov_a_bar" if on_hud => cov[0] * 100.0,
             "cov_b_bar" if on_hud => cov[1] * 100.0,
             "ink_bar" if on_hud => ink_frac * 100.0,
-            "res_a_bar" if on_results => demo.m.result.map_or(0.0, |r| r.coverage[0] * 100.0),
-            "res_b_bar" if on_results => demo.m.result.map_or(0.0, |r| r.coverage[1] * 100.0),
+            "res_a_bar" if on_results => demo.m.result.as_ref().map_or(0.0, |r| res_bar(r, 0)),
+            "res_b_bar" if on_results => demo.m.result.as_ref().map_or(0.0, |r| res_bar(r, 1)),
             _ => continue,
         };
         let w = Val::Percent(p.min(100.0));
@@ -1699,12 +1755,49 @@ mod tests {
             winner: 0,
             points: [0.0; 2],
             elapsed: 180.0,
+            zones: None,
         };
         let names = ["Alpha".to_string(), "Bravo".to_string()];
         let (t, a, b) = results_text(&r, &names);
         assert_eq!(t, "ALPHA WINS!");
         assert_eq!(a, "61.3%");
         assert_eq!(b, "38.7%");
+    }
+
+    #[test]
+    fn results_text_shows_the_zones_final_count() {
+        // JS `_judgeZones` (hud.js L1096-1126): winner headline + the reason
+        // sub (L1114), the `whole()`'d counts and the penalty caption.
+        let names = ["Alpha".to_string(), "Bravo".to_string()];
+        let r = MatchResult {
+            coverage: [0.159, 0.248],
+            winner: 1,
+            points: [0.0; 2],
+            elapsed: 140.0,
+            zones: Some(ZoneOutcome {
+                winner: 1,
+                reason: Some("overtime-cap".to_string()),
+                counts: [100, 87],
+                penalty: [0.0, 3.0],
+                overtime: true,
+                log: Vec::new(),
+            }),
+        };
+        let (t, a, b) = results_text(&r, &names);
+        assert_eq!(t, "BRAVO WINS! · OVERTIME LIMIT");
+        assert_eq!(a, "100  COUNT LEFT");
+        assert_eq!(b, "87  COUNT LEFT · +3 PENALTY");
+        // The zones bar is the counted-off fill (hud.js L1136), not turf.
+        assert_eq!(res_bar(&r, 0), 0.0);
+        assert_eq!(res_bar(&r, 1), 13.0);
+        let turf = MatchResult {
+            zones: None,
+            ..r.clone()
+        };
+        assert!(
+            (res_bar(&turf, 0) - 15.9).abs() < 1e-4,
+            "turf keeps the coverage bar"
+        );
     }
 
     #[test]
@@ -1825,6 +1918,7 @@ mod tests {
                 winner: 0,
                 points: [0.0; 2],
                 elapsed: 90.0,
+                zones: None,
             });
         }
         app.update();

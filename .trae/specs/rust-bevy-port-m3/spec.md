@@ -523,3 +523,63 @@ SubSystem 平移（subs.js 693 行，非 kit 10 key + splat bomb 在 weapons.js 
 - D-T35-21：**顺延** crab 自身 hitR/hitH 放大受击盒（JS L1914/L2031）未实现——影响 Shell/子弹/storm 对骑乘 crab 的命中判定（偏难中）；blast 不受影响（JS L69-71 固定 +0.8y 探针）。M4 或后续补。
 - D-T35-22：guard_sweep `remove_shot` swap-remove 幸存弹向量次序与 JS splice 不同——逆序迭代+swap-remove 每元素恰访问一次，移除集合等价（仅 index 次序可观察）。成立可接受。
 - 评审 P0 修复（非偏差）：`blast()` 补 ghost 攻击者 drop 门控（JS netmatch.js L711-717 `shouldApplyHit` attacker.remote→'drop' 先于 victim 检查），回归测试 `tr35_b4_review_ghost_blast_attacker_drop`。
+
+# Task 36 实施设计：Zone Control 规则 + `['z']` 广播 + session 模式放开（2026-11-02）
+
+## §0 上游锚点（实读确认）
+- `src/game/zones.js` 全文 425 行：`ZoneControl` L105；`insidePoly` L58；`placeholderZones` L68（10×10 中心方 + `pad.x*0.4 / pad.z*0.45` 边区 8×8，y0 -2/y1 6，side h=4）；`zoneCells` L77（turf+atlas 面、cell 中心 ∈ 多边形 ∧ y∈[y0,y1]、跳 dead、center/reach/region）；常量 L47-53（FINAL/WARN/WARN_GAP 4/MIN_STINT 10/FILL_T 0.6/WIPE_T 0.7，`r3`）；`mirrorZone` L56（[-x,-z]）；构造 L106-140；`_net` L144；`total/losing/_swapDelay/_schedule` L148-157；`_flood` L161-167（fill：dur FILL_T、reach+0.4、ease out；wipe：WIPE_T、reach+3.5、linear、`z.hold = clock+dur+0.05`）；`_sample` L170-190（share、hold 门、control/contest、owner 汇总）；`_zoneOwner` L192-197（`['zz',id,t]`+flood+warn 重装）；`_contest` L200-206（WARN−0.08 重装、WARN_GAP）；`_setOwner` L208-223（penalty 触发/start/tieEnd、`['zo',o]` 在 penalty 之后）；`_penalise` L228-236（`['zp',t,p,r3(start),r3(end)]`、`max(0,round(K*(start-end)))+(start==count?1:0)`）；`_tick` L238-249（rate 表、penalty 先扣、tie 点）；`_fillSpecials` L252-263（held→落后方 gaugeHeld；neutral→losing gaugeNeutral；跳过 remote/!alive/specialActive）；`update` L266-289（sampleHz、owner _tick、knockout、snapshot 0.5s `['zs',…]` 十字段、rotation/finalLock）；`_swap` L291-303（`['za',idx,final]`、双方 owner 清、wipe flood、`zones:active`）；`_finalLock` L306-312（`['zf']`）；`timeUp` L315-333（grace 判定、`['zt',L]`）；`_overtime` L338-355（comeback/retake/neutralised/overtime-cap）；`_tiebreak` L357-361；`_end` L363-369（`['ze',w,reason,c0,c1,p0,p1]`→`match.endZones`）；`netEvent` L372-413（8 case）；`state()` L416-424。
+- `src/game/match.js`：mode 推导 L19-21（zones→`ZONES.duration`）；L96-99/L128-131 构造 + `on('turf')`；`_zoneTurf` L136-141（pos/aimPoint ∈ active 区）；`inZone` L286-295（y0−1/y1+2.5 外扩 + insidePoly）；playing 段 L197-212（zones.update → knockout 换态 → overtime 停钟 → host `timeUp()`）；`endZones` L144-147；`_judge` zones 分支 L254-260（result 形态 `{mode:'zones',coverage,winner(Z.winner??random),reason,counts:ceil,penalty,overtime,log}`）。
+- `src/net/netmatch.js`：`recZone(e)` L148 = `_rec(['z', e])`（host only）；回放 L495 `case 'z': match.zones.netEvent(e[2])`。
+- `src/world/zones-data.js`：`ZONE_DEFS` L14-51，**tidewater 有手画 zone**（center=circle(0,0,8.55) 24 点 y0 0.8/y1 1.3；side=rect(10,17.5,-20,-10) y0 -0.5/y1 0.3）；`src/world/maps.js` L118-119：`ZONE_DEFS` 合并进 `MAP_LAYOUTS[id].zones`（layout 自带 zones 优先）。
+- `src/world/paint.js` flood：API L710-731（region.cells 按距 front 中心排序 `_floodPrepFor` L734-788；`_floodStep` L808-842：`rad = done?∞: reach·(linear?x:1-(1-x)²)`，按序翻格 `grid=team+1`（wipe→0）、counts 增减、`version++`；同 region 新 flood 替换旧；无人格 credited/gauge）。
+- Rust 现状：`net.rs` `ZoneRecord{payload: JVal}` L594 + `TickEvent::Zone` L702 + wire `['z',e]` 编解码 L569/L674 **已就绪**（M1 占位已闭合）；`play_events` 无 Zone 臂（待接）；`paint.rs` 模块头 L25 明示 flood 未移植；`match_.rs` 无 mode/zones；`session.rs` turf-only 守卫 L37-40/L1269-1270/L1306/L1485/L1494/L1766-1767/L1724；`tuning.rs` `ZonesTuning` 17 字段 L1324-1342（tuning.json `zones` 已有值，**逐值断言一律读 tuning，禁手抄**）。
+
+## §1 数据管线（批一）
+- `tools/extract/extract-layout.mjs`：按 maps.js L118-119 口径合并 `ZONE_DEFS[tid]`（layout 自带 `zones` 优先），序列化进 layout JSON 顶层 `zones` 键（`{center:[…], side:…}` 原样：poly/polys/y0/y1；placeholder 标志不进管线）。重跑生成 `assets/maps/tidewater.json`（stable-json 确定性：连跑两次逐字节一致）。
+- `geometry`/world 侧：`MapMeta`（或 layout 反序列化结构）新增 `zones: Option<ZoneLayout>`（`ZoneDef { poly: Option<Vec<[f32;2]>>, polys: Option<Vec<Vec<[f32;2]>>>, y0: Option<f32>, y1: Option<f32> }`，serde default；`parts_of = polys.unwrap_or([poly])`）。
+
+## §2 `inkwave_sim::paint` flood（批一）
+- `PaintGrid::flood_region(region_cells, center_xz, team, reach, dur, ease)` → 内部 `Flood { order(按距排序), dist, i, t, r_prev, dur, reach, ease, val }` 入 `Vec<FloodState>`；同 region（以 cells 首元素+长度标识不可靠 → 用调用方 `slot` 句柄：ZoneControl 持有 `flood_slot`）替换语义按 JS `_floods[k].region === region` → Rust 以 `region_id: u32`（flood 创建时分配、zone 持有）去重。
+- `PaintGrid::step_floods(dt)`：逐字平移 `_floodStep` L808-842 的 CPU 部分（grid/counts/version；atlas 绘制跳过——呈现层 M4）。ease：out `1-(1-x)²`、linear `x`；done→`rad=f32::INFINITY`。
+- 由 `Match::step` 在 zones 模式下每帧调用（与 JS flush 顺序等价性见 §6 偏差）。
+
+## §3 `inkwave_sim::match::zones`（批一，`match/zones.rs`）
+- `ZoneControl` 逐字平移 zones.js：字段同名 snake_case；`net_out: Vec<JVal>`（`_net` 非 follower 时 push，含 `['zz'…]` 等 8 形，数值 `r3` 走既有 `r3` 工具）；`events_out: Vec<ZoneMatchEvent>`（zones:zone/control/penalty/active/contest/overtime/end → `MatchEvent::Zone(...)` 供 HUD/结果）。
+- 依赖注入：`sample`/`zoneCells` 读 `&PaintGrid`（faces/turf/dead/grid）；`_fillSpecials` 读写 actor.special（Task 35 gauge 语义：`special_ready()/special_cost()`）；随机（`_swapDelay`/`_swap` 侧选/`_tiebreak`）统一走传入 `&mut Rng`（宿主确定性流；JS `Math.random` 在线由记录广播兜底，单机偏差声明）。
+- `placeholder` 分支（无 zones 键的图）：L68-73 逐字（需 `spawn_pads[0]`）。tidewater 走真实 ZONE_DEFS。
+- `update(dt, …)`/`time_up()`/`net_event(e)`/`state()` 全路径；`follower` 语义与 JS 相同（guest 只预测计数、重放决策；`zs` 快照覆盖）。
+
+## §4 match 接线（批一）
+- `Match` 新增 `mode: MatchMode {Turf, Zones}`（构造参数/roster cfg）、`zones: Option<ZoneControl>`、`duration` 按 mode 取 `ZONES.duration`；playing 段：zones.update → knockout/overtime 停钟 → host time_up（JS L197-212 次序）；`end_zones` → Phase::Finish；`_zone_turf`（turf 事件 + inZone/aimPoint；Rust actor 有 aim point？批一实读 actor.rs，无则用 muzzle/forward 射线近似并声明偏差）；`MatchResult` 扩 `zones: Option<ZoneOutcome { winner, reason, counts:[i32;2], penalty:[f32;2], overtime, log }>（serde default 向后兼容）；turf 路径零改动。
+- HUD（inkwave crate）：结算面板补 zones 行（winner/reason/counts）；最小改动。
+
+## §5 网络 + session（批二）
+- 录制：`Replication::update` 顶部（record_ink 之前，对齐 JS match.update 先于 paint flush）drain `zones.net_out` → `rec(TickEvent::Zone(ZoneRecord{payload}))`；仅 host、非 follower。
+- 回放：`play_events` 新臂 `TickEvent::Zone(z) => m.zones.net_event(z.payload)`（JS L495；follower 门在 net_event 内部与 JS 一致）。
+- `session.rs`：`set_settings` 接受 `"turf"|"zones"`（仍拒 boss，L1269-1270 守卫改；L1306 同步）；`start()` zones → cfg.mode="zones" + duration=ZONES.duration（L1485/L1494 分支解锁，boss 仍拒）；guest `start` cfg：`mode=="boss"` fail("Unsupported game mode")，turf/zones 放行（L1766-1767）；L1724 强转 turf 的 coercion 移除；头注释 L37-40 更新。roster/结果透传不变（result JSON 扩 zones 字段）。
+- fixture：`tools/net-fixtures/gen.mjs` 增 zone 场景——node 侧 stub `G`（level faces/paint grid 最小假象）+ 真 `ZoneControl`，跑固定 tick 收集 `recZone` 的 `['z',e]` 序列入 `net-fixtures.json`；Rust 侧 wire 逐字节断言（encode/decode 双向）。
+
+## §6 测试
+- TR-36.1（`match/zones/tests.rs`，固定种子、真实 tidewater zones + 合成 flat level 皆可）：阈值逐值（control/contest/warn 取 tuning.zones 断言 + config.js L485-501 行号锚注释）；rate center/home/away 扣速；penalty 公式取整/+1 边界/tieEnd 截断；rotation 区间 [rotateMin,rotateMax]、finalLock 30s、overtime grace/cap/comeback/retake/neutralised；flood 翻格与 share 演化；`state()` 快照字段。
+- TR-36.2：①FakeTransport 双端 zones 完整局：host 规则流 + guest 重放，逐 tick 断言 guest 决策状态（owner/penalty/log/winner）与 host 一致、count 收敛于快照间隔内；②`['z']` fixture 逐字节。
+- TR-36.3：guest 收 `mode:'boss'` 仍 fail 退出（既有测试保持绿）；host `set_settings(boss)` 拒。
+- 回归：workspace 基线 **488** 单调递增；turf 既有测试零破坏。
+
+## §7 偏差声明（计划）
+- flood 的 atlas/GPU 带绘制、ripple、`_floodSettle`（growing splat 收尾）不移植（呈现层 M4；sim 网格语义完整）。
+- `z.flood` 呈现字段（ZoneMarks 前缘）省略或仅存 clock/dur/reach 最小集（M4 再接）。
+- `Math.random`→种子流：在线语义等价（决策全广播）；单机逐值对照 JS 不可能，声明。
+- snapshot `['zs']` 的 r3 精度与 JS 逐字节对齐（fixture 锚定）。
+
+## §7.1 偏差定案（实施+评审后回填，2026-11-02）
+- D-T36-1：tuning 无 `zones` 节时 Zones 模式降级 Turf（嵌入式 tuning 恒带值，仅防御分支）。成立。
+- D-T36-2：`step_floods` 在 `Match::step` Active 段每帧推进（JS 在帧尾 `G.paint.flush` 步进，main.js）——同帧内 splat/flood 相对次序差；grid 终值同、share 采样相位差 ≤1 帧。成立可接受。
+- D-T36-3：`_zone_turf` 的 aimPoint 用 `eye + aim_dir × 6.0 m` 探针（`aim_probe`）替代 JS `actor.aimPoint`（match.js L140）——zone 判定多面体粗粒度，探针差仅在贴边极限帧可观察。成立可接受。
+- D-T36-4：`match.zoneResult` 镜像（match.js L145）与 `z.flood` 呈现字段（ZoneMarks 前缘）不移植；结算走 `MatchResult.zones`。成立（§7 计划项落地）。
+- D-T36-5：**TR-36.2 口径定案**——「双端逐 tick 一致」实施为「host 决策元组连续 12 帧静默窗口内 follower 逐字段一致（count ±1、penalty ±0.05）」。依据：JS 决策事件天然滞后 ≥1 tick（`recZone` 晚于 `_sendTick`，netmatch.js L148；guest count/penalty 本地预测 + 2Hz `zs` 纠偏，zones.js L272-281），逐 tick 严格相等 JS 自身亦不成立；录制臂时序经评审实读 JS 证实同构。成立。
+- D-T36-6：`_penalise` 乘积域 Rust f32 / JS f64，极端值 1 ulp 级差——wire `r3` 量化 + `zs` 纠偏 + harness ±0.05 容差覆盖。成立可接受。
+- D-T36-7：`paint.flood` 未移植 JS 默认分支（`reach ?? dist[last]+0.2`、`dur` 缺省 0.5，paint.js L723-L726）——ZoneControl 调用点恒显式传值；未来调用点需显式。成立。
+- D-T36-8：结算文案适配——count 数字并入 caption、knockout 以 " · KNOCKOUT!" 后缀（JS 为独立元素/stamp，hud.js L1108-1123）；`res_bar` zones 用 counted-off 进度（对应 hud.js L1136）。文本 UI 合理适配，成立。
+- D-T36-9：e2e 测试缝 `build_net_match` 第 7 参 `zones_tuning: Option`（测试短化 OT cap 300→20 s，对齐 net-test.mjs L85 duration 短化惯例）；生产路径传 None 用嵌入式 tuning。成立。
+- 评审 P2-1 修复（非偏差）：`contest()` 加 `debug_assert!(z.owner >= 0)` 固化 JS L183/L178 短路前提。
+- 评审 P2-5 注记（不改）：harness 静默窗口采样在 rotateMin=30 s 约束下无覆盖缝隙风险。

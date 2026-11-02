@@ -3,13 +3,16 @@
 //! Faithful port of the **CPU side only** of `src/world/paint.js`: the coarse
 //! 0.25 m per-face grid that answers gameplay queries ("is this spot my ink?")
 //! and tracks turf coverage for scoring. The GPU half (atlas render target,
-//! growing splats, ripples, wall drips, flood, drying) is pure presentation and
-//! lives in the renderer layer, not here.
+//! growing splats, ripples, wall drips, flood atlas band, drying) is pure
+//! presentation and lives in the renderer layer, not here.
 //!
 //! Keep in lockstep with upstream on sync:
 //!   - `PaintSystem._initGrid`  -> [`PaintGrid::new`]
 //!   - `PaintSystem.splat`      -> [`PaintGrid::splat`] (net/ripple/growing branches dropped)
 //!   - `PaintSystem._cpuSplat`  -> [`PaintGrid::cpu_splat`]
+//!   - `PaintSystem.flood`      -> [`PaintGrid::flood`] (ripple branch dropped)
+//!   - `PaintSystem._floodPrepFor` (cell sort) -> inside [`PaintGrid::flood`]
+//!   - `PaintSystem._floodStep` -> [`PaintGrid::step_floods`] (atlas band drawing dropped)
 //!   - `PaintSystem.sample` / `sampleWorld` / `coverage` / `regionStats`
 //!     -> [`PaintGrid::sample`] / [`PaintGrid::sample_world`] /
 //!     [`PaintGrid::coverage`] / [`PaintGrid::region_stats`]
@@ -22,9 +25,10 @@
 //!     because of it.
 //!   - [`PaintGrid::coverage`] returns `[0.0, 0.0]` on a turf-less stage where
 //!     JS divides `0/0` and yields NaN.
-//!   - `flood()` (Zone Control region ink) and `clear()` (round reset) are not
-//!     ported yet: `flood` belongs to the weapon/specials task and `clear` can
-//!     be rebuilt by constructing a fresh `PaintGrid`.
+//!   - `clear()` (round reset) is not ported: it can be rebuilt by
+//!     constructing a fresh `PaintGrid`.
+//!   - [`PaintGrid::flood`] takes an explicit `reach` (JS defaults it to
+//!     `dist[last] + 0.2`); ZoneControl (Task 36 §3) always passes one.
 
 use glam::{Vec3, vec3};
 
@@ -164,6 +168,38 @@ pub struct RegionStats {
     pub n: u32,
 }
 
+/// How the flood front's radius grows over the duration (JS `opts.ease`,
+/// paint.js L724: `opts.ease === 'linear' ? 'linear' : 'out'`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum FloodEase {
+    /// `reach * (1 - (1 - x)^2)` — fast start, decelerating (JS default).
+    Out,
+    /// `reach * x` — constant speed (JS `'linear'`, used by wipes).
+    Linear,
+}
+
+/// One running region flood (JS `_floods` entry `J`, paint.js L722-727).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct FloodState {
+    /// Dedup key for the "new flood replaces the running one of the same
+    /// region" rule (JS `_floods[k].region === region`, paint.js L721).
+    region_id: u32,
+    /// Live turf cell ids sorted by distance from the front centre
+    /// (JS `prep.order`).
+    order: Vec<u32>,
+    /// Distance per `order` entry (JS `prep.dist`).
+    dist: Vec<f32>,
+    /// Next `order` entry the front has not passed yet (JS `J.i`).
+    i: usize,
+    /// Elapsed seconds (JS `J.t`).
+    t: f32,
+    dur: f32,
+    reach: f32,
+    ease: FloodEase,
+    /// Grid value the front writes: `team + 1`, 0 for a wipe (JS `val`).
+    val: u8,
+}
+
 /// One recorded splat, replayed by the render layer onto
 /// [`InkAtlas`](crate::ink_atlas::InkAtlas). The sim owns the gameplay grid;
 /// the presentation bitmap is a separate view fed from this stream so both
@@ -201,6 +237,8 @@ pub struct PaintGrid {
     pub version: u32,
     /// Block-id scratch reused across `splat` calls (JS `_qb`).
     splat_ids: Vec<u32>,
+    /// Region floods in progress (JS `_floods`, paint.js L286).
+    floods: Vec<FloodState>,
     /// Splats recorded since the render layer last drained them (transient;
     /// excluded from snapshots). Headless callers that never drain grow this
     /// unboundedly - call [`PaintGrid::drain_ink`](Self::drain_ink) regularly.
@@ -278,6 +316,7 @@ impl PaintGrid {
             counts: [0, 0],
             version: 0,
             splat_ids: Vec::new(),
+            floods: Vec::new(),
             ink_stream: Vec::new(),
             ink_seq: 0,
             applying: false,
@@ -429,6 +468,23 @@ impl PaintGrid {
         &self.grid
     }
 
+    /// Per-face grid metrics for a paintable face: `(nu, nv, cu, cv, off)` —
+    /// the JS `f.nu / f.nv / f.cu / f.cv / f.grid` a zone scan walks
+    /// (`zoneCells`, zones.js L84-94). `None` for non-paintable faces
+    /// (JS `!f.atlas` skip, L85).
+    #[must_use]
+    pub fn face_meta(&self, face_id: usize) -> Option<(u32, u32, f32, f32, usize)> {
+        let fg = *self.faces.get(face_id)?;
+        fg.map(|g| (g.nu, g.nv, g.cu, g.cv, g.off))
+    }
+
+    /// Is global cell `k` buried inside other geometry (JS `P.dead[k]`,
+    /// zones.js L92)?
+    #[must_use]
+    pub fn cell_dead(&self, k: usize) -> bool {
+        self.dead.get(k).copied().unwrap_or(false)
+    }
+
     /// Rasterise one splat onto a single face (JS `_cpuSplat`).
     pub(crate) fn cpu_splat(&mut self, f: &Face, fi: usize, a: SplatArgs) -> f32 {
         let SplatArgs {
@@ -513,7 +569,176 @@ impl PaintGrid {
         claimed
     }
 
-    // ----------------------------------------------------------- queries
+    // --------------------------------------------------- region floods (Zone Control)
+
+    /// Flood a region with one team's ink, or wipe it back to bare floor, as a
+    /// front running out from `center_xz` (JS `flood`, paint.js L717-731;
+    /// CPU half — the atlas band, `_floodSettle` and the ripple branch are
+    /// presentation). `team` is 0 | 1; anything else wipes (JS L723).
+    /// `dur` 0 flips every cell on the next [`PaintGrid::step_floods`] call.
+    /// A new flood with the same `region_id` replaces one still running there
+    /// (JS L721). Returns false when `region_cells` is empty (JS returns null,
+    /// L718).
+    // The parameter list mirrors the JS `flood(region, team, opts)` call sites
+    // (Task 36 §2); bundling into an opts struct would drift from the anchors.
+    #[allow(clippy::too_many_arguments)]
+    pub fn flood(
+        &mut self,
+        world: &CollisionWorld,
+        region_cells: &[u32],
+        center_xz: (f32, f32),
+        team: i8,
+        reach: f32,
+        dur: f32,
+        ease: FloodEase,
+        region_id: u32,
+    ) -> bool {
+        // JS L718: no region / no cells -> nothing runs.
+        if region_cells.is_empty() {
+            return false;
+        }
+        let (cx, cz) = center_xz;
+        // JS `_floodPrepFor` L734-751 (order/dist part; the atlas quads and
+        // outline buffers are presentation). `paintFaces` = paintable faces in
+        // id order with monotone `grid` starts (JS L293 + `_initGrid` L326-332);
+        // `self.faces` is indexed by face id and `off` accumulates in the same
+        // order, so the enumeration below is that array.
+        let mut paint_faces: Vec<(usize, usize)> = Vec::new(); // (off, face id)
+        for (id, fg) in self.faces.iter().enumerate() {
+            if let Some(fg) = fg {
+                paint_faces.push((fg.off, id));
+            }
+        }
+        let mut entries: Vec<(f32, usize, u32)> = Vec::new(); // (dist, push order, cell)
+        // JS L738 `faceOf`: binary search for the last face starting at or
+        // before the cell. With no paintable faces every lookup misses the
+        // face (JS `!f` -> skip), so the order stays empty but the flood runs.
+        if !paint_faces.is_empty() {
+            let face_of = |k: usize| -> usize {
+                let (mut a, mut b) = (0usize, paint_faces.len() - 1);
+                while a < b {
+                    let m = (a + b + 1) >> 1;
+                    if paint_faces[m].0 <= k {
+                        a = m;
+                    } else {
+                        b = m - 1;
+                    }
+                }
+                a
+            };
+            for (n, &k) in region_cells.iter().enumerate() {
+                let k = k as usize;
+                let fi = paint_faces[face_of(k)].1;
+                let Some(fg) = self.faces[fi] else {
+                    continue;
+                };
+                // JS L742: cell outside this face's span (or a non-paintable
+                // face, `!f.atlas`) is skipped.
+                if k < fg.off || k >= fg.off + (fg.nu as usize) * (fg.nv as usize) {
+                    continue;
+                }
+                let l = k - fg.off;
+                let i = (l % fg.nu as usize) as f32;
+                let j = (l - l % fg.nu as usize) / fg.nu as usize;
+                let f = &world.faces[fi];
+                // JS L747: only live turf cells ever enter the order (counts).
+                if !f.turf || self.dead[k] {
+                    continue;
+                }
+                // JS L748-749: world x/z of the cell centre, `s/t` in face units.
+                let s = (i + 0.5) * fg.cu;
+                let t = (j as f32 + 0.5) * fg.cv;
+                let dx = f.origin.x + f.u.x * s + f.v.x * t - cx;
+                let dz = f.origin.z + f.u.z * s + f.v.z * t - cz;
+                entries.push((dx.hypot(dz), n, k as u32));
+            }
+        }
+        // JS L751: `ids.map((_, n) => n).sort((a, b) => ds[a] - ds[b])` — V8's
+        // sort is stable, so equal distances keep the cells' push order; make
+        // that explicit with the index tie-break.
+        entries.sort_by(|a, b| {
+            a.0.partial_cmp(&b.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.1.cmp(&b.1))
+        });
+        let order: Vec<u32> = entries.iter().map(|e| e.2).collect();
+        let dist: Vec<f32> = entries.iter().map(|e| e.0).collect();
+        // JS L721: drop every still-running flood of the same region (splice
+        // back-to-front keeps the rest in order), then push the new one.
+        self.floods.retain(|j| j.region_id != region_id);
+        // JS L723: only 0/1 are teams; everything else (incl. -1) wipes.
+        let team = if team == 0 || team == 1 { team } else { -1 };
+        let dur = dur.max(0.0); // JS L723 `Math.max(0, +opts.dur || 0)`
+        // JS L724 `Math.max(0.1, opts.reach ?? …)`; the `??` default branch is
+        // not ported — callers always pass an explicit reach.
+        let reach = reach.max(0.1);
+        self.floods.push(FloodState {
+            region_id,
+            order,
+            dist,
+            i: 0,
+            t: 0.0,
+            dur,
+            reach,
+            ease,
+            val: (team + 1) as u8,
+        });
+        true
+    }
+
+    /// Advance every flood front: flip the cells it reached (grid + counts),
+    /// bump `version` once when anything changed (JS `_floodStep`,
+    /// paint.js L808-842, CPU part — the atlas band drawing and mip refresh
+    /// are presentation).
+    pub fn step_floods(&mut self, dt: f32) {
+        if self.floods.is_empty() {
+            return;
+        }
+        let mut changed = false;
+        let mut k = 0usize;
+        while k < self.floods.len() {
+            let j = &mut self.floods[k];
+            j.t += dt; // JS L815
+            let done = j.t >= j.dur; // JS L816 (dur 0 -> done on the first step)
+            let x = if done { 1.0 } else { j.t / j.dur };
+            // JS L817: done -> rad 1e9 (everything left flips); ease out
+            // `1-(1-x)^2`, linear `x`.
+            let rad = if done {
+                1e9
+            } else {
+                match j.ease {
+                    FloodEase::Linear => j.reach * x,
+                    FloodEase::Out => j.reach * (1.0 - (1.0 - x) * (1.0 - x)),
+                }
+            };
+            let val = j.val;
+            // JS L819-826: flip every cell the front has reached, in order.
+            while j.i < j.order.len() && j.dist[j.i] <= rad {
+                let c = j.order[j.i] as usize;
+                j.i += 1;
+                let was = self.grid[c];
+                if was == val {
+                    continue;
+                }
+                self.grid[c] = val;
+                if was != 0 {
+                    self.counts[was as usize - 1] -= 1;
+                }
+                if val != 0 {
+                    self.counts[val as usize - 1] += 1;
+                }
+                changed = true;
+            }
+            if done {
+                self.floods.remove(k); // JS L836 `splice(k--, 1)`
+                continue;
+            }
+            k += 1;
+        }
+        if changed {
+            self.version += 1; // JS L841: one bump per step, aggregated
+        }
+    }
 
     /// Team at face-local (u, v): 0 none, 1 = team0, 2 = team1 (JS `sample`).
     #[must_use]
@@ -742,6 +967,15 @@ mod tests {
             .iter()
             .find(|f| f.block == blk && f.n.y > 0.9 && f.turf)
             .expect("block has a turf top face")
+    }
+
+    /// Every grid cell id of face `fid`'s paint grid — what ZoneControl hands
+    /// to [`PaintGrid::flood`] as `region_cells`.
+    fn face_cells(pg: &PaintGrid, fid: usize) -> Vec<u32> {
+        let fg = pg.faces[fid].expect("paintable face");
+        (fg.off..fg.off + (fg.nu as usize) * (fg.nv as usize))
+            .map(|k| k as u32)
+            .collect()
     }
 
     // TR-6.1: stamping a known radius on a flat face claims ≈ πr² (< 3%).
@@ -1125,5 +1359,208 @@ mod tests {
             uncounted > 2.0 && uncounted < 5.5,
             "dead area must be excluded from counts, got {uncounted}"
         );
+    }
+
+    // Flood fill: the front runs out from the centre, flips cells strictly in
+    // distance order (JS L819-826), and finishes the region when `t` reaches
+    // `dur` (JS L816-817: done -> rad 1e9 -> everything left flips).
+    #[test]
+    fn flood_fill_front_completes_region() {
+        let w = CollisionWorld::from_brushes(&[bx([-2.0, -1.0, -2.0], [2.0, 0.0, 2.0])], B);
+        let mut pg = PaintGrid::new(&w);
+        let fid = top_face(&w, 0).id as usize;
+        let cells = face_cells(&pg, fid);
+        assert_eq!(cells.len(), 16 * 16, "4 m face at 0.25 m cells");
+        assert!(pg.flood(&w, &cells, (0.0, 0.0), 0, 2.0, 1.0, FloodEase::Out, 7));
+        {
+            let j = &pg.floods[0];
+            assert_eq!(
+                j.order.len(),
+                cells.len(),
+                "every live turf cell enters the order"
+            );
+            assert!(
+                j.dist.windows(2).all(|d| d[0] <= d[1]),
+                "order is distance-sorted"
+            );
+        }
+        let mut prev_cov = 0.0f32;
+        let mut v0 = pg.version;
+        for _ in 0..3 {
+            pg.step_floods(0.25);
+            let j = &pg.floods[0];
+            // Independently recompute the out-ease front radius and check the
+            // flipped prefix matches it exactly.
+            let x = j.t / j.dur;
+            let rad = j.reach * (1.0 - (1.0 - x) * (1.0 - x));
+            let want = j.dist.iter().filter(|&&d| d <= rad).count();
+            assert!(
+                want > 0 && want < j.order.len(),
+                "front is mid-run at t={}",
+                j.t
+            );
+            assert_eq!(j.i, want, "front cursor sits exactly at the reached cells");
+            assert!(j.order[..want].iter().all(|&k| pg.grid[k as usize] == 1));
+            assert!(j.order[want..].iter().all(|&k| pg.grid[k as usize] == 0));
+            let cov = pg.coverage();
+            assert!(
+                cov[0] >= prev_cov,
+                "coverage must not regress: {} < {prev_cov}",
+                cov[0]
+            );
+            prev_cov = cov[0];
+            assert!(cov[0] > 0.0 && cov[0] < 1.0, "partial flood at t={}", j.t);
+            assert!(pg.version > v0, "each changing step bumps version once");
+            v0 = pg.version;
+        }
+        // Final step: t reaches dur, everything left flips and the flood ends.
+        pg.step_floods(0.25);
+        assert!(pg.floods.is_empty(), "finished flood is removed");
+        assert_eq!(pg.coverage(), [1.0, 0.0], "region fully claimed");
+        assert!(pg.version > v0);
+    }
+
+    // Wipe flood (team outside 0|1 -> val 0, JS L723) with dur 0 clears the
+    // whole region on the next step (JS L816: done immediately, rad 1e9).
+    #[test]
+    fn flood_wipe_clears_region_and_counts() {
+        let w = CollisionWorld::from_brushes(&[bx([-2.0, -1.0, -2.0], [2.0, 0.0, 2.0])], B);
+        let mut pg = PaintGrid::new(&w);
+        let fid = top_face(&w, 0).id as usize;
+        let cells = face_cells(&pg, fid);
+        pg.splat(&w, vec3(-1.0, 0.0, -1.0), 0.8, 0, &opts(0.2));
+        pg.splat(&w, vec3(1.0, 0.0, 1.0), 0.8, 1, &opts(0.8));
+        let cov = pg.coverage();
+        assert!(
+            cov[0] > 0.0 && cov[1] > 0.0,
+            "both teams painted before the wipe"
+        );
+
+        // JS L718: an empty region never runs.
+        assert!(!pg.flood(&w, &[], (0.0, 0.0), 0, 4.0, 1.0, FloodEase::Out, 9));
+        assert!(pg.flood(&w, &cells, (0.0, 0.0), -1, 8.0, 0.0, FloodEase::Linear, 9));
+        assert_eq!(pg.floods[0].val, 0, "non-team wipes to bare floor");
+        pg.step_floods(1.0 / 60.0);
+        assert!(pg.floods.is_empty(), "dur 0 finishes on the first step");
+        assert_eq!(pg.coverage(), [0.0, 0.0]);
+        assert!(cells.iter().all(|&k| pg.grid[k as usize] == 0));
+    }
+
+    // Ease mapping at x = 0.5 (JS L817): the `out` front sits at 0.75·reach,
+    // `linear` at 0.5·reach. Flipped counts are checked against independently
+    // computed cell-centre distances.
+    #[test]
+    fn flood_ease_out_leads_linear_at_half_duration() {
+        let w = CollisionWorld::from_brushes(&[bx([-2.0, -1.0, -2.0], [2.0, 0.0, 2.0])], B);
+        let f = top_face(&w, 0);
+        let fid = f.id as usize;
+        let reach = 3.0f32;
+        let mut out = PaintGrid::new(&w);
+        let mut lin = PaintGrid::new(&w);
+        let fg = out.faces[fid].expect("paintable face");
+        // Independent world x/z distance per cell (same (i, j) raster order).
+        let mut dists: Vec<f32> = Vec::new();
+        for j in 0..fg.nv {
+            for i in 0..fg.nu {
+                let p =
+                    f.origin + f.u * ((i as f32 + 0.5) * fg.cu) + f.v * ((j as f32 + 0.5) * fg.cv);
+                dists.push(p.x.hypot(p.z));
+            }
+        }
+        let run = |pg: &mut PaintGrid, ease| {
+            let cells = face_cells(pg, fid);
+            assert!(pg.flood(&w, &cells, (0.0, 0.0), 1, reach, 1.0, ease, 3));
+            pg.step_floods(0.5);
+            pg.counts[1] as usize
+        };
+        let n_out = run(&mut out, FloodEase::Out);
+        let n_lin = run(&mut lin, FloodEase::Linear);
+        let want_out = dists.iter().filter(|&&d| d <= reach * 0.75).count();
+        let want_lin = dists.iter().filter(|&&d| d <= reach * 0.5).count();
+        assert!(
+            want_out > want_lin,
+            "test setup: the eases must differ here"
+        );
+        assert_eq!(
+            n_out, want_out,
+            "out front at 0.75·reach after half the duration"
+        );
+        assert_eq!(
+            n_lin, want_lin,
+            "linear front at 0.5·reach after half the duration"
+        );
+    }
+
+    // A new flood with the same `region_id` replaces the running one (JS L721);
+    // a different id runs side by side.
+    #[test]
+    fn flood_same_region_replaces_running_flood() {
+        let w = CollisionWorld::from_brushes(&[bx([-2.0, -1.0, -2.0], [2.0, 0.0, 2.0])], B);
+        let mut pg = PaintGrid::new(&w);
+        let fid = top_face(&w, 0).id as usize;
+        let cells = face_cells(&pg, fid);
+        assert!(pg.flood(&w, &cells, (0.0, 0.0), 0, 2.0, 2.0, FloodEase::Out, 7));
+        pg.step_floods(0.4);
+        let cov0 = pg.coverage()[0];
+        assert!(cov0 > 0.0, "first flood made progress");
+
+        assert!(pg.flood(&w, &cells, (0.0, 0.0), 1, 2.0, 2.0, FloodEase::Out, 7));
+        assert_eq!(pg.floods.len(), 1, "same region_id keeps exactly one flood");
+        assert_eq!(pg.floods[0].val, 2);
+        assert_eq!(pg.floods[0].t, 0.0, "replacement restarts the clock");
+
+        pg.step_floods(0.1);
+        assert!(
+            (pg.floods[0].t - 0.1).abs() < 1e-6,
+            "the replaced flood no longer advances"
+        );
+        assert!(pg.coverage()[1] > 0.0, "the new team is spreading");
+        assert!(pg.coverage()[0] <= cov0 + 1e-6, "the old team cannot grow");
+
+        // A different region_id runs alongside.
+        assert!(pg.flood(&w, &cells, (0.0, 0.0), 0, 2.0, 2.0, FloodEase::Out, 8));
+        assert_eq!(pg.floods.len(), 2);
+    }
+
+    // Flood prep only ever queues live turf cells (JS L747): dead (buried)
+    // cells keep whatever the grid held — here the splat's ink — through a wipe.
+    #[test]
+    fn flood_order_skips_dead_cells() {
+        let w = CollisionWorld::from_brushes(
+            &[
+                bx([-5.0, -1.0, -5.0], [5.0, 0.0, 5.0]),
+                bx([-1.0, 0.0, -1.0], [1.0, 0.5, 1.0]),
+            ],
+            B,
+        );
+        let mut pg = PaintGrid::new(&w);
+        let fid = top_face(&w, 0).id as usize;
+        let cells = face_cells(&pg, fid);
+        let dead_in_region: Vec<usize> = cells
+            .iter()
+            .map(|&k| k as usize)
+            .filter(|&k| pg.dead[k])
+            .collect();
+        assert!(
+            !dead_in_region.is_empty(),
+            "stacked box buries ground cells"
+        );
+        pg.splat(&w, vec3(0.0, 0.0, 0.0), 1.5, 0, &opts(0.4));
+        let dead_before: Vec<u8> = dead_in_region.iter().map(|&k| pg.grid[k]).collect();
+        assert!(
+            dead_before.contains(&1),
+            "splat must have inked some dead cells for this test to mean anything"
+        );
+
+        assert!(pg.flood(&w, &cells, (0.0, 0.0), -1, 10.0, 0.0, FloodEase::Linear, 1));
+        assert_eq!(
+            pg.floods[0].order.len(),
+            cells.len() - dead_in_region.len(),
+            "dead cells never enter the flood order"
+        );
+        pg.step_floods(1.0 / 60.0);
+        assert_eq!(pg.coverage(), [0.0, 0.0], "wipe clears every live cell");
+        let dead_after: Vec<u8> = dead_in_region.iter().map(|&k| pg.grid[k]).collect();
+        assert_eq!(dead_before, dead_after, "dead cells are never flooded");
     }
 }

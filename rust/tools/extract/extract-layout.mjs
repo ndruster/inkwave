@@ -11,12 +11,18 @@
 // three, which the extractor must not load); keep it in lockstep on upstream
 // sync. The JS tree is never modified (AC-1/TR-2.4). Output is deterministic
 // (stableStringify): same upstream commit => byte-identical JSON.
+//
+// Task 36 §1: Zone Control zones ride the layout JSON. The merge follows
+// src/world/maps.js L118-119 — a layout's own `zones` wins, otherwise the
+// hand-drawn ZONE_DEFS entry (src/world/zones-data.js) is attached verbatim
+// (poly/polys/y0/y1, coordinates untouched). Stages without zones get no key.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
 import { LAYOUT } from '../../../src/world/stages/tidewater/layout.js';
 import { PLAYER } from '../../../src/config.js';
+import { ZONE_DEFS } from '../../../src/world/zones-data.js';
 import { stableStringify } from './stable-json.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));      // rust/tools/extract
@@ -76,6 +82,9 @@ function normBrush(d) {
 }
 
 const L = LAYOUT;
+// maps.js L118-119 merge: a layout that already carries `zones` wins; otherwise
+// attach the hand-drawn ZONE_DEFS entry for this stage verbatim.
+const zones = L.zones ?? ZONE_DEFS[L.id];
 const mirrored = L.half.map(mirrorDef);
 // defs order matches level.js _build exactly (block ids are positional).
 const primitives = [...L.single, ...L.half, ...mirrored].map(normBrush);
@@ -92,6 +101,9 @@ const doc = {
     waterY: PLAYER.waterY,
   },
   primitives,
+  // Zone Control zones (zones-data.js L14-51 via the maps.js L118-119 merge);
+  // stages without a zone entry simply get no `zones` key.
+  ...(zones ? { zones } : {}),
   meta: {
     // node-side statistics, cross-checked by the Rust parser (TR-3.3).
     primitiveCounts: {

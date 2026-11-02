@@ -232,7 +232,7 @@
 - 修复复验：fmt/clippy/test 三门禁 + 九段矩阵全 exit 0（workspace **488 passed** > 447 基线），日志同上。
 
 ## Task 36: Zone Control 规则 + ['z'] 广播 + session 模式放开
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 35
 - **Description**:
@@ -243,6 +243,22 @@
   - `rule` TR-36.2: FakeTransport 双端 zone 状态序列逐 tick 一致；`['z']` fixture 逐字节。
   - `rule` TR-36.3: guest 收 `mode:'boss'` 仍拒绝退出（回归）。
 - **Notes**: zone 涂地采样 sampleHz=5 与 paint 网格联动是本任务性能关注点。
+
+### Task 36 Completion Evidence（2026-11-02）
+- **TR-36.1 ✅**：`match_/zones/tests.rs` 十组固定种子测试全绿——①`tr36_01` config.js L485-501 十六值逐条（一律读 tuning.zones）；②`tr36_02` center/home/away 三档扣速 + penalty 先扣 + tie point；③`tr36_03` penalty 公式取整/钳 0/tie 封顶/`start==count` +1 边界 + `['zp']` 先于 `['zo']` 次序断言；④`tr36_04` 轮换区间 [rotateMin,rotateMax]/MIN_STINT/finalLock 双路径/加时冻结；⑤`tr36_05` knockout `['ze']` 十字段 r3 逐值；⑥`tr36_06` time_up 三分支 + 加时四出口（comeback/retake/neutralised/cap）+ sudden death；⑦`tr36_07` 占领 flood→share=1、wipe hold 门控；⑧`tr36_08` `['zs']` 十字段 r3/Infinity→-1/0.5s 节拍；⑨`tr36_09` follower 全流重放 `state()` 逐字段与 host 相等；⑩`tr36_10` placeholder 分支（10×10 中心/side 锚点/镜像）。flood 本体 5 测（paint.rs：前缀翻格/ease 半程 0.75 vs 0.5/同 region 替换/dead 排除/wipe 归零）+ geometry 2 测（真实 tidewater.json zones 解析、poly/polys 归一化）。
+- **TR-36.2 ✅**：①net-harness `tr36_zones_match_three_clients`（FakeTransport 三客户端 zones 完整局 8811 帧，7 项检查：决策重放收敛/快照纠偏/结算一致等，全 PASS）；②`['z']` 金标准：`gen.mjs` node 侧真 `ZoneControl` + stub G 捕获 `fixtures.zone_seq` **257 条**（8 标签 zz9/zo9/zs229/zp5/za2/zf1/zt1/ze1），连跑两次逐字节稳定；Rust wire 回环测试 decode→encode 逐字节 + 标签覆盖断言。录制臂位置经评审实读 JS 证实与 `_sendTick` 帧序同构（replication.rs，zone 记录先于同 tick splat）。
+- **TR-36.3 ✅**：guest 收 `mode:'boss'` 仍 fail("Unsupported game mode")（既有回归测试保持绿）；host `set_settings(boss)` 拒；新增 zones 被接受 + zones 局启动测试。
+- **规则平移**：`match_/zones.rs`——zones.js 425 行全路径逐字平移（zoneCells/insidePoly/mirror/placeholder/`_sample` follower 分支次序/`_zone_owner`/`_contest` WARN−0.08 重装/`_set_owner`/`_penalise`/`_tick`/`_fill_specials`/`update`/`_swap`/`_final_lock`/`time_up`/`_overtime`/`_tiebreak`/`_end`/`net_event` 8 case/`state()`）；`['z']` payload 走既有 `ZoneRecord{JVal}` passthrough（wire 层 M1 占位本任务闭合消费端）。
+- **管线与接线**：`extract-layout.mjs` 按 maps.js L118-119 口径合并 `ZONE_DEFS` → `assets/maps/tidewater.json` 顶层 `zones` 键（center=circle(0,0,8.55) 24 点 y0 0.8/y1 1.3、side=rect(10,17.5,-20,-10)）；`geometry.rs` `ZoneLayout/ZoneDef`（serde from 归一化 polys||[poly]）；`paint.rs` `flood/step_floods`（paint.js L717-842 CPU 半）；`match_.rs` mode/duration/zones 步进序（zones.update→knockout→加时停钟→timeUp host 判定）/`end_zones`/`_zone_turf`（aim_probe 替代 aimPoint，D-T36-3）/judge zones 形态/`MatchResult.zones`（serde default 向后兼容）；`session.rs` 模式放开（boss 仍拒）；HUD 结算面板 zones 文案（镜像 hud.js L1096-1140）。
+- **门禁**：workspace **509 passed**（488→495→505→509 单调递增）；九段矩阵 `rust/tools/verify/logs/task36-gates-20261102T205010Z.log`（fmt/clippy/test/wasm32/cargo tree/trunk release/headless 600 帧/JS 树零改动，全 exit 0；trunk 段首轮 cwd 误用后从 rust 根重跑成功，日志尾部追加留痕）。
+
+### Task 36 Review 附录（独立评审：0 blocker / 2 P1 / 5 P2 → P1 落档 + P2-1 当场加固 → 结论可闭环）
+- 评审员实核通过：zones.rs 逐路径语义（follower 分支次序/zp→zo 次序/knockout 仅非 follower/zs 十字段/8 case 重放）全部忠实；flood prep 与 step 对齐 paint.js L717-842；match 接线对齐 match.js L197-212；session 锚（L244/L292/L364）实核；fixture 257 条 8 标签无退化；锚抽查 100+ 处无假锚；tuning 17 字段无手抄；JS 树零改动。
+- **P1-1 ✅**：D-T36-1..4 代码引用但 spec 未落档 → spec.md §7.1 补 D-T36-1..9 全量定案。
+- **P1-2 ✅**：TR-36.2「逐 tick」口径弱化未声明 → 落档 D-T36-5（JS 决策事件天然滞后 ≥1 tick，逐 tick 严格相等 JS 自身亦不成立；实现为 12 帧静默窗口收敛 + count±1/penalty±0.05）。
+- **P2-1 ✅**：`contest()` 加 `debug_assert!(z.owner >= 0)` 固化 JS L178/L183 短路前提。
+- **P2-2/3/4/5（定案记录）**：f32/f64 乘积域 1 ulp 差（r3 量化覆盖，D-T36-6）；flood 默认分支未移植（调用点恒显式，D-T36-7）；结算文案合并适配（D-T36-8）；静默窗口采样缝隙（rotateMin=30s 下不可能触发）。
+- 修复复验：fmt/clippy/test 三门禁 + 九段矩阵全 exit 0（workspace **509 passed** > 488 基线），日志同上。
 
 ## Task 37: 新地图 ×2 提取（saltpan + crossmarket）+ 碰撞冒烟
 - **Status**: `pending`

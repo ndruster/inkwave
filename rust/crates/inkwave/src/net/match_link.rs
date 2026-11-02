@@ -105,6 +105,8 @@ fn start_net_match(
         &sim,
         &demo.tuning.player,
         &demo.tuning.match_config,
+        demo.layout.zones.as_ref(),
+        None,
     );
     let mut rep = Replication::new(&cfg, &my_id, &host_id);
     rep.bind_match(&mut built);
@@ -526,6 +528,8 @@ mod tests {
             &sim,
             &demo.tuning.player,
             &demo.tuning.match_config,
+            demo.layout.zones.as_ref(),
+            None,
         );
         // One actor per roster entry, in roster order (the parallel-array
         // contract of the replication layer, match.js `_setupRoster` L107).
@@ -561,6 +565,8 @@ mod tests {
             &sim,
             &demo.tuning.player,
             &demo.tuning.match_config,
+            demo.layout.zones.as_ref(),
+            None,
         );
         assert_eq!(m0.duration, 1.0);
     }
@@ -787,8 +793,8 @@ mod tests {
             }
         }
         assert!(guest_result, "the guest got the host's result");
-        let hr = hm.result.expect("host result");
-        let gr = gm.result.expect("guest result");
+        let hr = hm.result.as_ref().expect("host result");
+        let gr = gm.result.as_ref().expect("guest result");
         assert_eq!(gr.coverage, hr.coverage);
         assert_eq!(gr.winner, hr.winner);
 
@@ -836,6 +842,8 @@ mod tests {
             sim,
             &demo.tuning.player,
             &demo.tuning.match_config,
+            demo.layout.zones.as_ref(),
+            None,
         );
         let mut rep = Replication::new(cfg, &my, &host);
         rep.bind_match(&mut m);
@@ -900,6 +908,8 @@ mod tests {
             &sim,
             &demo.tuning.player,
             &demo.tuning.match_config,
+            demo.layout.zones.as_ref(),
+            None,
         );
         let mut rep = Replication::new(&cfg, "BBBB", "CCCC");
         rep.bind_match(&mut m);
@@ -939,6 +949,8 @@ mod tests {
             &sim,
             &demo.tuning.player,
             &demo.tuning.match_config,
+            demo.layout.zones.as_ref(),
+            None,
         );
         let rep = Replication::new(&cfg, "AAAA", "AAAA");
         rep.bind_match(&mut m);

@@ -532,6 +532,10 @@ pub struct Actor {
     /// JS `stats.turf`: m² newly inked credited to this actor (Task 8
     /// `addTurf` — the weapon layer's claimed areas route through the match).
     pub turf: f32,
+    /// JS `stats.zoneTurf` (match.js L140): ink credited while the actor
+    /// stood on / aimed into the live Zone Control objective.
+    #[serde(default)]
+    pub zone_turf: f32,
     /// JS `stats.splats`: enemies this actor splatted.
     pub splats: u32,
     /// JS `netTp` (actor.js L169): teleport counter bumped by every
@@ -698,6 +702,7 @@ impl Actor {
             fire_gate: FireGate::default(),
             deaths: 0,
             turf: 0.0,
+            zone_turf: 0.0,
             splats: 0,
             net_tp: 0,
             dodge_vel: None,

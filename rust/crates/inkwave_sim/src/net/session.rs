@@ -34,11 +34,13 @@
 //!
 //! # M2 scope deviations (documented, per tasks.md Notes)
 //!
-//! - **Turf War only.** `mode` is restricted: [`NetSession::set_settings`]
-//!   refuses a non-turf mode (the host never *sends* one), and a guest that
-//!   receives a `start` cfg with `mode != "turf"` fails and leaves. The JS
-//!   zones/boss branches (`ZONES.duration`, `bossFallbackMap`, one-squad
-//!   roster) are unreachable here.
+//! - **No Boss Battle.** `mode` accepts `'turf'` and `'zones'` (Task 36
+//!   batch 3); [`NetSession::set_settings`] still refuses `'boss'` and a
+//!   guest that receives a `start` cfg with `mode == "boss"` fails and
+//!   leaves — JS accepts it (L373 has no mode check) but the boss sim is not
+//!   ported, so the refusal is a declared deviation. The JS boss branches
+//!   (`bossFallbackMap`, one-squad roster) stay unreachable; the zones
+//!   branches (`ZONES.duration` at L292) are ported.
 //! - **`style`/`sub`/`special` pass through uninterpreted** — the Rust port
 //!   only models the Spritzer placeholder, so `style` is an opaque [`JVal`]
 //!   and, unlike JS `randomStyle()`, locally-created players and roster bots
@@ -215,6 +217,15 @@ fn js_slice16(s: &str) -> String {
     s.chars().take(16).collect()
 }
 
+/// `ZONES.duration` (config.js L486) — "Zone Control always runs its own
+/// 5:00 + overtime, as offline" (session.js L291-292). D-T35-2 pattern: a
+/// `OnceLock` over the embedded artifact so `start()` does not re-parse the
+/// tuning JSON.
+fn zones_duration() -> i64 {
+    static D: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    i64::from(*D.get_or_init(|| crate::embedded_tuning().zones.duration))
+}
+
 // ---------------------------------------------------------------------------
 // State & wire types
 // ---------------------------------------------------------------------------
@@ -282,8 +293,8 @@ pub struct LobbyPlayer {
     pub you: bool,
 }
 
-/// `this.lobby` — `_blankLobby` (session.js L56-63) with M2's turf-only
-/// `mode`.
+/// `this.lobby` — `_blankLobby` (session.js L56-63), whose `mode` starts at
+/// `'turf'`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Lobby {
     pub map: String,
@@ -411,7 +422,8 @@ pub struct MeChange {
 }
 
 /// `setSettings(s)`'s argument (session.js L235-251). `mode` is validated to
-/// `turf` only (M2 deviation); `None` fields are left unchanged.
+/// `turf`/`zones` (`boss` refused — deviation, see module docs); `None`
+/// fields are left unchanged.
 #[derive(Debug, Clone, Default)]
 pub struct SettingsPatch {
     pub map: Option<String>,
@@ -1266,8 +1278,9 @@ impl<T: Transport, F: FnMut() -> T> NetSession<T, F> {
         self.broadcast_lobby();
     }
 
-    /// `setSettings(s)` (L235-251). M2 deviation: `mode` only accepts
-    /// `'turf'` (the host refuses to send zones/boss).
+    /// `setSettings(s)` (L235-251). Deviation: `mode` accepts `'turf'` and
+    /// `'zones'` but refuses `'boss'` (L244 also allows it; the boss sim is
+    /// not ported).
     pub fn set_settings(&mut self, s: SettingsPatch) {
         if !self.is_host() {
             return;
@@ -1303,12 +1316,12 @@ impl<T: Transport, F: FnMut() -> T> NetSession<T, F> {
                 l.palette = p as usize;
             }
         }
-        if s.mode.as_deref() == Some("turf") {
-            l.mode = "turf".to_string();
+        if matches!(s.mode.as_deref(), Some("turf") | Some("zones")) {
+            l.mode = s.mode.clone().expect("matched above");
         }
         // Stage rules (L249): a noBots stage forces bots off; the host's
         // own preference comes back on the next stage. (The boss-mode map
-        // fallback of L248 is unreachable in turf-only M2.)
+        // fallback of L248 is unreachable while `boss` is refused above.)
         let pref = self.bots_pref;
         l.bots = if map_no_bots(&l.map) {
             false
@@ -1369,7 +1382,8 @@ impl<T: Transport, F: FnMut() -> T> NetSession<T, F> {
 
     // ------------------------------------------------------------------ match orchestration
 
-    /// `start()` (L267-297) — host only, turf mode only.
+    /// `start()` (L267-297) — host only, turf / zones modes (boss is
+    /// refused upstream in [`Self::set_settings`]).
     pub fn start(&mut self) -> bool {
         if !self.is_host()
             || self.state != SessionState::Lobby
@@ -1380,7 +1394,7 @@ impl<T: Transport, F: FnMut() -> T> NetSession<T, F> {
         }
         // Snapshot the lobby so the RNG-driven build below can take
         // `&mut self` freely (JS reads `this.lobby` field-by-field).
-        let (players, bots, map, time, duration, difficulty, palette) = {
+        let (players, bots, map, time, duration, difficulty, palette, mode) = {
             let l = &self.lobby;
             (
                 l.players.clone(),
@@ -1390,6 +1404,7 @@ impl<T: Transport, F: FnMut() -> T> NetSession<T, F> {
                 l.duration,
                 l.difficulty.clone(),
                 l.palette,
+                l.mode.clone(),
             )
         };
         let host = self.my_id.clone().expect("is_host");
@@ -1482,16 +1497,23 @@ impl<T: Transport, F: FnMut() -> T> NetSession<T, F> {
             }
         }
         let id = self.base36_id();
-        // Turf-only: the zones/boss duration + mode branches of L292 are
-        // unreachable.
+        // L292: `duration: !boss && l.mode === 'zones' ? ZONES.duration :
+        // l.duration` (boss is refused upstream, so `!boss` always holds);
+        // `mode: boss ? 'boss' : l.mode === 'zones' ? 'zones' : 'turf'`
+        // collapses to the lobby mode, which is only ever turf/zones here.
+        let zones = mode == "zones";
         let cfg = StartCfg {
             roster,
             map,
             time,
-            duration,
+            duration: if zones { zones_duration() } else { duration },
             difficulty,
             palette,
-            mode: "turf".to_string(),
+            mode: if zones {
+                "zones".to_string()
+            } else {
+                "turf".to_string()
+            },
             host,
             id,
         };
@@ -1703,8 +1725,7 @@ impl<T: Transport, F: FnMut() -> T> NetSession<T, F> {
                     return;
                 };
                 // L362-364: field-by-field apply; palette only when an
-                // integer; M2 coerces a non-turf mode to turf (deviation:
-                // JS keeps zones/boss).
+                // integer.
                 self.lobby.map = l.map;
                 self.lobby.time = l.time;
                 self.lobby.duration = l.duration;
@@ -1721,7 +1742,14 @@ impl<T: Transport, F: FnMut() -> T> NetSession<T, F> {
                     // verbatim) — only a hostile host can send one.
                     self.lobby.palette = p as usize;
                 }
-                self.lobby.mode = "turf".to_string();
+                // L364 verbatim: `l.mode === 'boss' || l.mode === 'zones' ?
+                // l.mode : 'turf'` — the lobby keeps whatever mode the host
+                // names (a boss lobby still reaches `start`, where the Rust
+                // guest refuses — deviation, module docs).
+                self.lobby.mode = match l.mode.as_str() {
+                    "boss" | "zones" => l.mode.clone(),
+                    _ => "turf".to_string(),
+                };
                 let prev: HashSet<String> =
                     self.lobby.players.iter().map(|p| p.id.clone()).collect();
                 let host_id = self.host_id.clone();
@@ -1762,8 +1790,9 @@ impl<T: Transport, F: FnMut() -> T> NetSession<T, F> {
                 let Some(cfg) = decode_start(&v) else {
                     return;
                 };
-                // M2: a non-turf cfg is refused — error + leave.
-                if cfg.mode != "turf" {
+                // Deviation: JS `_begin`s any cfg (L373 has no mode check);
+                // the Rust port still refuses `boss` — error + leave.
+                if cfg.mode == "boss" {
                     self.fail("Unsupported game mode");
                     self.leave(false);
                     return;
@@ -2368,8 +2397,18 @@ mod tests {
         assert_eq!(h.lobby().map, "tidewater", "unknown map ignored (L237)");
         assert_eq!(h.lobby().time, "day");
         assert_eq!(h.lobby().difficulty, "normal");
-        assert_eq!(h.lobby().mode, "turf", "M2: non-turf mode refused");
+        assert_eq!(h.lobby().mode, "zones", "Task 36: zones accepted (L244)");
         assert_eq!(h.lobby().palette, 0, "non-integer palette ignored (L243)");
+        h.set_settings(SettingsPatch {
+            mode: Some("boss".into()),
+            ..Default::default()
+        });
+        assert_eq!(h.lobby().mode, "zones", "deviation: boss still refused");
+        h.set_settings(SettingsPatch {
+            mode: Some("turf".into()),
+            ..Default::default()
+        });
+        assert_eq!(h.lobby().mode, "turf", "turf accepted (L244)");
         h.set_settings(SettingsPatch {
             palette: Some(7.0),
             ..Default::default()
@@ -2769,10 +2808,11 @@ mod tests {
     }
 
     #[test]
-    fn guest_refuses_a_non_turf_start() {
+    fn guest_refuses_a_boss_start() {
         // A legacy/malicious host broadcasts the fixture `start` with
-        // mode=zones. M2: the guest fails with the player-facing text and
-        // leaves (module docs, turf-only deviation).
+        // mode=boss. Deviation: JS `_begin`s any mode (L373); the Rust guest
+        // fails with the player-facing text and leaves (module docs — the
+        // boss sim is not ported).
         let relay = FakeRelay::new();
         let mut boss = relay.transport(None, 7);
         boss.connect("BCDE2", "boss", true);
@@ -2787,8 +2827,8 @@ mod tests {
         }
         assert_eq!(g.state(), SessionState::Lobby);
         drain(&mut g);
-        let zones = fixture_msg("start").replace("\"mode\":\"turf\"", "\"mode\":\"zones\"");
-        boss.broadcast(&zones);
+        let boss_msg = fixture_msg("start").replace("\"mode\":\"turf\"", "\"mode\":\"boss\"");
+        boss.broadcast(&boss_msg);
         for _ in 0..50 {
             step(&mut g, 1.0);
             if g.state() != SessionState::Lobby {
@@ -2798,6 +2838,56 @@ mod tests {
         assert_eq!(g.error(), Some("Unsupported game mode"));
         assert_eq!(g.state(), SessionState::Offline, "error then leave");
         assert!(g.transport_mut().is_none());
+    }
+
+    #[test]
+    fn zones_mode_flows_to_the_start_cfg() {
+        // Task 36 batch 3: the host picks `zones` — the guest lobby keeps it
+        // (L364), and `start()` stamps the mode plus the own ZONES clock
+        // into the cfg (L292, config.js L486: 300 s).
+        let relay = FakeRelay::new();
+        let (mut h, mut g, _code) = host_and_guest(&relay);
+        h.set_settings(SettingsPatch {
+            mode: Some("zones".into()),
+            ..Default::default()
+        });
+        for _ in 0..50 {
+            step2(&mut h, &mut g, 1.0);
+            if g.lobby().mode == "zones" {
+                break;
+            }
+        }
+        assert_eq!(g.lobby().mode, "zones", "guest lobby keeps zones (L364)");
+        g.set_me(MeChange {
+            ready: Some(true),
+            ..Default::default()
+        });
+        for _ in 0..50 {
+            step2(&mut h, &mut g, 1.0);
+            if h.can_start() {
+                break;
+            }
+        }
+        assert!(h.can_start());
+        assert!(h.start());
+        let cfg = h.start_cfg().expect("host cfg").clone();
+        assert_eq!(cfg.mode, "zones");
+        assert_eq!(
+            cfg.duration, 300,
+            "ZONES.duration overrides the lobby clock"
+        );
+        for _ in 0..50 {
+            step2(&mut h, &mut g, 1.0);
+            if g.state() == SessionState::Starting {
+                break;
+            }
+        }
+        assert_eq!(g.state(), SessionState::Starting, "guest begins zones");
+        assert_eq!(
+            g.start_cfg().expect("guest cfg").mode,
+            "zones",
+            "the wire cfg keeps the mode"
+        );
     }
 
     #[test]

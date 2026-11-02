@@ -774,8 +774,9 @@ pub enum HostMsg {
     Clock { phase: String, t: f32 },
     /// `{k:'res', cov, win, st:[…]}` — the final result (sendResult,
     /// netmatch.js L650-655). The host's final count is the result on every
-    /// screen (NET.md "Ink and hits"). Turf War subset; zones/boss extra
-    /// fields (`zc/zp/zr/zo/zl`, `bo`) are M2+ placeholders.
+    /// screen (NET.md "Ink and hits"). Zone Control adds the `mode:'zones'`
+    /// plus `zc/zp/zr/zo/zl` extras (JS L652-653, Task 36 batch 3); the boss
+    /// (`bo`) stays an M2+ placeholder.
     Result {
         /// `result.coverage` fractions `[team0, team1]`.
         coverage: [f32; 2],
@@ -784,6 +785,12 @@ pub enum HostMsg {
         /// Per-actor stat rows `[nid, turf, splats, deaths, …]` (JS L654;
         /// `bossDmg/weakHits` are M2+ and dropped in M1).
         stats: Vec<ActorStatsRow>,
+        /// Zone Control settlement (`mode:'zones'` + `zc/zp/zr/zo/zl`, JS
+        /// L652-653); `None` = turf — JS drops the `undefined` `mode`/`bo`
+        /// keys from `JSON.stringify`, so the turf wire is byte-identical
+        /// to the pre-Task-36 shape.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        zones: Option<ZonesResult>,
     },
     /// `{k:'end'}` — results shown, everyone returns to the lobby (sendEnd,
     /// netmatch.js L666).
@@ -809,6 +816,28 @@ pub struct ActorStatsRow {
     pub turf: i32,
     pub splats: u32,
     pub deaths: u32,
+}
+
+/// The Zone Control extras on the host result wire (`sendResult` L652-653:
+/// `zc` counts, `zp` penalty, `zr` reason, `zo` overtime `1/0`, `zl` log).
+/// Guests build their [`crate::match_::MatchResult::zones`] verbatim from
+/// these — JS `_result` L662 does exactly that (`counts: d.zc, penalty:
+/// d.zp, reason: d.zr, overtime: !!d.zo, log: d.zl || []`), so the host's
+/// count is the settlement on every screen (no guest-local replay drift).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ZonesResult {
+    /// `result.counts` — `[Math.ceil(count0), Math.ceil(count1)]`
+    /// (match.js L257).
+    pub counts: [i64; 2],
+    /// `result.penalty` — the raw per-team penalty (JS `[...Z.penalty]`).
+    pub penalty: [f32; 2],
+    /// `result.reason` (JS `Z.reason`; `None` = the key is absent on the
+    /// wire, like `undefined` in `JSON.stringify`).
+    pub reason: Option<String>,
+    /// `result.overtime` (wire `zo: 1/0`, JS `Z.overtime`).
+    pub overtime: bool,
+    /// `result.log` — the penalty log entries (wire `zl`, JS `Z.log`).
+    pub log: Vec<crate::match_::ZonePenaltyLog>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1111,6 +1140,7 @@ mod tests {
                     splats: 2,
                     deaths: 1,
                 }],
+                zones: None,
             },
             HostMsg::End,
             HostMsg::Ownership {

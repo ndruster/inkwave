@@ -23,6 +23,9 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { SPECIAL_ORDER } from '../../../src/config.js';
+import { G, rng } from '../../../src/core/ctx.js';
+import { ZoneControl } from '../../../src/game/zones.js';
+import { ZONE_DEFS } from '../../../src/world/zones-data.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..', '..', '..');
@@ -313,7 +316,127 @@ for (const [name, a] of Object.entries(actorCases)) {
   };
 }
 
+// --- Zone Control net-event sequence (Task 36 batch 3) ---------------------
+// Drive the real `ZoneControl` (src/game/zones.js) as a HOST on a synthetic
+// paint world and capture every record its `_net` → `recZone` path emits
+// (netmatch.js L148 `['z', e]` — the `_rec` timestamp is the tick envelope's
+// job, not the record's), so the Rust wire codec and the follower replay arm
+// (replication.rs `TickEvent::Zone`) are pinned to the real generator's byte
+// output. Determinism: a fixed mulberry32 replaces `Math.random` for the
+// whole section (rotation timing / side choice — the only randomness zones.js
+// uses) and coverage is scripted by cell index, so two consecutive runs
+// produce byte-identical fixtures.
+{
+  Math.random = rng(0x1c0ffee);
+
+  // Two horizontal 50×50 faces of 1 m cells (origin (-25, y, -25), u=+x,
+  // v=+z): A at y=1.0 inside the Tidewater centre band (y0 0.8 … y1 1.3),
+  // B at y=0.0 inside the side band (−0.5 … 0.3). Grid values: 0 bare,
+  // 1 = team 0 ink, 2 = team 1 ink (zones.js `_sample`).
+  const N = 50;
+  const face = (grid0, y) => ({
+    turf: true, atlas: true, nu: N, nv: N, cu: 1, cv: 1,
+    origin: { x: -25, y, z: -25 }, u: { x: 1, y: 0, z: 0 }, v: { x: 0, y: 0, z: 1 },
+    grid: grid0,
+  });
+  const grid = new Uint8Array(N * N * 2);
+  G.level = { layout: { zones: ZONE_DEFS.tidewater }, faces: [face(0, 1.0), face(N * N, 0.0)] };
+  G.paint = {
+    grid,
+    dead: null,
+    // synchronous flood stub: every region cell takes the team's ink (the
+    // animated front is presentation; `_sample` only reads the grid).
+    flood(region, team) {
+      const v = team === 0 ? 1 : team === 1 ? 2 : 0;
+      for (const k of region.cells) grid[k] = v;
+    },
+  };
+  G.time = 0;
+  const seq = [];
+  G.netm = { recZone: (e) => seq.push(recZone(e)) };
+
+  let ended = null;
+  const match = {
+    duration: 300, time: 300, follower: false, actors: [],
+    endZones: (w, r) => { ended = { winner: w, reason: r }; },
+  };
+  const zc = new ZoneControl(match);
+  const DT = 1 / 60;
+  const step = (s) => {
+    const n = Math.round(s / DT);
+    for (let i = 0; i < n && zc.winner == null; i++) {
+      match.time = Math.max(0, match.time - DT);
+      zc.update(DT);
+    }
+  };
+  const paint = (z, team, frac) => {
+    const c = zc.zones[z].cells, n = c.length, k = Math.round(frac * n);
+    for (let i = 0; i < n; i++) grid[c[i]] = i < k ? team + 1 : 0;
+  };
+  const tag = (t) => seq.some((r) => r[1][0] === t);
+
+  // A: Alpha takes the centre (zz + zo) and the 2 Hz count snapshots (zs)
+  // start flowing.
+  paint(0, 0, 0.85);
+  step(0.5);
+  if (!tag('zz') || !tag('zo') || !tag('zs')) throw new Error('zone_seq A: capture/snapshot records missing');
+  // B: Bravo neutralises the held zone (contest line), then takes it off
+  // Alpha — the switch records the penalty (zp before zo, zones.js L221).
+  paint(0, 1, 0.45);
+  step(0.5);
+  paint(0, 1, 0.85);
+  step(0.5);
+  if (!tag('zp')) throw new Error('zone_seq B: penalty record missing');
+  // C: the first rotation (za) moves the objective to a side zone; Alpha
+  // takes it after the wipe gate (penalty on Bravo).
+  for (let i = 0; i < 61 * 60 && !tag('za') && zc.winner == null; i++) {
+    match.time = Math.max(0, match.time - DT);
+    zc.update(DT);
+  }
+  if (!tag('za')) throw new Error('zone_seq C: rotation record missing');
+  const sideId = zc.active.zones[0].id;
+  step(1.5); // past the wipe hold
+  paint(sideId, 0, 0.85);
+  step(1.0);
+  // D: the next rotation comes back to the centre (za with a 0 final flag);
+  // Bravo takes it off Alpha.
+  for (let i = 0; i < 61 * 60 && zc.active !== zc.objectives[0] && zc.winner == null; i++) {
+    match.time = Math.max(0, match.time - DT);
+    zc.update(DT);
+  }
+  if (zc.active !== zc.objectives[0]) throw new Error('zone_seq D: never rotated back to the centre');
+  step(1.5);
+  paint(0, 1, 0.85);
+  step(1.0);
+  // E: the last-30-s lock — the centre is already live, so `zf` (no swap).
+  match.time = 30.4;
+  step(0.5);
+  if (!tag('zf')) throw new Error('zone_seq E: final-lock record missing');
+  // F: engineer the horn: Alpha (behind on count) holds the centre →
+  // `timeUp` starts overtime (`zt`, losing = 0) instead of ending on time.
+  zc.count[0] = 10; zc.count[1] = 5; zc.penalty[0] = 0; zc.penalty[1] = 0;
+  paint(0, 0, 0.85);
+  step(0.5);
+  match.time = 0.01;
+  step(0.05);
+  const done = zc.timeUp();
+  if (done !== false || !tag('zt')) throw new Error('zone_seq F: overtime did not begin');
+  step(0.5);
+  // G: Bravo retakes the centre — overtime ends on `retake` (`ze`).
+  paint(0, 1, 0.85);
+  step(1.0);
+  if (!tag('ze') || zc.winner == null) throw new Error('zone_seq G: end record missing');
+  if (ended == null || ended.winner !== 1 || ended.reason !== 'retake') {
+    throw new Error(`zone_seq G: bad endZones callback state ${JSON.stringify(ended)}`);
+  }
+  for (const t of ['zz', 'zo', 'zp', 'za', 'zf', 'zt', 'zs', 'ze']) {
+    if (!tag(t)) throw new Error(`zone_seq: tag ${t} never emitted`);
+  }
+  fixtures.zone_seq = seq.map((r) => JSON.stringify(r));
+}
+
 const out = join(repoRoot, 'rust', 'assets', 'net-fixtures.json');
 writeFileSync(out, JSON.stringify({ generated_from: 'src/net/netmatch.js (sliced packers)', fixtures }, null, 2) + '\n');
 console.log('wrote', out);
 console.log('actor cases:', Object.keys(fixtures.actors).join(', '));
+console.log('zone_seq records:', fixtures.zone_seq.length);

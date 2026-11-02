@@ -87,6 +87,7 @@ fn flat_fix() -> Fix {
         },
         stage,
         primitives: vec![bx([-10.0, -1.0, -10.0], [10.0, 0.0, 10.0])],
+        zones: None,
         meta,
     };
     Fix {

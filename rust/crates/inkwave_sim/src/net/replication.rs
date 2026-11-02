@@ -125,7 +125,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::actor::{Actor, ActorInput, FIXED_DT, SimWorld};
 use crate::bot::{Bot, BotCtx};
-use crate::match_::{Match, MatchEvent, MatchResult, Phase, find_actor};
+use crate::match_::{Match, MatchEvent, MatchResult, Phase, ZoneOutcome, find_actor};
 use crate::nav::NavGraph;
 use crate::net::playback::Playback;
 use crate::net::session::{StartCfg, map_no_bots};
@@ -137,7 +137,7 @@ use crate::net::wire::{
 use crate::net::{
     ActorSample, ActorStatsRow, BombRecord, DirectMsg, EventRecord, ForwardEvent, HostMsg,
     KitRecord, KitVal, ProjectileRecord, SessionId, SplatRecord, Tick, TickEvent, TimedEvent,
-    TrigData, TriggerRecord,
+    TrigData, TriggerRecord, ZoneRecord, ZonesResult,
 };
 use crate::paint::{SplatKind, SplatOpts};
 use crate::tuning::{Difficulty, PlayerTuning, Spritzer, SubSet, WeaponSet};
@@ -284,6 +284,13 @@ impl Replication {
     /// (JS `this.follower = !o.host`, match.js L106).
     pub fn bind_match(&self, m: &mut Match) {
         m.follower = !self.is_host();
+        // Zone Control mirrors the flag every `Match::step` (match_.rs
+        // L761), but `play_events` runs *before* the first step, so seed it
+        // here: a guest's first-frame zone records must pass `net_event`'s
+        // follower gate (zones.rs L1223, JS zones.js L373).
+        if let Some(z) = m.zones.as_mut() {
+            z.follower = m.follower;
+        }
     }
 
     /// JS `bind` L79: on a humans-only stage, an actor whose owner left
@@ -464,6 +471,21 @@ impl Replication {
                 self.tick_t = TICK_DT;
             }
             self.send_tick(m, tr);
+        }
+
+        // ---- Zone Control: the host's rules decisions + count snapshots
+        // (JS `recZone`, netmatch.js L148, fed by `zones.js _net` L144).
+        // JS records them inside `Match.update` — `zones.update` (match.js
+        // L197-198) runs *before* the paint flush that produces the splat
+        // records — so the drain lands before `record_ink` below: both ride
+        // the next tick, zone records first. Followers never own the rules
+        // (JS `recZone`'s `isHost` guard; `ZoneControl::_net` L623).
+        if self.is_host()
+            && let Some(z) = m.zones.as_mut()
+        {
+            for e in z.drain_net() {
+                self.rec(TickEvent::Zone(ZoneRecord { payload: e }));
+            }
         }
 
         // ---- record the local splats painted since the last frame (JS
@@ -1347,10 +1369,25 @@ impl Replication {
                             m.actors[i].special_active.is_some(),
                         );
                     }
-                    // M1/M2 placeholder (`z`): no zone gameplay in scope —
-                    // JS L494 would hand it to the zones layer, which the
-                    // sim lacks.
-                    _ => {}
+                    // JS `_play` 'z' (L495): `G.match.zones?.netEvent(e[1])`
+                    // — the host's rules records replay on the follower's
+                    // own ZoneControl (Task 36 batch 3). A `['ze']` that
+                    // decides the match mirrors JS `_end` → `match.endZones`
+                    // (zones.js L367-368); the guest flood paints into the
+                    // local grid exactly like the host's did.
+                    TickEvent::Zone(z) => {
+                        let Some(zc) = m.zones.as_mut() else { continue };
+                        if let Some((winner, reason)) = zc.net_event(
+                            &z.payload,
+                            &mut m.paint,
+                            sim.collision,
+                            m.time,
+                            m.duration,
+                            &mut m.rng,
+                        ) {
+                            m.end_zones(winner, &reason);
+                        }
+                    }
                 }
             }
         }
@@ -1569,9 +1606,10 @@ impl Replication {
                         coverage,
                         winner,
                         stats,
+                        zones,
                     }) = decode_host(&v)
                 {
-                    self.host_result(m, coverage, winner, &stats);
+                    self.host_result(m, coverage, winner, &stats, zones.as_ref());
                 }
             }
             "end" => {
@@ -1646,8 +1684,18 @@ impl Replication {
     /// JS `_result` (L656-665): guests only; per-nid stat overwrite; the
     /// turf clock is pinned to 0; the host's count becomes the local result;
     /// straight into `judge` (bypassing the `st` guard — this *is* the judge
-    /// transition).
-    fn host_result(&self, m: &mut Match, coverage: [f32; 2], winner: u8, stats: &[ActorStatsRow]) {
+    /// transition). With `zones` the settlement is built verbatim from the
+    /// wire extras (JS L662: `counts: d.zc, penalty: d.zp, reason: d.zr,
+    /// overtime: !!d.zo, log: d.zl || []`) — the host's count, never the
+    /// guest's replayed rules state.
+    fn host_result(
+        &self,
+        m: &mut Match,
+        coverage: [f32; 2],
+        winner: u8,
+        stats: &[ActorStatsRow],
+        zones: Option<&ZonesResult>,
+    ) {
         if self.is_host() {
             return;
         }
@@ -1673,8 +1721,20 @@ impl Replication {
         m.result = Some(MatchResult {
             coverage,
             winner: winner as usize,
-            points,
+            points: if zones.is_some() {
+                [0.0, 0.0] // JS zones result has no points line (match.js L256-257)
+            } else {
+                points
+            },
             elapsed: m.duration,
+            zones: zones.map(|z| ZoneOutcome {
+                winner: winner as usize,
+                reason: z.reason.clone(),
+                counts: z.counts,
+                penalty: z.penalty,
+                overtime: z.overtime,
+                log: z.log.clone(),
+            }),
         });
         m.set_phase(Phase::End);
     }
@@ -1697,12 +1757,13 @@ impl Replication {
 
     /// JS `sendResult` (L650-655): the host's final count, broadcast. The JS
     /// call site is `_judge` (match.js L271) — the app calls this when the
-    /// host's match settles; the stat rows ride in roster order.
+    /// host's match settles; the stat rows ride in roster order. A zones
+    /// result carries the `zc/zp/zr/zo/zl` extras (JS L652-653).
     pub fn send_result(&self, m: &Match, tr: &mut impl Transport) {
         if !self.is_host() {
             return;
         }
-        let Some(r) = m.result else { return };
+        let Some(r) = &m.result else { return };
         let stats = m
             .actors
             .iter()
@@ -1718,6 +1779,13 @@ impl Replication {
             coverage: r.coverage,
             winner: r.winner as u8,
             stats,
+            zones: r.zones.as_ref().map(|z| ZonesResult {
+                counts: z.counts,
+                penalty: z.penalty,
+                reason: z.reason.clone(),
+                overtime: z.overtime,
+                log: z.log.clone(),
+            }),
         };
         tr.broadcast(&encode_host(&msg));
     }
@@ -2443,7 +2511,7 @@ mod tests {
             }
         }
         assert_eq!(mg.phase, Phase::End, "the migrated host finishes");
-        let r = mg.result.expect("settled with a result");
+        let r = mg.result.as_ref().expect("settled with a result");
         assert!(
             (r.elapsed - dur).abs() < 0.1,
             "clock ran to zero: {}",
@@ -2471,7 +2539,7 @@ mod tests {
         r3.on_message(&res.0, &res.1, &mut m3, t);
         assert_eq!(m3.phase, Phase::End, "res carries the guest to judge");
         assert_eq!(
-            m3.result.expect("result").winner,
+            m3.result.as_ref().expect("result").winner,
             r.winner,
             "the host's count"
         );

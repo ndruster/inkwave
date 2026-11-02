@@ -1,0 +1,70 @@
+=== fmt ===
+FMT_EXIT=0
+=== clippy ===
+sed: /root/.trae-cn-server/bin/stable-18cb5d04f38268251cd6fe91555dd2b55cd5f959-debian10/modules/ai-agent/libselinux.so.1: no version information available (required by sed)
+    Checking inkwave_sim v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave_sim)
+    Checking relay-shim v0.1.0-m1 (/root/work/project/inkwave/rust/tools/relay-shim)
+    Checking inkwave v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave)
+    Checking net-harness v0.1.0-m1 (/root/work/project/inkwave/rust/tools/net-harness)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.36s
+CLIPPY_EXIT=0
+=== test ===
+sed: /root/.trae-cn-server/bin/stable-18cb5d04f38268251cd6fe91555dd2b55cd5f959-debian10/modules/ai-agent/libselinux.so.1: no version information available (required by sed)
+test result: ok. 63 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.25s
+test result: ok. 423 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 31.14s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.01s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 29.92s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+TEST_EXIT=0
+=== wasm32 check ===
+[1m[92m    Checking[0m inkwave v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave)
+[1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 16.91s
+WASM_EXIT=0
+=== cargo tree -p inkwave_sim ===
+inkwave_sim v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave_sim)
+[2m├──[0m glam v0.30.10
+[2m│[0m   [2m└──[0m serde_core v1.0.229
+[2m├──[0m serde v1.0.229
+[2m│[0m   [2m├──[0m serde_core v1.0.229
+[2m│[0m   [2m└──[0m serde_derive v1.0.229 (proc-macro)
+[2m│[0m   [2m [0m   [2m├──[0m proc-macro2 v1.0.107
+[2m│[0m   [2m [0m   [2m│[0m   [2m└──[0m unicode-ident v1.0.26
+[2m│[0m   [2m [0m   [2m├──[0m quote v1.0.47
+[2m│[0m   [2m [0m   [2m│[0m   [2m└──[0m proc-macro2 v1.0.107 [33m[2m(*)[39m[22m
+[2m│[0m   [2m [0m   [2m└──[0m syn v3.0.6
+[2m│[0m   [2m [0m   [2m [0m   [2m├──[0m proc-macro2 v1.0.107 [33m[2m(*)[39m[22m
+[2m│[0m   [2m [0m   [2m [0m   [2m├──[0m quote v1.0.47 [33m[2m(*)[39m[22m
+[2m│[0m   [2m [0m   [2m [0m   [2m└──[0m unicode-ident v1.0.26
+[2m└──[0m serde_json v1.0.151
+[2m [0m   [2m├──[0m itoa v1.0.18
+[2m [0m   [2m├──[0m memchr v2.8.3
+[2m [0m   [2m├──[0m serde_core v1.0.229
+[2m [0m   [2m└──[0m zmij v1.0.23
+TREE_EXIT=0
+=== trunk build ===
+2026-11-02T20:52:27.170189Z  INFO 🚀 Starting trunk 0.21.14
+2026-11-02T20:52:27.175990Z  INFO ⏫ Found an update of trunk: 0.21.14 -> 0.22.1
+2026-11-02T20:52:28.041763Z ERROR error getting the canonical path to the build target HTML file "/root/work/project/inkwave/rust/crates/inkwave/index.html"
+2026-11-02T20:52:28.041789Z  INFO   1: No such file or directory (os error 2)
+TRUNK_EXIT=0
+=== headless ===
+[inkwave] boot: sim crate 0.1.0-m1 (headless = true)
+[inkwave] headless frames complete
+HEADLESS_EXIT=0
+=== JS tree git status ===
+JS_TREE_CLEAN
+GATES_DONE
+=== trunk build (rerun from rust root) ===
+   Compiling inkwave v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave)
+    Finished `release` profile [optimized] target(s) in 46.42s
+2026-11-02T20:57:48.794648Z  INFO applying new distribution
+2026-11-02T20:57:48.798610Z  INFO ✅ success
+TRUNK_EXIT=0
