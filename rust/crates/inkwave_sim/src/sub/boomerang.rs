@@ -200,6 +200,7 @@ fn credit(ctx: &mut Ctx, i: usize, area: f32) {
             owner_slot: slot,
             team,
             area,
+            no_special: false,
         });
     }
 }

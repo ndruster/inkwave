@@ -279,6 +279,7 @@ pub(crate) fn use_torpedo(ctx: &mut Ctx, actor_idx: usize) {
             owner_slot: slot,
             team,
             area,
+            no_special: false,
         });
     }
 }
@@ -903,13 +904,20 @@ fn explode_bomb_fan(ctx: &mut Ctx, b: &Bomb) {
         boomerang,
         ..
     } = ctx;
-    let mut fan = |c: Vec3, radius: f32, dmg: f32, team: usize, muted: bool| {
+    let mut fan = |_su: Option<&mut crate::sub::SubSystem>,
+                   c: Vec3,
+                   radius: f32,
+                   dmg: f32,
+                   team: usize,
+                   muted: bool| {
         super::damage_area_fan_plain(
             items, events, waddle, torpedo, tracer, boomerang, c, radius, dmg, team, muted,
         );
     };
+    // The sub-kit fan has no `SubSystem` / bubble registry handle (the
+    // torpedo blast does not reach bubbles — recorded deviation).
     ctx.projectiles.explode_bomb(
-        b, ctx.world, ctx.actors, ctx.paint, ctx.t, ctx.sb, &mut fan, ctx.remote,
+        b, ctx.world, ctx.actors, ctx.paint, ctx.t, ctx.sb, None, None, &mut fan, ctx.remote,
     );
 }
 
@@ -1025,6 +1033,7 @@ fn burst(ctx: &mut Ctx, i: usize, full: bool, muted: bool) {
         owner_slot: os,
         team: ot,
         area,
+        no_special: false,
     });
     // ---- damage (JS L503-512): the foe it touched is a point-blank hit;
     // LOS from the touched surface (or straight up) otherwise.
@@ -1284,6 +1293,7 @@ fn drop_step(ctx: &mut Ctx, j: usize, dt: f32, muted: bool) -> bool {
                     owner_slot: os,
                     team: ot,
                     area,
+                    no_special: false,
                 });
             }
             dead = true;

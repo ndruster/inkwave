@@ -51,9 +51,9 @@
 //!     `jumpToBeacon` / `_landedOnBeacon`, L520-534) is not ported — the sim
 //!     has no super jump; `uses` / `hp` / the per-player cap / shootability
 //!     are.
-//!   - D-T34-3: `it.sp` (thrown during a special — Bomb Barrage, L84) is
-//!     always false in the sim (`specialActive` is Task 35), so `_credit`
-//!     always routes to the plain turf credit.
+//!   - D-T34-3 (retired in Task 35 batch 2): `it.sp` is now the real
+//!     `!!owner.specialActive` stamp (subs.js L86/L113); `_credit` routes
+//!     special-deployed ink through `addTurfNoSpecial` (L594).
 //!   - D-T34-5: `gid` is `owner_slot * 100_000 + off` with `off` from the
 //!     subsystem's own counter (JS `netId` uses the owner's `nid`,
 //!     registry.js L64-65); the replication layer rewrites the `off` into a
@@ -310,6 +310,12 @@ pub struct SubItem {
     /// JS `it.spin` — the sprinkler's rotor angle (drives the drop fan,
     /// L451/L460).
     pub spin: f32,
+    /// JS `it.sp` (subs.js L86/L113 `sp: !!a.specialActive`, stamped at
+    /// throw / plant): a device deployed during a special never charges the
+    /// owner's meter (`_credit` L594 → `addTurfNoSpecial`). Task 35 batch 2
+    /// retires D-T34-3 (it was always false while specials were unported).
+    #[serde(default)]
+    pub sp: bool,
 }
 
 /// The sub-weapon world (JS `G.subs`, `SubSystem`).
@@ -467,7 +473,10 @@ impl SubSystem {
         remote: Option<&[bool]>,
         time: f32,
     ) {
-        let kind = actors[actor_idx].sub;
+        // JS `use(a, sub)` receives the *effective* sub (weapons.js L133):
+        // under a live Bomb Barrage the thrown kind is the barrage's bomb
+        // variant, not the loadout (`effective_sub` mirrors the runner).
+        let kind = crate::special::barrage::effective_sub(&actors[actor_idx]);
         if kind == SubKind::Bomb {
             return; // the bomb path never lands here
         }
@@ -1215,6 +1224,18 @@ pub fn ink_cost(kind: SubKind, sb: &SubSet) -> f32 {
     }
 }
 
+/// JS `track(e, team, time)` core (subs.js L537-542) on one actor status.
+/// Free function since Task 35 batch 2: the sonar reveal ladder writes the
+/// track straight onto the roster (specials.js L1269) without a [`Ctx`].
+pub(crate) fn apply_track(st: &mut crate::actor::ActorStatus, team: usize, time: f32) {
+    st.track = if st.track_team == Some(team) {
+        st.track.max(time)
+    } else {
+        time.max(0.0)
+    };
+    st.track_team = Some(team);
+}
+
 /// The per-frame working context: every field is an independent borrow so
 /// the state machine can mutate items, actors, paint and projectiles from
 /// one function without fighting the borrow checker (the JS globals
@@ -1302,6 +1323,8 @@ impl<'a> Ctx<'a> {
             direct: None,
             pulse_t: 0.0,
             spin: 0.0,
+            // JS L86: `sp: !!a.specialActive` — the thrower's live special.
+            sp: self.actors[owner_idx].special_active.is_some(),
         });
     }
 
@@ -1366,6 +1389,8 @@ impl<'a> Ctx<'a> {
             direct: None,
             pulse_t: 0.0,
             spin: 0.0,
+            // JS L113: `sp: !!a.specialActive`.
+            sp: self.actors[owner_idx].special_active.is_some(),
         });
         if kind == SubKind::Mine {
             let i = self.items.len() - 1;
@@ -1910,14 +1935,8 @@ impl<'a> Ctx<'a> {
     // ------------------------------------------------------------------ effects
     /// JS `track(e, team, time)` (L537-542). The `actor:tracked` emit is not
     /// in the netmatch `FORWARD` list (presentation only).
-    fn track(&mut self, ei: usize, team: usize, time: f32) {
-        let st = &mut self.actors[ei].status;
-        st.track = if st.track_team == Some(team) {
-            st.track.max(time)
-        } else {
-            time.max(0.0)
-        };
-        st.track_team = Some(team);
+    pub fn track(&mut self, ei: usize, team: usize, time: f32) {
+        apply_track(&mut self.actors[ei].status, team, time);
     }
 
     /// JS `poison(e, time)` (L543-547).
@@ -2061,13 +2080,15 @@ impl<'a> Ctx<'a> {
         self.credit(i, area);
     }
 
-    /// JS `_credit` (L594): turf for the thrower. `it.sp` (Bomb Barrage) is
-    /// always false in the sim (D-T34-3), so every credit is the plain one.
+    /// JS `_credit` (L594): turf for the thrower, routed by `it.sp`
+    /// (Task 35: specials deployed during a special never charge —
+    /// `addTurfNoSpecial`, subs.js L594 / weapons.js L845).
     fn credit(&mut self, i: usize, area: f32) {
         self.events.push(SimEvent::Turf {
             owner_slot: self.items[i].owner_slot,
             team: self.items[i].owner_team,
             area,
+            no_special: self.items[i].sp,
         });
     }
 

@@ -500,6 +500,7 @@ fn bounce(ctx: &mut Ctx, i: usize, w: &Hit, muted: bool) {
             owner_slot: ctx.tracer[i].owner_slot,
             team: ctx.tracer[i].owner_team,
             area,
+            no_special: false,
         });
     }
     let n = w.normal;

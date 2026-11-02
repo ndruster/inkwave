@@ -43,8 +43,14 @@ fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
+/// JS `damp(a, b, lambda, dt)` from `src/core/ctx.js` L29:
+/// `lerp(a, b, 1 - exp(-lambda * dt))`.
+fn damp(a: f32, b: f32, lambda: f32, dt: f32) -> f32 {
+    a + (b - a) * (1.0 - (-lambda * dt).exp())
+}
+
 /// JS `angleDiff(a, b)`: signed shortest angular difference b − a in [−π, π].
-fn angle_diff(a: f32, b: f32) -> f32 {
+pub(crate) fn angle_diff(a: f32, b: f32) -> f32 {
     let mut d = b - a;
     while d > std::f32::consts::PI {
         d -= TAU;
@@ -108,6 +114,10 @@ pub struct ActorInput {
     pub fire: bool,
     pub sub: bool,
     pub special: bool,
+    /// JS `intent.cheer` (specials.js L535): the one-frame "Yeah!" pulse that
+    /// tops up a teammate booyah's charge.
+    #[serde(default)]
+    pub cheer: bool,
 }
 
 /// Cause of a splat (JS `splat(attacker, cause)`).
@@ -117,8 +127,248 @@ pub enum SplatCause {
     Water,
 }
 
+/// Zipline body termination (specials.js L1811-1843): what the zip hit. The
+/// match drains [`Actor::sp_zip_impact`] into the impact ladder
+/// (`IMPL.zipcaster.impact`, L1846-1863) with the full roster.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ZipImpact {
+    /// L1818-1825: slammed into the enemy at this roster index (the impact's
+    /// `direct` victim).
+    Slam(usize),
+    /// L1827-1833: arrived / timed out / stuck — no direct victim. The flag
+    /// is JS's `s.hang > 0` at impact time (the `['4','zi'…]` record's
+    /// hang byte, L1848) — captured before the lifecycle can clear it.
+    Land(bool),
+}
+
+/// JS `a.superJumpState` (actor.js L767): the charge → flight machine for the
+/// specials' `jumpBack` return (D-T35-3 retired in batch 4). The sim only
+/// ever runs the fixed-point `home` jump the special lifecycle launches
+/// (specials.js L374 `{instant: true, home: true}`) — the ally-target branch
+/// (actor.js L785-797) is out of scope (deviation candidate).
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct SuperJump {
+    /// JS `s.phase === 'charge'`: true through the 0.75 s crouch
+    /// (actor.js L779-805), false in flight (L807-832).
+    pub charge: bool,
+    /// JS `s.t`: seconds in the current phase.
+    pub t: f32,
+    /// JS `s.from`: the take-off point (set when flight starts, L787).
+    pub from: Vec3,
+    /// JS `s.to`: the landing point (the fixed target, L797).
+    pub to: Vec3,
+    /// JS `s.dur`: the flight length (L799).
+    pub dur: f32,
+}
+
+/// The slam/storm phase machine (JS `s.phase`, actor.js L850/L855/L882-888).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SpecialPhase {
+    /// `slam`: rising (JS L879).
+    #[default]
+    Rise,
+    /// `slam`: apex hang (JS L883).
+    Hang,
+    /// `slam`: falling toward the impact (JS L886).
+    Fall,
+    /// `storm`: the throw windup (JS L855).
+    Throw,
+}
+
+/// JS `a.specialActive` (specials.js L257-258, actor.js L850/L855): the
+/// shared lifecycle fields of a running special. The kind-specific half lives
+/// in [`crate::special::KindState`] (JS keeps those as loose fields on `s`).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SpecialActive {
+    /// JS `s.id` — the `SPECIAL_ORDER` id.
+    pub id: String,
+    /// JS `s.kind` (specials.js L255: `def.kind || id`) — the dispatch key.
+    /// The net `placeholder` (netmatch.js L382) carries the empty string.
+    pub kind: String,
+    /// JS `s.def` presence: the placeholder has no def, so `specialNetState`
+    /// packs 0 (specials.js L2125).
+    pub has_def: bool,
+    /// JS `s.t`: seconds since start (the slam/storm machine resets it per
+    /// phase, actor.js L882/L885).
+    pub t: f32,
+    /// JS `s.dur`: the duration cap (`0` = none / run until told).
+    pub dur: f32,
+    /// JS `s.ghost` (specials.js L280): a proxy-side visual copy.
+    pub ghost: bool,
+    /// JS `s.ended` (L366): the double-end guard.
+    pub ended: bool,
+    /// JS `s.body` (actor.js L276): the special owns the body this frame.
+    pub body: bool,
+    /// JS `s.firing`: the fire-hold timer the kinds drive (decays every frame
+    /// in `tick`/`body`/`_ghostTick`, specials.js L338/L346/L293).
+    pub firing: f32,
+    /// JS `s.speed` (actor.js L427/L446): the horizontal speed override.
+    pub speed: Option<f32>,
+    /// JS `s.accel` (actor.js L446): the accel override (with `speed`).
+    pub accel: Option<f32>,
+    /// JS `s.faceYaw` (actor.js L940): a locked body facing (30/30/400 spring).
+    pub face_yaw: Option<f32>,
+    /// JS `s.noSquid` (actor.js L282): the swim button is ignored.
+    pub no_squid: bool,
+    /// JS `s.inkProof` (actor.js L295): enemy paint neither slows nor hurts.
+    pub ink_proof: bool,
+    /// JS `s.faceMove` (actor.js L942): face the velocity like a body kind.
+    pub face_move: bool,
+    /// JS `s.aimFace` (actor.js L944): the body tracks the aim yaw.
+    pub aim_face: bool,
+    /// JS `s.jumpBack` (specials.js L374): the special wants a super-jump
+    /// return to its `origin` — the sim has no super jump (D-T35-3), so the
+    /// marker is carried for batch 4 only.
+    pub jump_back: bool,
+    /// JS `s.armor` (actor.js L182): incoming damage is quartered.
+    pub armor: bool,
+    /// JS `s.hang` (actor.js L505): seconds of zipline cling left (freeze).
+    pub hang: f32,
+    /// JS `s.hangN` (specials.js L1831): the cling surface normal — the wall
+    /// push-off direction and the "push away from the wall" release test
+    /// (L1883).
+    #[serde(default)]
+    pub hang_n: Option<Vec3>,
+    /// The slam/storm phase (actor.js L861-898); unused by the other kinds.
+    pub phase: SpecialPhase,
+    /// The kind-specific half (JS loose `s.*` fields).
+    pub state: crate::special::KindState,
+}
+
+impl SpecialActive {
+    /// JS `start` (specials.js L257) / `_startGhost` (L280): the shared
+    /// defaults (the slam/storm literals, actor.js L850/L855, override the
+    /// phase/armor/body fields at the call site).
+    #[must_use]
+    pub fn new(id: &str, kind: &str, dur: f32) -> Self {
+        Self {
+            id: id.to_string(),
+            kind: kind.to_string(),
+            has_def: true,
+            t: 0.0,
+            dur,
+            ghost: false,
+            ended: false,
+            body: false,
+            firing: 0.0,
+            speed: None,
+            accel: None,
+            face_yaw: None,
+            no_squid: false,
+            ink_proof: false,
+            face_move: false,
+            aim_face: false,
+            jump_back: false,
+            armor: false,
+            hang: 0.0,
+            hang_n: None,
+            phase: SpecialPhase::default(),
+            state: crate::special::KindState::default(),
+        }
+    }
+
+    /// JS netmatch.js L382: the `F.special`-flag placeholder active
+    /// `{ id, net: true }` — no def, no kind, no mechanics until the owner's
+    /// records arrive (then `_startGhost` replaces it, specials.js L277-285).
+    #[must_use]
+    pub fn net_placeholder(id: &str) -> Self {
+        let mut s = Self::new(id, "", 0.0);
+        s.has_def = false;
+        s
+    }
+
+    // ---- kind-state accessors (used by `crate::special::remaining` and the
+    // `spst` net-state packer; JS reads the loose fields directly, L385-387).
+
+    /// JS `s.thrown` (booyah, specials.js L385/L2113).
+    #[must_use]
+    pub fn booyah_thrown(&self) -> bool {
+        matches!(&self.state, crate::special::KindState::Booyah(st) if st.thrown)
+    }
+
+    /// JS `s.charge` (booyah, specials.js L385/L2129).
+    #[must_use]
+    pub fn booyah_charge(&self) -> f32 {
+        match &self.state {
+            crate::special::KindState::Booyah(st) => st.charge,
+            _ => 0.0,
+        }
+    }
+
+    /// JS `specialNetApply` L2135: `netCharge = true; charge = (v & 63) / 63`.
+    pub fn set_booyah_net_charge(&mut self, v: f32) {
+        if let crate::special::KindState::Booyah(st) = &mut self.state {
+            st.net_charge = true;
+            st.charge = v;
+        }
+    }
+
+    /// JS `s.count` (blower, specials.js L386).
+    #[must_use]
+    pub fn blower_count(&self) -> f32 {
+        match &self.state {
+            crate::special::KindState::Blower(st) => st.count,
+            _ => 0.0,
+        }
+    }
+
+    /// JS `s.guard` (stamp, specials.js L417).
+    #[must_use]
+    pub fn stamp_guard(&self) -> f32 {
+        match &self.state {
+            crate::special::KindState::Stamp(st) => st.guard,
+            _ => 0.0,
+        }
+    }
+
+    /// JS `s.roll` (crab, specials.js L2126).
+    #[must_use]
+    pub fn crab_roll(&self) -> bool {
+        matches!(&self.state, crate::special::KindState::Crab(st) if st.roll)
+    }
+
+    /// JS `s.hull` (crab, specials.js L2127).
+    #[must_use]
+    pub fn crab_hull(&self) -> f32 {
+        match &self.state {
+            crate::special::KindState::Crab(st) => st.hull,
+            _ => 0.0,
+        }
+    }
+
+    /// JS `s.hp` (crab, specials.js L387).
+    #[must_use]
+    pub fn crab_hp(&self) -> f32 {
+        match &self.state {
+            crate::special::KindState::Crab(st) => st.hp,
+            _ => 0.0,
+        }
+    }
+
+    /// JS `specialNetApply` L2133-2134: the ghost-side crab snapshot.
+    pub fn set_crab_net(&mut self, roll: bool, firing: bool, hull: f32) {
+        if let crate::special::KindState::Crab(st) = &mut self.state {
+            st.net = Some(crate::special::crab::Net { roll, firing, hull });
+        }
+    }
+
+    /// JS `IMPL.sonar.start` L1266-1271 already ran on this active (the
+    /// roster-side reveal ladder; sim-side latch, no JS field).
+    #[must_use]
+    pub fn sonar_revealed(&self) -> bool {
+        matches!(&self.state, crate::special::KindState::Sonar(st) if st.revealed)
+    }
+
+    /// Mark the sonar active's reveal ladder as run (see [`Self::sonar_revealed`]).
+    pub fn set_sonar_revealed(&mut self) {
+        if let crate::special::KindState::Sonar(st) = &mut self.state {
+            st.revealed = true;
+        }
+    }
+}
+
 /// State-change events for later FX/HUD/audio wiring (JS `emit(...)`).
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ActorEvent {
     Jump {
         swim: bool,
@@ -135,6 +385,24 @@ pub enum ActorEvent {
         attacker: Option<(usize, usize)>,
     },
     Respawn,
+    /// JS `emit('special:use', { actor, id })` (actor.js L845) — the special
+    /// started; `id` is the `SPECIAL_ORDER` id (the FORWARD event,
+    /// netmatch.js L27).
+    SpecialUse {
+        id: String,
+    },
+    /// JS `emit('special:slam', { actor, pos, radius })` (actor.js L914) —
+    /// the slam impact point; the paint/damage ladder landed in batch 2.
+    SpecialSlam {
+        pos: Vec3,
+        radius: f32,
+    },
+    /// JS `G.projectiles.throwStorm(this)` (actor.js L857) — the storm cloud
+    /// throw moment; the cloud itself landed in batch 2.
+    SpecialStorm,
+    /// JS `emit('special:ready', { actor })` (actor.js L140) — the gauge
+    /// crossed the cost.
+    SpecialReady,
 }
 
 /// Trigger state handed to the weapon runner (JS `winp`): a squid → kid
@@ -171,8 +439,8 @@ pub struct KitArmor {
 }
 
 /// JS `actor.status` (actor.js L43), batch-1 subset: the sub-weapon status
-/// effects (`subs.js` `track` / `poison`). `reveal` / `shield` are specials
-/// (Task 35) and stay out.
+/// effects (`subs.js` `track` / `poison`) plus the Task 35 special channels
+/// (`reveal` / `shield`).
 #[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub struct ActorStatus {
     /// JS `status.track`: seconds of echo-orb tracking left.
@@ -182,6 +450,23 @@ pub struct ActorStatus {
     pub track_team: Option<usize>,
     /// JS `status.poison`: seconds of murk-bomb poison left.
     pub poison: f32,
+    /// JS `status.reveal` (actor.js L353): seconds of sonar reveal left —
+    /// slows the kid (L449) and burns spent ink faster (L375).
+    #[serde(default)]
+    pub reveal: f32,
+    /// JS `status.revealTeam` (−1 = none): the team that revealed — same-team
+    /// re-reveals refresh the timer silently (subs.js L60 pattern).
+    #[serde(default)]
+    pub reveal_team: Option<usize>,
+    /// JS `status.shield` (specials.js L487): seconds of bubbler shield left
+    /// — absorbs damage through [`crate::special::filter_damage`].
+    #[serde(default)]
+    pub shield: f32,
+    /// JS `a._shieldOwner` (specials.js L488): the shield was granted as the
+    /// *owner* of a bubbler field — only owner shields share to teammates
+    /// (the ladder L556-561). `giveShield` overwrites it every grant.
+    #[serde(default)]
+    pub shield_owner: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
@@ -190,6 +475,7 @@ struct PrevIntent {
     jump: bool,
     sub: bool,
     squid: bool,
+    special: bool,
 }
 
 /// One squidkid (player or bot — both run the identical simulation).
@@ -277,6 +563,93 @@ pub struct Actor {
     /// weapon runner spends the ink and deploys it on the sub release.
     #[serde(default)]
     pub sub: SubKind,
+    /// JS `this.special` (actor.js L81): the gauge in turf points, capped at
+    /// [`Actor::special_cost`]; a share survives splat/respawn (L217/L166-168).
+    #[serde(default)]
+    pub special: f32,
+    /// JS `this.specialId` (L127): the equipped special id (`SPECIAL_ORDER`
+    /// entry); `None` falls back to `slam` at activation (L838).
+    #[serde(default)]
+    pub special_id: Option<String>,
+    /// JS `this.weapon.specialCost` (L129): the gauge cap, set by the match
+    /// builder from the weapon table.
+    #[serde(default)]
+    pub special_cost: f32,
+    /// JS `this.specialActive` (L82): the running special (`None` = idle).
+    /// `Box`ed so [`Actor`] stays `Clone`-cheap for the bot snapshots.
+    #[serde(default)]
+    pub special_active: Option<Box<SpecialActive>>,
+    /// JS `rec(a, d)` (netmatch.js L131-132) for the `sp` channel: pending
+    /// `['k', nid, 'sp', d]` payloads the replication layer ships each tick
+    /// (specials.js lifecycle: `[0, orderIdx]` start, `[1, reason]` end,
+    /// `[2, kind, gid, …]` world objects, `[3/4, …]` events).
+    #[serde(default)]
+    pub sp_records: Vec<Vec<crate::net::KitVal>>,
+    /// JS `a._cheerT` (specials.js L511): the last cheer's `G.time`
+    /// (`0.0` = never, read as JS's `-9` fallback in [`crate::special::cheer`]).
+    #[serde(default)]
+    pub cheer_t: f32,
+    /// A blower bubble released by [`crate::special::end`] (JS `IMPL.blower.end`
+    /// L1505): `(gid, forward)` — the match drains it into
+    /// `sp_records` the same frame (the runner / system handles are only
+    /// available there).
+    #[serde(default)]
+    pub sp_let: Option<(u32, glam::Vec3)>,
+    /// JS `IMPL.barrage.end` (L1252): `a.weaponRunner.aimingSub = false` —
+    /// drained by the match onto the runner (no handle inside `end`).
+    #[serde(default)]
+    pub sp_reset_aim: bool,
+    /// The jetpack body asked for its blast this frame (specials.js
+    /// L1562-1572): the match drains it into
+    /// [`crate::weapon::ProjectileSim::fire_jetpack_blast`] (no projectile
+    /// handle inside the body).
+    #[serde(default)]
+    pub sp_jet_fire: bool,
+    /// The jetpack body asked for an exhaust trail paint this frame
+    /// (specials.js L1574-1579): the match drains it into the ground probe +
+    /// splat (no paint handle inside the body).
+    #[serde(default)]
+    pub sp_jet_paint: bool,
+    /// The zipline body ended this frame (specials.js L1811-1843): the match
+    /// drains it into the impact ladder + the `['4','zi'…]` record
+    /// (specials.js L1846-1863).
+    #[serde(default)]
+    pub sp_zip_impact: Option<ZipImpact>,
+    /// The Mega Stamp queued slams this frame (specials.js L1650-1653 /
+    /// L1662-1663): `(radius, reach)` per queued slam — a pending swing and a
+    /// flip window can both land on the same frame, so this is a queue. The
+    /// match drains it into the slam ladder (paint + `['4','sl'…]` record +
+    /// damage, L1694-1712).
+    #[serde(default)]
+    pub sp_stamp_slam: Vec<(f32, f32)>,
+    /// The rolled crab planted an ink footprint this frame (specials.js
+    /// L2005): the match drains it into the paint-no-charge splat (one seed
+    /// draw). A flag, not state: `end('broken')` clears the active the same
+    /// frame the last footprint is raised.
+    #[serde(default)]
+    pub sp_crab_paint: bool,
+    /// The special's start pushes a `ReturnMarker` (specials.js L1515 /
+    /// L1775): carries the marker's icon id; the match drains it into a
+    /// marker world object at the actor's position.
+    #[serde(default)]
+    pub sp_marker: Option<String>,
+    /// The special's end acts on the owner's `ReturnMarker` (specials.js
+    /// L373-375): `Some(true)` = `returning()` (L714), `Some(false)` =
+    /// `finish()` (L744). The match drains it onto the marker object.
+    #[serde(default)]
+    pub sp_marker_action: Option<bool>,
+    /// The super jump touched down this frame (actor.js L820-831): the match
+    /// drains it into the landing splat (one seed draw, normal `addTurf`
+    /// credit) and the home marker's `finish(true)`.
+    #[serde(default)]
+    pub sp_superjump_land: bool,
+    /// JS `a.superJumpState` (actor.js L767): the special's `jumpBack`
+    /// return flight ([`SuperJump`]).
+    #[serde(default)]
+    pub super_jump: Option<SuperJump>,
+    /// JS `stats.specials` (L65/L840): specials this actor has fired.
+    #[serde(default)]
+    pub specials_used: u32,
     events: Vec<ActorEvent>,
 }
 
@@ -332,6 +705,24 @@ impl Actor {
             kit_armor: None,
             status: ActorStatus::default(),
             sub: SubKind::default(),
+            special: 0.0,
+            special_id: None,
+            special_cost: 0.0,
+            special_active: None,
+            sp_records: Vec::new(),
+            cheer_t: 0.0,
+            sp_let: None,
+            sp_reset_aim: false,
+            sp_jet_fire: false,
+            sp_jet_paint: false,
+            sp_zip_impact: None,
+            sp_stamp_slam: Vec::new(),
+            sp_crab_paint: false,
+            sp_marker: None,
+            sp_marker_action: None,
+            sp_superjump_land: false,
+            super_jump: None,
+            specials_used: 0,
             events: Vec::new(),
         };
         a.reset(t);
@@ -375,9 +766,16 @@ impl Actor {
         self.dodge_vel = None;
         self.jump_swallowed = false;
         self.kit_armor = None;
-        // JS actor.js L111: `reset` clears track/poison but keeps `trackTeam`.
+        // JS actor.js L81-82: `reset` zeroes the gauge and drops any running
+        // special (the splat keep-share is re-applied by `respawn`, L166-168).
+        self.special = 0.0;
+        self.special_active = None;
+        // JS actor.js L111: `reset` clears track/poison/reveal/shield but
+        // keeps `trackTeam`.
         self.status.track = 0.0;
         self.status.poison = 0.0;
+        self.status.reveal = 0.0;
+        self.status.shield = 0.0;
     }
 
     /// JS `spawnAt(p, yaw)`: place on the ground (settle probe) with spawn
@@ -411,7 +809,9 @@ impl Actor {
         } else {
             std::f32::consts::PI
         };
+        let special = self.special; // JS L166: the share kept through the splat (`reset` would zero it)
         self.spawn_at(p, yaw, world, t);
+        self.special = special; // JS L168
         // JS L169: a genuine teleport — bump the counter proxies snap on.
         self.net_tp += 1;
         self.grounded = false;
@@ -436,10 +836,24 @@ impl Actor {
         if self.invuln > 0.0 {
             return false;
         }
+        // JS L182: a slam/storm `armor` active quarters the hit before any
+        // filtering (the `0.25` is hardcoded in JS — D-T35-4).
+        let mut amount = amount;
+        if self.special_active.as_ref().is_some_and(|s| s.armor) {
+            const SPECIAL_ARMOR_MUL: f32 = 0.25; // JS L182
+            amount *= SPECIAL_ARMOR_MUL;
+        }
+        // JS L183: `G.specials.filterDamage` — the special gates (kraken knock,
+        // crab hull, stamp deflect, bubbler shield) run before the kit armour.
+        if let Some(v) = crate::special::filter_damage(self, amount, attacker, attacker_pos) {
+            amount = v;
+        }
+        if amount <= 0.0 || amount.is_nan() {
+            return false; // JS L183
+        }
         // JS `MAIN_KITS.mitts.damageTaken` (mitts.js L883-903) via the
         // per-frame [`KitArmor`] snapshot (Task 33 §4): the leap armour
         // (L884-886) or the guard arc (L888-901), never both.
-        let mut amount = amount;
         if let Some(k) = &self.kit_armor {
             if k.leaping || k.land_t < k.leap_grace {
                 amount *= k.leap_armor;
@@ -458,6 +872,9 @@ impl Actor {
                     }
                 }
             }
+        }
+        if amount <= 0.0 || amount.is_nan() {
+            return false; // JS L184
         }
         self.hp -= amount;
         self.last_damage = 0.0;
@@ -481,6 +898,22 @@ impl Actor {
         self.hp = 0.0;
         self.respawn_timer = t.respawn_time;
         self.deaths += 1;
+        // JS L216-217: keep a share of the gauge (`PLAYER.specialKeepOnSplat`
+        // ?? 0.5); a special cut short restarts the gauge from that share of
+        // full (its points were spent when it started).
+        let keep = t.special_keep_on_splat;
+        self.special = if self.special_active.is_some() {
+            self.special_cost * keep
+        } else {
+            self.special_cost.min(self.special) * keep
+        };
+        // JS L218-219: `G.specials.onSplat` (ends the active, records, drops
+        // the shield), then the caller-side `specialActive = null`.
+        crate::special::on_splat(self);
+        self.special_active = None;
+        // JS L242: the splat also drops an in-flight super jump (the batch-4
+        // `jumpBack` return).
+        self.super_jump = None;
         self.kit_armor = None;
         self.events.push(ActorEvent::Splatted { cause, attacker });
     }
@@ -568,6 +1001,13 @@ impl Actor {
         std::mem::take(&mut self.events)
     }
 
+    /// Queue one event from outside the actor (the kraken landing's
+    /// `special:slam` marker, specials.js L1448): the frame-end drain in
+    /// `Match::step` turns it into a `MatchEvent` like the rest of the bus.
+    pub(crate) fn push_event(&mut self, e: ActorEvent) {
+        self.events.push(e);
+    }
+
     /// Peek whether a `Splatted` event is pending (JS `emit('splatted')` fires
     /// inline, actor.js L240; the sprinkler-destroy hook of `subs.js` L60
     /// needs the signal before the queue is drained).
@@ -576,6 +1016,49 @@ impl Actor {
         self.events
             .iter()
             .any(|e| matches!(e, ActorEvent::Splatted { .. }))
+    }
+
+    /// Peek the first pending `SpecialUse` id without draining it (the bus
+    /// drain stays at the frame end, JS `emit('special:use')` L845). The
+    /// match uses this to run the roster-side half of a start inline in the
+    /// same frame: `throwStorm` (actor.js L857), the sonar reveal ladder
+    /// (specials.js L1266-1271) and `weaponRunner.reset` (L1414).
+    #[must_use]
+    pub fn peek_special_use(&self) -> Option<&str> {
+        self.events.iter().find_map(|e| match e {
+            ActorEvent::SpecialUse { id } => Some(id.as_str()),
+            _ => None,
+        })
+    }
+
+    /// Peek whether a `SpecialStorm` throw is pending (JS
+    /// `G.projectiles.throwStorm(this)`, actor.js L857).
+    #[must_use]
+    pub fn has_special_storm(&self) -> bool {
+        self.events
+            .iter()
+            .any(|e| matches!(e, ActorEvent::SpecialStorm))
+    }
+
+    /// Peek the pending slam-impact centre (JS `_slamImpact(sp)` called
+    /// inline at actor.js L894; the match runs the paint + damage ladder the
+    /// same frame). `None` when no `SpecialSlam` event is queued.
+    #[must_use]
+    pub fn peek_special_slam(&self) -> Option<Vec3> {
+        self.events.iter().find_map(|e| match e {
+            ActorEvent::SpecialSlam { pos, .. } => Some(*pos),
+            _ => None,
+        })
+    }
+
+    /// Peek the strike's pending missile launch (JS `IMPL.strike.body`
+    /// L1292 → `launch` needs the specials registry + collision, which only
+    /// the match holds; `strike::body` raises this flag instead).
+    #[must_use]
+    pub fn peek_strike_launch(&self) -> bool {
+        self.special_active
+            .as_ref()
+            .is_some_and(|s| matches!(&s.state, crate::special::KindState::Strike(st) if st.launch))
     }
 
     /// Visual (smoothed) feet height — cameras follow this, not the raw pos.
@@ -592,6 +1075,364 @@ impl Actor {
         self.pos.y = y;
         self.smooth_y = 0.0;
         self.smooth_yv = 0.0;
+    }
+
+    // -------------------------------------------------- special gauge + use
+    // JS `actor.js` L127-142 (gauge) and L837-926 (activation + the slam /
+    // storm phase machines); every other kind delegates to [`crate::special`].
+
+    /// JS `setSpecial(id)` (actor.js L127): equip a special by id; unknown
+    /// ids are ignored (the weapon default is applied by the match builder).
+    pub fn set_special(&mut self, id: &str) {
+        if crate::special::def_by_id(id).is_some() {
+            self.special_id = Some(id.to_string());
+        }
+    }
+
+    /// JS `specialFrac()` (L130): gauge fill 0..1 for the HUD.
+    #[must_use]
+    pub fn special_frac(&self) -> f32 {
+        clamp(self.special / self.special_cost, 0.0, 1.0)
+    }
+
+    /// JS `specialReady()` (L131): the gauge is full and nothing is running.
+    #[must_use]
+    pub fn special_ready(&self) -> bool {
+        self.special >= self.special_cost && self.special_active.is_none()
+    }
+
+    /// JS `addTurf(area)` (L133-142): credit turf and charge the gauge (a
+    /// running special blocks charging — its points were spent on start).
+    pub fn add_turf(&mut self, area: f32, t: &PlayerTuning) {
+        if area <= 0.0 {
+            return;
+        }
+        self.turf += area;
+        // JS L136 `emit('turf')` is presentation; the tick sample carries the
+        // running total (netmatch.js L749), so no event is queued here.
+        if self.special_active.is_none() {
+            let was = self.special_ready();
+            self.special = self
+                .special_cost
+                .min(self.special + area * t.special_charge_rate);
+            if !was && self.special_ready() {
+                self.events.push(ActorEvent::SpecialReady);
+            }
+        }
+    }
+
+    /// JS `addTurfNoSpecial(area)` (L926): credit turf without charging (the
+    /// slam's own paint area).
+    pub fn add_turf_no_special(&mut self, area: f32) {
+        if area > 0.0 {
+            self.turf += area;
+        }
+    }
+
+    /// JS `_startSpecial()` (L837-859): spend the gauge and begin. `slam`
+    /// and `storm` build their own body-owning active here; every other id
+    /// hands over to [`crate::special::start`].
+    pub fn start_special(&mut self, t: &PlayerTuning) {
+        // JS L838: an unknown id falls back to `slam`.
+        let id = self
+            .special_id
+            .as_deref()
+            .filter(|s| crate::special::def_by_id(s).is_some())
+            .unwrap_or("slam")
+            .to_string();
+        self.special = 0.0;
+        self.specials_used += 1; // JS L840 `stats.specials++`
+        self.ink = t.ink_max; // JS L841: every special refills the tank
+        self.form = Form::Kid;
+        // JS L843 `_setClimb(false)`: wall climbing is out of sim scope.
+        // JS L844 `weaponRunner.endDodge()`: the runner lives in the match
+        // layer — the match's first-pass `SpecialUse` peek calls
+        // [`crate::weapon::WeaponRunner::end_dodge`] in the same frame.
+        self.events.push(ActorEvent::SpecialUse { id: id.clone() });
+        if id != "slam" && id != "storm" {
+            crate::special::start(self, &id);
+            return;
+        }
+        let mut s = SpecialActive::new(&id, &id, 0.0);
+        // JS L850/L855: these actives carry no `def`, so `specialNetState`
+        // packs 0 (specials.js L2125) and `end` / `onSplat` skip them (L365 /
+        // L378); `kind` is likewise absent — the machine below keys on `id`.
+        s.has_def = false;
+        if id == "slam" {
+            s.body = true;
+            s.armor = true;
+            s.phase = SpecialPhase::Rise;
+            s.state = crate::special::KindState::Slam(crate::special::SlamState {
+                start_y: self.pos.y,
+            });
+            const SLAM_LATERAL: f32 = 0.3; // JS L851: `vel.x * 0.3`
+            const SLAM_LEAP_VY: f32 = 11.5; // JS L851
+            self.vel.x *= SLAM_LATERAL;
+            self.vel.y = SLAM_LEAP_VY;
+            self.vel.z *= SLAM_LATERAL;
+            self.grounded = false;
+        } else {
+            s.body = true;
+            s.phase = SpecialPhase::Throw;
+            s.state = crate::special::KindState::Storm(crate::special::StormState {});
+            // JS L857 `G.projectiles.throwStorm(this)`: the cloud itself
+            // landed in batch 2; the event marks the throw moment for the
+            // wire.
+            self.events.push(ActorEvent::SpecialStorm);
+        }
+        self.special_active = Some(Box::new(s));
+    }
+
+    /// JS `_updateSpecial(dt)` (L861-898): one frame of a body-owning
+    /// special. Non-`slam`/`storm` kinds run [`crate::special::body`] plus
+    /// the sea check (specials.js L351-354, which lives inside JS `body`);
+    /// `slam` / `storm` run their phase machines here.
+    pub fn update_special(
+        &mut self,
+        dt: f32,
+        input: &ActorInput,
+        world: &SimWorld,
+        t: &PlayerTuning,
+    ) {
+        let Some(mut s) = self.special_active.take() else {
+            return;
+        };
+        // JS L863: the generic body kinds (never `slam` / `storm`).
+        if s.id != "slam" && s.id != "storm" {
+            self.special_active = Some(s);
+            crate::special::body(self, dt, world, t, input);
+            self.sea_death_check(world, t);
+            return;
+        }
+        s.t += dt; // JS L864
+        if s.id == "storm" {
+            const STORM_THROW_T: f32 = 0.35; // JS L868: throw windup length
+            const STORM_DAMP: f32 = 6.0; // JS L869: `exp(-6 * dt)` x/z decay
+            if s.t > STORM_THROW_T {
+                // JS L868: control returns; this frame still glides below.
+            } else {
+                self.special_active = Some(s);
+            }
+            let e = (-STORM_DAMP * dt).exp();
+            self.vel.x *= e;
+            self.vel.z *= e;
+            let stick = self.grounded;
+            if stick {
+                self.vel.y = 0.0;
+            } else {
+                self.vel.y -= t.gravity * dt;
+            }
+            let prev_y = self.pos.y;
+            self.pos += self.vel * dt;
+            self.resolve(false, prev_y, stick, world, t);
+            return;
+        }
+        // slam (JS L877-897)
+        const SLAM_GRAV_SCALE: f32 = 0.9; // JS L880
+        const SLAM_MOVE_GAIN: f32 = 2.5; // JS L881: `mv.x * 2.5`
+        const SLAM_RISE_DAMP: f32 = 6.0; // JS L881
+        const SLAM_HANG_VY: f32 = 0.6; // JS L882: apex transition velocity
+        const SLAM_HOVER_VY: f32 = 0.4; // JS L884
+        const SLAM_FALL_VY: f32 = -34.0; // JS L885 / L887
+        const SLAM_FALL_TIMEOUT: f32 = 1.2; // JS L893
+        const SLAM_END_INVULN: f32 = 0.3; // JS L896
+        let sp = &crate::special::specials().slam;
+        let mv = input.move_dir;
+        match s.phase {
+            SpecialPhase::Rise => {
+                self.vel.y -= t.gravity * SLAM_GRAV_SCALE * dt;
+                self.vel.x = damp(self.vel.x, mv.x * SLAM_MOVE_GAIN, SLAM_RISE_DAMP, dt);
+                self.vel.z = damp(self.vel.z, mv.z * SLAM_MOVE_GAIN, SLAM_RISE_DAMP, dt);
+                if s.t > sp.rise {
+                    s.phase = SpecialPhase::Hang;
+                    s.t = 0.0;
+                    self.vel = vec3(0.0, SLAM_HANG_VY, 0.0);
+                }
+            }
+            SpecialPhase::Hang => {
+                self.vel.y = SLAM_HOVER_VY;
+                if s.t > sp.hang {
+                    s.phase = SpecialPhase::Fall;
+                    s.t = 0.0;
+                    self.vel = vec3(0.0, SLAM_FALL_VY, 0.0);
+                }
+            }
+            SpecialPhase::Fall => {
+                self.vel.y = SLAM_FALL_VY;
+            }
+            // JS L882-888: the slam machine never sees `throw`.
+            SpecialPhase::Throw => {}
+        }
+        let prev_y = self.pos.y;
+        self.pos += self.vel * dt;
+        self.grounded = false;
+        self.resolve(false, prev_y, false, world, t);
+        if s.phase == SpecialPhase::Fall && (self.grounded || s.t > SLAM_FALL_TIMEOUT) {
+            // JS L894 `_slamImpact(sp)`: the paint + damage ladder landed in
+            // batch 2; the event carries the impact point and radius
+            // (actor.js L914).
+            self.events.push(ActorEvent::SpecialSlam {
+                pos: self.pos,
+                radius: sp.radius,
+            });
+            // JS L895-896: the active is gone, then a short grace window.
+            self.invuln = SLAM_END_INVULN;
+        } else {
+            self.special_active = Some(s);
+        }
+    }
+
+    /// JS `a.canSuperJump()` (actor.js L760) + `a.superJump(target,
+    /// {instant: true, home: true})` (L765-774): the specials' `jumpBack`
+    /// return launch (specials.js L374). JS also gates on
+    /// `G.match?.playing()` (the lifecycle caller only runs during live play
+    /// — not modelled) and resets the weapon runner (the match's job; the
+    /// actor has no runner handle). `instant` starts the charge timer at its
+    /// end (L767), so flight launches on the next frame.
+    pub fn super_jump(&mut self, target: Vec3) -> bool {
+        if !self.alive || self.super_jump.is_some() || self.special_active.is_some() {
+            return false;
+        }
+        self.super_jump = Some(SuperJump {
+            charge: true,
+            t: 0.75, // JS L767: `instant` → the charge is already complete
+            from: Vec3::ZERO,
+            to: target,
+            dur: 0.0,
+        });
+        self.form = Form::Squid; // JS L768
+        true
+    }
+
+    /// JS `Actor._updateSuperJump(dt)` (actor.js L776-834): the charge →
+    /// flight ladder. The ally-target branch (L785-797) is out of sim scope
+    /// (only the fixed-point `home` jump exists here); the FX / rumble /
+    /// audio / `superjump` event branches are presentation. The landing
+    /// splat (L827) needs the paint handle — [`Actor::sp_superjump_land`]
+    /// raises for the match drain.
+    fn update_super_jump(&mut self, dt: f32, world: &SimWorld, t: &PlayerTuning) {
+        const CHARGE_T: f32 = 0.75; // JS L783: charge length
+        const LAND_VY: f32 = -12.0; // JS L822: fall speed at touch-down
+        const STUCK_VY: f32 = -6.0; // JS L826: no floor under the landing
+        const APEX_BASE: f32 = 11.0; // JS L811: arc apex over the target
+        const APEX_K: f32 = 0.08; // JS L811: apex per metre of distance
+        const DUR_BASE: f32 = 1.15; // JS L799: flight length
+        const DUR_CAP: f32 = 0.6; // JS L799: distance term cap
+        const DUR_DIV: f32 = 80.0; // JS L799: distance term divisor
+        const KID_K: f32 = 0.82; // JS L817: pop back to kid form
+        const K_POWER: f32 = 0.86; // JS L812: vertical easing exponent
+        let Some(sj) = self.super_jump.as_mut() else {
+            return;
+        };
+        sj.t += dt;
+        if sj.charge {
+            self.vel = Vec3::ZERO; // JS L780
+            self.form = Form::Squid; // JS L781 (`_probeGround` rides the
+            // normal frame; the sim's flight overwrites pos anyway)
+            if sj.t > CHARGE_T {
+                sj.from = self.pos; // JS L787
+                sj.charge = false;
+                sj.t = 0.0;
+                sj.dur = DUR_BASE + (sj.from.distance(sj.to) / DUR_DIV).min(DUR_CAP);
+                self.invuln = self.invuln.max(sj.dur + 0.2); // JS L800
+            }
+            return;
+        }
+        let k = (sj.t / sj.dur).min(1.0); // JS L808
+        let (from, to) = (sj.from, sj.to);
+        // JS L810: horizontal ease-in-out.
+        let e = if k < 0.5 {
+            2.0 * k * k
+        } else {
+            1.0 - (2.0 - 2.0 * k).powi(2) / 2.0
+        };
+        // JS L811-814: `sin(PI * k^0.86) * apex` arc over the straight line.
+        let apex = APEX_BASE + from.distance(to) * APEX_K;
+        let kv = k.powf(K_POWER);
+        let mut p = from.lerp(to, e);
+        p.y += (std::f32::consts::PI * kv).sin() * apex;
+        self.vel = (p - self.pos) / dt.max(1e-3); // JS L815
+        self.pos = p; // JS L816
+        self.form = if k > KID_K { Form::Kid } else { Form::Squid }; // JS L817
+        if k >= 1.0 {
+            // JS L820-831: touch-down — land through the normal resolve,
+            // double-probe for the floor, then the landing splat + marker.
+            self.super_jump = None;
+            self.vel = vec3(0.0, LAND_VY, 0.0);
+            self.form = Form::Kid;
+            self.kid_t = 0.05; // JS L823
+            self.grounded = false; // JS L824
+            let py = self.pos.y + 0.4; // JS L825
+            self.resolve(false, py, false, world, t);
+            if !self.grounded {
+                self.grounded = true;
+                self.resolve(false, self.pos.y, true, world, t);
+                if !self.grounded {
+                    self.vel.y = STUCK_VY; // JS L826
+                }
+            }
+            self.sp_superjump_land = true;
+        }
+    }
+
+    /// The body-owning specials' resolve entry (JS calls `a._resolve(false,
+    /// py, false)` straight from the special bodies, specials.js L1557 /
+    /// L1838) — [`Actor::resolve`] is private to the actor layer.
+    pub(crate) fn body_resolve(
+        &mut self,
+        is_squid: bool,
+        prev_y: f32,
+        stick: bool,
+        world: &SimWorld,
+        t: &PlayerTuning,
+    ) {
+        self.resolve(is_squid, prev_y, stick, world, t);
+    }
+
+    /// JS `SpecialSystem._stand(a, dt, damp = 8)` (specials.js L643-649): the
+    /// planted-stand physics shared by the body kinds (sonar batch 2). The
+    /// `8` default damp is hardcoded in JS (D-T35-4).
+    pub fn stand(&mut self, dt: f32, world: &SimWorld, t: &PlayerTuning) {
+        const STAND_DAMP: f32 = 8.0; // JS L643 `damp = 8`
+        let e = (-STAND_DAMP * dt).exp();
+        self.vel.x *= e;
+        self.vel.z *= e;
+        if !self.grounded {
+            self.vel.y = (-t.max_fall).max(self.vel.y - t.gravity * dt);
+        } else {
+            self.vel.y = 0.0;
+        }
+        let prev_y = self.pos.y;
+        let stick = self.grounded;
+        self.pos += self.vel * dt;
+        self.resolve(false, prev_y, stick, world, t);
+    }
+
+    /// JS specials.js `body` L350-354 ("the sea still wins"): below the
+    /// waterline with no deck underneath, end the special and take the water
+    /// splat. `slam` / `storm` never run it (JS `_updateSpecial` has no sea
+    /// check for them); the actor's own fall check (this module's step) is
+    /// skipped while a body special owns the frame.
+    fn sea_death_check(&mut self, world: &SimWorld, t: &PlayerTuning) {
+        if !self.alive {
+            return;
+        }
+        if self.pos.y < t.fall_death_y
+            && world
+                .collision
+                .ground_height(self.pos.x, self.pos.z, self.pos.y + 0.6, false)
+                == f32::NEG_INFINITY
+        {
+            if self.special_active.is_some() {
+                crate::special::end(self, "splat"); // JS L352
+            }
+            let attacker = if self.last_damage < 4.0 {
+                self.last_attacker
+            } else {
+                None
+            };
+            self.splat(SplatCause::Water, attacker, t); // JS L353
+        }
     }
 
     /// JS `update(dt)`: one fixed simulation step.
@@ -649,6 +1490,8 @@ impl Actor {
         let fire_pressed = input.fire && !self.prev.fire;
         let jump_pressed = input.jump && !self.prev.jump;
         let sub_released = !input.sub && self.prev.sub;
+        // JS L256: the special fires on the *press* edge of the special key.
+        let special_pressed = input.special && !self.prev.special;
         if input.squid && !self.prev.squid {
             self.squid_press_t = self.time;
         }
@@ -660,6 +1503,7 @@ impl Actor {
             jump: input.jump,
             sub: input.sub,
             squid: input.squid,
+            special: input.special,
         };
 
         // ---- timers
@@ -679,10 +1523,36 @@ impl Actor {
         };
         self.hard_land = (self.hard_land - dt / t.hard_land_time).max(0.0);
 
+        // ---- JS L274: a super jump (the specials' `jumpBack` return, batch
+        // 4) owns the body before the special-body branch.
+        if self.super_jump.is_some() {
+            self.update_super_jump(dt, world, t);
+            self.finish_frame(dt, self.form == Form::Squid, input, t);
+            return;
+        }
+        // ---- specials in progress own the body (JS L276-277)
+        if self.special_active.as_ref().is_some_and(|s| s.body) {
+            self.update_special(dt, input, world, t);
+            if self.alive {
+                let is_squid = self.form == Form::Squid;
+                self.finish_frame(dt, is_squid, input, t);
+            }
+            return;
+        }
+        if special_pressed && self.special_ready() {
+            self.start_special(t);
+            let is_squid = self.form == Form::Squid;
+            self.finish_frame(dt, is_squid, input, t);
+            return;
+        }
+
         // ---- form: swim + fire both held → the most recent press wins
+        // JS L282: `!(spx && spx.noSquid)` — a special can lock the kid form
+        // (`weaponRunner.busy()` is a runner concern, not modelled here).
+        let sp_no_squid = self.special_active.as_ref().is_some_and(|s| s.no_squid);
         let fire_wins =
             (input.fire || self.fire_buffer > 0.0) && self.fire_press_t >= self.squid_press_t;
-        let want_squid = input.squid && !fire_wins;
+        let want_squid = input.squid && !fire_wins && !sp_no_squid;
         if want_squid != (self.form == Form::Squid) {
             self.form = if want_squid { Form::Squid } else { Form::Kid };
             if !want_squid {
@@ -706,11 +1576,21 @@ impl Actor {
             0
         };
         self.submerged = is_squid && self.grounded && self.ground_team == 1;
-        let on_enemy = self.grounded && self.ground_team == 2 && !self.submerged;
+        // JS L295: `!(spx && spx.inkProof)` — a kraken/cab/force-field special
+        // neither slows nor hurts in enemy paint.
+        let sp_ink_proof = self.special_active.as_ref().is_some_and(|s| s.ink_proof);
+        let on_enemy = self.grounded && self.ground_team == 2 && !self.submerged && !sp_ink_proof;
         self.on_enemy = on_enemy;
 
         // ---- horizontal movement
-        self.horizontal(dt, is_squid, on_enemy, input, t, sb);
+        // JS L303: `if (spx) G.specials.move(this, spx, dt)` — a special may
+        // steer the movement before `_horizontal`. JS rewrites `intent.move`
+        // in place; the sim filters a copy so the caller's `ActorInput`
+        // stays immutable (only `move` is ever rewritten — the along/strafe
+        // filter, specials.js L1610-1616).
+        let mut intent = *input;
+        crate::special::move_hook(self, dt, &mut intent);
+        self.horizontal(dt, is_squid, on_enemy, &intent, t, sb);
         // JS L305-306: a dodge roll owns the horizontal velocity while it
         // lasts (the twins override; the runner wrote `dodge_vel` this frame).
         if let Some(dv) = self.dodge_vel {
@@ -759,9 +1639,15 @@ impl Actor {
         }
 
         // ---- integrate + collide (feet + body), then the spawn keep-out
-        // JS actor.js L502-507 (Task 33 §4): a clinging kid hangs frozen —
-        // velocity zeroed, no ground following / gravity / landing probe.
-        let hang = self.form == Form::Kid && mitts.as_ref().is_some_and(|k| k.hang);
+        // JS actor.js L502-507 (Task 33 §4 / Task 35): a clinging kid hangs
+        // frozen — velocity zeroed, no ground following / gravity / landing
+        // probe. A zipline `s.hang` freezes too, and it outranks the kit hang
+        // (JS L504: the kit hang requires `!specialActive`).
+        let sp_hang = self.special_active.as_ref().is_some_and(|s| s.hang > 0.0);
+        let kit_hang = self.special_active.is_none()
+            && self.form == Form::Kid
+            && mitts.as_ref().is_some_and(|k| k.hang);
+        let hang = sp_hang || kit_hang;
         if hang {
             self.vel = Vec3::ZERO;
             self.grounded = false;
@@ -776,7 +1662,12 @@ impl Actor {
 
         // ---- enemy ink damage + hp regen + ink tank refill
         if on_enemy {
-            if self.damage_from_ink < t.enemy_ink_damage_cap && self.invuln <= 0.0 {
+            // JS actor.js L337: a live shield (Bubbler) also blocks standing
+            // enemy-ink damage, on top of the invuln gate.
+            if self.damage_from_ink < t.enemy_ink_damage_cap
+                && self.invuln <= 0.0
+                && self.status.shield <= 0.0
+            {
                 let d = (t.enemy_ink_dps * dt).min(t.enemy_ink_damage_cap - self.damage_from_ink);
                 self.damage_from_ink += d;
                 self.hp = (self.hp - d).max(1.0);
@@ -804,6 +1695,10 @@ impl Actor {
         if self.status.poison > 0.0 {
             self.status.poison = (self.status.poison - dt).max(0.0);
             self.ink = (self.ink - sb.mist.ink_drain * dt).max(0.0);
+        }
+        // JS actor.js L353: the sonar reveal timer decays with the others.
+        if self.status.reveal > 0.0 {
+            self.status.reveal = (self.status.reveal - dt).max(0.0);
         }
         if self.submerged {
             let k = if self.status.poison > 0.0 { 0.5 } else { 1.0 };
@@ -877,7 +1772,11 @@ impl Actor {
                     t.squid_air_decel,
                 )
             } else {
-                (t.run_speed.max(t.air_min_speed), t.air_accel, t.air_decel)
+                // JS L427: `specialActive?.speed ?? moveSpeed()` — a special's
+                // speed replaces the weapon's run speed in the air too.
+                let sp_speed = self.special_active.as_ref().and_then(|s| s.speed);
+                let base = sp_speed.unwrap_or(t.run_speed);
+                (base.max(t.air_min_speed), t.air_accel, t.air_decel)
             };
             let (tvx, tvz) = if mh > 0.01 {
                 (mv.x / mh * target * mag, mv.z / mh * target * mag)
@@ -900,7 +1799,7 @@ impl Actor {
         // ---- grounded: pick the per-form parameter row
         let mut vt;
         let mut big_a;
-        let a_in;
+        let mut a_in;
         let in_knee;
         let out_knee;
         let mut big_d;
@@ -941,6 +1840,20 @@ impl Actor {
                 vt *= 1.0 - (1.0 - t.hard_land_slow) * self.hard_land;
             }
         }
+        // JS L445-446: a special's `speed` overrides the grounded target row
+        // (and `accel` the accel — with `aIn = 1`, the `1` hardcoded in JS,
+        // D-T35-4).
+        if let Some(s) = self.special_active.as_ref()
+            && let Some(sp) = s.speed
+        {
+            const ACCEL_FULL_IN_KNEE: f32 = 1.0; // JS L446 `aIn = 1`
+            vt = sp;
+            if let Some(ac) = s.accel {
+                big_a = ac;
+                a_in = ACCEL_FULL_IN_KNEE;
+                big_d = big_d.max(ac);
+            }
+        }
         if on_enemy {
             vt = vt.min(t.enemy_ink_speed);
             big_a = big_a.min(t.enemy_ink_accel);
@@ -950,6 +1863,10 @@ impl Actor {
         // the airborne branch above returns before this ladder, as in JS).
         if self.status.poison > 0.0 {
             vt *= sb.mist.slow;
+        }
+        // JS actor.js L449: a sonar-revealed kid moves slower (same ladder).
+        if self.status.reveal > 0.0 {
+            vt *= crate::special::specials().sonar.slow;
         }
         if mh < 0.01 {
             // brake: strong at speed, easing into the stop
@@ -1227,11 +2144,33 @@ impl Actor {
         let mh = mv.x.hypot(mv.z);
         let hs = self.vel.x.hypot(self.vel.z);
         self.fire_facing = (self.fire_facing - dt).max(0.0);
+        // JS L939-945: a special can lock the body facing (`faceYaw`, the
+        // 30/30/400 spring hardcoded in JS — D-T35-4), face its velocity like
+        // a body kind (`body || faceMove`), or track the aim (`aimFace`).
+        let spx = self.special_active.as_ref();
+        let face_yaw = spx.and_then(|s| s.face_yaw);
+        let face_move = spx.is_some_and(|s| s.body || s.face_move);
+        let aim_face = spx.is_some_and(|s| s.aim_face);
         let mut target: Option<f32> = None;
         let mut omega = t.face_omega;
         let mut max_rate = t.face_max_rate;
         let mut max_acc = t.face_max_acc;
-        if self.fire_facing > 0.0 || input.sub {
+        if let Some(fy) = face_yaw {
+            const FACE_LOCK_OMEGA: f32 = 30.0; // JS L941
+            const FACE_LOCK_MAX_RATE: f32 = 30.0; // JS L941
+            const FACE_LOCK_MAX_ACC: f32 = 400.0; // JS L941
+            target = Some(fy);
+            omega = FACE_LOCK_OMEGA;
+            max_rate = FACE_LOCK_MAX_RATE;
+            max_acc = FACE_LOCK_MAX_ACC;
+        } else if face_move {
+            // JS L942-943: no aim tracking — the body faces where it moves.
+            if hs > 0.6 {
+                target = Some(self.vel.x.atan2(self.vel.z));
+            }
+        } else if self.fire_facing > 0.0 || input.sub || aim_face {
+            // JS L944: `(spx && spx.aimFace)` joins the sub-aim hold; the
+            // runner's `firingPose()` is a match-layer concern (Task 7+).
             target = Some(self.aim_yaw);
             omega = t.aim_face_omega;
             max_rate = t.aim_face_max_rate;

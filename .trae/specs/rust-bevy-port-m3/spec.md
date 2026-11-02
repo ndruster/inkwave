@@ -444,3 +444,82 @@ SubSystem 平移（subs.js 693 行，非 kit 10 key + splat bomb 在 weapons.js 
 - TR-34.2：FakeTransport——'dh' owner 应用（hp 扣减/击毁）/非 owner 忽略；['b'] ghost 不喷墨不判伤（turf 覆盖与伤害零变化）；['k','subs'] op0/1/2 ghost 重放（ghost mine 不自爆）。
 - TR-34.3：beacon≤3（最旧移除）/mine≤2（最旧起爆）/sprinkler 一人一具/torpedo、boomerang blocked 一发在途（拒投墨不动）。
 - 门禁：`/tmp/task33-gates.sh` → `/tmp/task34-gates.sh`，日志 `rust/tools/verify/logs/task34-gates-<UTC>.log` 九段全 exit 0；workspace 测试 > 389；JS 树零改动。
+
+# Task 35 实施设计：特殊武器 19 个 + tick 槽实值化（sp/spx/spst）
+
+> 上游锚点已实读：`src/game/specials.js` 全文（2138 行）、`src/config.js` L411-469（SPECIALS/SPECIAL_ORDER）、`src/game/actor.js` L81/L129-140/L217/L259-303/L373-376/L445/L836-926/L939-1012、`src/game/weapons.js` L1467-1542/L1729-1795（storm 投掷/云）、`src/net/netmatch.js` L47/L124-127/L134-137/L142/L379/L385/L485/L591-592/L723-757、`src/game/subs.js` L86/L113/L594（sp 旗标）、`src/game/zones.js` L260（zone 充能，Task 36 接）。
+
+## §0 范围与分组
+- 19 key（SPECIAL_ORDER L469）→ 13 个 kind：`barrage`×5 共享主体（config `kind:'barrage'` + `bomb` 变体键）；`slam`/`storm` 在 JS 分居 actor.js L849-858/_updateSpecial/_slamImpact 与 weapons.js throwStorm/_spawnCloud/_updateClouds，**Rust 统一进 special 层，语义逐行对齐（D-T35-1）**。其余 11 kind：bubbler/sonar/strike/zooka/wail/kraken/blower/jetpack/stamp/booyah/zipcaster/crab。
+- 机制族分批：
+  - **批一（核心）**：SpecialSystem 生命周期（start/netGhost/tick/body/move/weapon/end/remaining/filterDamage L254-375/L412-429）、gauge 充能、sp/spx/spst 槽实值化、`['ev']` special:use/slam 接线、`['k',nid,'sp',…]` ghost 通道（wire data 混合载荷）、sub 联动（`it.sp` 实值 + storm 建云，收 Task 34 两笔遗留）。
+  - **批二（领域/光环族）**：slam、storm、bubbler、sonar、kraken。
+  - **批三（弹道世界对象族）**：strike（Missile→Tornado）、zooka（Twister）、wail（Speaker）、blower（Bubble）、booyah（Orb）、barrage×5（复用 sub 炸弹实体，无墨）。
+  - **批四（位移/驾驶族）**：jetpack（悬停+ReturnMarker+跳回）、zipcaster（tether/hang）、crab（骑乘+hurt+炮塔）、stamp（move 覆写+guardSweep+flip）。
+
+## §1 数据模型
+- `actor.rs` 新增：`special: f32`（计量点，JS L81；上限 `special_cost()`=tuning 武器 `special_cost`，JS L129）；`special_id: String`（roster 装载，缺省 `weapon.special || "slam"`，JS L40/L838）；`special_active: Option<SpecialActive>`。`ActorInput.special` 已有（L110），按下边沿 + `special_ready()` 门（JS L277）。
+- `SpecialActive`：`{ id, kind, t, dur, ghost, ended, flags…, state }`；flags 对齐 JS 包字段：`body/no_squid/ink_proof/speed/accel/face_yaw/face_move/aim_face/firing/hang/hang_n/seat/armor/raise/jump_back/origin/marker`；`state` 为 per-kind 枚举载荷（slam 相位 rise/hang/fall、strike aiming/target/confirm、wail autoT、stamp body_yaw/pending/flip/guard/mv_in/mv_out、crab hp/hull/roll/gcd/ccd、zip zip/anchor、blower cur/count/inflate、booyah charge/fullT/thrown、barrage bomb/gap、jetpack cd/boost/paintT、sonar cast、bubbler 无、kraken cd/attack/air/trail、zooka cd）。
+- `ActorStatus` 扩展：`reveal: f32` + `reveal_team: i32`（sonar L1268；slow 0.8/inkMul 1.4 消费点实施时 grep JS `status.reveal` 对齐）、`shield: f32`（bubbler L486-507/L543-562：衰减、分享 shareRange 1.5、splat 清除 L379、filterDamage 归零+击退 L421-427 knockPerDamage 0.045/knockMax 6.5）。
+
+## §2 充能（TR-35.3）
+- 涂地充能：`add_turf` → `special += area * PLAYER.specialChargeRate(0.8)`，钳 `special_cost`，跨阈 emit `special:ready`（JS L137-140）。
+- **特殊自己的墨不计充能**：specials.js L53 `paint()` 走 `addTurfNoSpecial`（turf 统计照加）；slam L910、storm 云雨 L1779、barrage 弹 `it.sp` L594 同口径。
+- 被 splat 保留：`special = active ? cost*keep : min(special,cost)*keep`（JS L217，keep 实读 L210-220）。
+- booyah 欢呼补己方计量 `+cheerSpecial(12)`（L525-528）；zone 加成（zones.js L260）Task 36 接，本任务留钩子。
+- 激活清零 + 回墨：`_startSpecial` L839-841（special=0、ink=inkMax、form=kid、endDodge、stats.specials++）。
+
+## §3 生命周期与 actor 接线
+- 帧序对齐 JS：`update` 内 specialPressed 边沿→start（L277，本帧 return）；`s.body` 为真→`_updateSpecial` 取代控制器（L275-277）；`move` 钩子（L303，stamp）；速度覆写 `s.speed/s.accel`（L445-446）；朝向覆写 faceYaw/faceMove/aimFace（L940-944）；`weapon` 钩子先于 runner，返回真则跳过 runner（L373）；非 body 类 `tick` 在自身移动后（L376）；`noSquid` 阻变 squid（L282）；`inkProof` 免敌墨（L295）；`hang>0` 挂墙（L505）；`seat` 仅呈现。
+- `end(reason)`：rec `[1,reason]`、IMPL.end、清 specialActive、`jump_back` 超级跳回 origin（L372-375；Rust 超级跳若缺则按 JS superJump 语义实现最小 flight/home 路径或声明偏差）。body 类海水判定 L351-354。`onSplat`→end('splat')（L377-379）。
+- `filterDamage`（L412-429）：kraken→0+击退（knockPerDamage 0.02 钳 4）；crab→`hurt`（后/上暴露 L2017-2022 front<-0.45 或 dy>2.4 直伤骑手；否则扣 hull，roll 护甲 0.35）；stamp `guard>0` 前弧 deflectArc 70° 归零；shield→0+击退。
+- `remaining()`（L382-390）：booyah held=1/blower 计数×时长/crab min(时间,hp)/其余 1-t/dur——供 HUD。`prompt/drawMap/audio/FX` 不移植（M4）。
+
+## §4 网络语义
+- **from_actor 槽实值化**（net.rs L175-208/L281/L306-307）：`sp = (special as f64).round()`（JS L748 `Math.round(a.special)` 原始点值，非 frac）；`spx = SPECIAL_ORDER 索引+1`（L750）；`spst = special_net_state(a)`（specials.js L2124-2130：crab `roll|firing<<1|hull8<<2`；booyah `round(clamp(charge)*63)`；其余/ghost=0）。
+- **applyRemote**（replication.rs）：`spx` 非零且索引有效→远端 `special_id`（netmatch L379）；`spst`→`special_net_apply`（L2131-2136：ghost crab roll/firing/hull、ghost booyah charge）。
+- **`['ev']`**：FORWARD 名单 L47 已含 special:use/slam；Rust `SimEvent::SpecialUse{id}/SpecialSlam{pos,radius}` → `TickEvent::Event`（ForwardEvent 占位 L441-444 接线），host 侧 start/落点时产生；收端消费=呈现/音效级 no-op（JS L591-592 仅 audio/FX）。
+- **`['k', nid, 'sp', data]`**（KIT_GHOSTS.sp L2138；rec=netRec L34-42）：走 Task 34 KitRecord 通道；**wire data 为混合载荷**（op2 的 d[2]=kind 字符串、op3/4 的 'x'/'sl'/'zf'/'zm'/'zi' 字符串），批一需把 KitRecord 编码从「全数+ssubs 特例」泛化为可含字符串项（逐字节对齐 JS `JSON.stringify`）。ops：`[0,idx]` start、`[1,reason]` end、``[2,kind,gid,…]` 世界对象（mi/tw/sk/bu/ts/sh/or）、`[3,gid,'x']` 泡爆、`[4,…]` 时刻（stamp 'sl'、zip 'zf'/'zm'/'zi'）。
+- **netGhost 消费（OQ-3 定案）**：轮廓体块档——sim 消费 ghost 状态（actor.special_active ghost、世界对象存在性、crab/booyah 位包），ghost 对象**不喷墨不判伤**（ghostMute/`e.remote` 跳过，L82/L1783/L2048 注）；呈现层 M1 体块、M4 精修。
+- **`['ev'] special:slam` 产生点**：actor.js L914（slam 落地）、specials.js L1238（booyah orb）、L1448（kraken 落地）。
+- **sub 联动（收 Task 34 遗留）**：`it.sp = owner.special_active.is_some()`（subs.js L86/L113；`_credit` 走 add_turf_no_special L594）；storm：`['b']` kind `"storm"` 弹体（throwStorm L1467-1478 同 bomb 物理、fuse=-1、age>1.1 或落地→建云 L1729/L1740），云=地面+4.6 高、dur 6.5、drift 1.1、雨每 0.045 s 滴 `0.45+rand*0.35` 涂地（ghost 不涂 L1779）、dps 34 只打**本地非 remote** 敌（L1783）、LOS 从云下 0.6（L1786-1788）。
+- gid 复用 D-T34-5 方案；`_bubbleHit` 跨端伤害走既有 `'dh'`（netHurtObj L324-327 是 bubble 专用，经 netHurt→dh kind='sp'——实施时核对 JS netHurt 的 kind 串并逐字节对齐）。
+
+## §5 文件与集成点
+- 新建：`special.rs`（SpecialSystem 核心 + slam/storm + gauge + netGhost 分发 + 世界对象注册表）、`special/{barrage,bubbler,sonar,strike,zooka,wail,kraken,blower,jetpack,stamp,booyah,zipcaster,crab}.rs`、`special/world.rs`（Missile/Tornado/Twister/Speaker/Bubble/ThrownStamp/Shell/Orb/ReturnMarker 最小 sim）、`special/tests.rs` + 分族测试文件。
+- 编辑：`actor.rs`（§1/§2/§3 字段与钩子、filterDamage、status 扩展）、`match_.rs`（special 步进、SimEvent→TickEvent、roster special 装载）、`net.rs`（三槽、ForwardEvent 接线、KitRecord 泛化）、`net/replication.rs`（from_actor/applyRemote、`['k','sp']` 分发、storm 弹体）、`sub.rs`（sp 旗标、storm 建云钩子）、`weapon.rs`（jetpack/crab 用 fire_round 泛化弹，若需 blast 复用 blaster 通道）、`tuning.rs`（SpecialSet 消费端；specialCost 已在武器表）。
+- 数值一律 `tuning.specials`/`tuning.weapons[*].special_cost`/`tuning.player.special_charge_rate`，禁手抄。
+
+## §6 测试与门禁
+- TR-35.1（每特殊时序，固定种子）：slam rise0.55/hang0.25/fall-34、半径 5.2/kill3.2/伤 180→55；storm 1.1 s 建云、雨涂地、dps34 只打本地；barrage×5 gap 0.3/0.4/0.2/0.5/0.45、无墨、主武器可用；bubbler 免伤+击退钳 6.5+分享 1.5 m；sonar 全员 reveal 8 s+slow0.8/ink1.4；strike aim7 s/flight2.2/龙卷 4.5 s dps62 pull1.6；zooka interval1.0/speed34/伤 180/穿刺一次；wail charge1.3/blast3.2/dps260 穿墙；kraken hop10.5/attack cd0.65/伤 200/免伤击退；blower max3/inflate1.0/r0.9→2.1/pop55/blastMul1.9；jetpack hover3.8/boost9/interval0.55/直伤 125/splash70→30/结束跳回；stamp turn1.7/静止 6.0/strafe0.35/interval0.42/guard0.45/前弧 70°/flip 双段；booyah charge4.5/cheer0.12/autoThrow2.5/fuse1.5/半径 8.4/kill4.6/伤 220→60；zipcaster range21/speed22/hang1.4/cd0.35/冲击 100/30；crab hp460/gun0.075×18/cannon gap1.15/炮弹 3.0/150→40/roll 护甲 0.35/后上暴露。
+- TR-35.2：sp/spx/spst 非零样本 packer 逐字节（对 packActor L747-750 手算 fixture）；`['k','sp']` 各 op 编解码 round-trip；`['bm']/['bc']` 容忍回归；`['b']` storm/sp 旗标。
+- TR-35.3：涂地充能 0.8/㎡ 钳制、特殊墨不充能、splat 保留、ready 边沿、cheer +12、cost 随武器。
+- 门禁：`/tmp/task34-gates.sh` → `/tmp/task35-gates.sh`，日志 `rust/tools/verify/logs/task35-gates-<UTC>Z.log` 九段全 exit 0；workspace 测试 > 447 单调递增；JS 树零改动。
+
+## §7 偏差声明（计划）
+- D-T35-1：slam/storm 统一 special 层（JS 分居 actor.js/weapons.js），帧序与数值逐行对齐。
+- D-T35-2：OQ-3 定案=轮廓体块档：ghost 消费状态、不喷墨不判伤；呈现精修 M4。
+- D-T35-3：ReturnMarker 仅 sim 桩（t/back/done/origin），灰化倒计时为呈现层。
+- D-T35-4：prompt()/drawMap()/audio/FX/shake/rumble 不移植；`special:ready` 仅总线事件。
+- 其余实施中发现的偏差按 D-T35-n 递增记录。
+
+## §7.1 偏差定案（实施+评审后回填，2026-11-02）
+- D-T35-5：`pending_sp_hurt` 一帧延迟——JS netHurt 在包到帧间应用，Rust 统一帧边界消费，两端一致。成立可接受。
+- D-T35-6：torpedo blast None/None——**不成立**（评审实核 torpedo 全走 `apply_hit_routed`，归因 Some/Some 与 ghost drop 均对齐 JS applyHit）。
+- D-T35-7：booyah cheer 音高属表现层，sim 无对应通道。成立可接受。
+- D-T35-8：ghost `mi` 起点已修——`a.pos+1.6y` 重建，与 JS Missile 构造器同式（special.rs L1352-1354）。
+- D-T35-9：**豁免** zipcaster 系绳射线用 `aim_from(None)=aim_dir` 而非 JS L1795 原始 aimPoint——sim 不建模 aimPoint 输入；回退语义两端一致。
+- D-T35-10：Shell 碰撞胶囊用 actor 默认盒——JS L1173 `e.hitR||PLAYER.radius` 无 hitR 时即回退默认盒，等值（骑乘放大盒差值归 D-T35-21）。成立可接受。
+- D-T35-11：super-jump 途中 owner splat marker 不 finish（JS L710 视觉回调未接）——`step_marker` 30 s 安全帽兜底。成立可接受。
+- D-T35-12：stamp slam 经 actor 队列由 match 同帧 drain（JS weapon 内直调）——按 actor 序确定；仅跨 actor 同帧 RNG 相对序异于 JS。成立可接受。
+- D-T35-13：zip slam 与 duration 到期同帧时 record 次序 `[1,'time']` 先于 `[4,'zi']`（JS body 先于 tick）——仅接收端同帧重放次序，无值差。成立可接受。
+- D-T35-14：guard_sweep 子装置过滤用 `SubState::Dead` 而非 JS `_destroy` 标志——JS L1689 同跳 `'dead'`，结果集等价、移除晚一帧。成立可接受。
+- D-T35-15：stamp move_hook 无 JS L1611-1613 mvIn/mvOut 复合守卫——每帧 intent 为新副本，无跨帧残留可守卫。成立可接受。
+- D-T35-16：crab ghost footprint **已修**——实读 JS（GHOST.crab.tick L2118 无条件调 IMPL.tick、paint helper L53 seed 调用点求值、mute 只砍 splat 本体）判定接收端确实消耗 RNG → `paint_footprint(muted)` seed 恒抽、splat 前返回；ghost_tick crab 臂补 `crab::tick`；replication muted drain。
+- D-T35-17：`_swapWeapon`/`_restoreWeapon` 映射为 peek_special_use 的 runner reset/no-op——jetpack/stamp/kraken 已映射；zooka/blower 未接（runner 每帧被跳过论证无值差，end 后首发射 1 帧级时序差）。成立可接受（P2-5 记录）。
+- D-T35-18：flip 两次 smash 经 `sp_stamp_slam` 队列、drain 点在 tick 后——同 D-T35-13 类同帧次序差。成立可接受。
+- D-T35-19：zipcaster 到达帧 weapon ladder 比 JS 早一帧（JS L1842 到达帧双调用 body）——1 帧武器恢复时序差，无值级分歧。成立可接受。
+- D-T35-20：jetpack weapon arm 仅防御性——body-owned 在 JS L276 短路，该臂不可达。成立。
+- D-T35-21：**顺延** crab 自身 hitR/hitH 放大受击盒（JS L1914/L2031）未实现——影响 Shell/子弹/storm 对骑乘 crab 的命中判定（偏难中）；blast 不受影响（JS L69-71 固定 +0.8y 探针）。M4 或后续补。
+- D-T35-22：guard_sweep `remove_shot` swap-remove 幸存弹向量次序与 JS splice 不同——逆序迭代+swap-remove 每元素恰访问一次，移除集合等价（仅 index 次序可观察）。成立可接受。
+- 评审 P0 修复（非偏差）：`blast()` 补 ghost 攻击者 drop 门控（JS netmatch.js L711-717 `shouldApplyHit` attacker.remote→'drop' 先于 victim 检查），回归测试 `tr35_b4_review_ghost_blast_attacker_drop`。

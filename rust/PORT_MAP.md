@@ -44,7 +44,7 @@ M1 渲染为**固定简化档**，唯一运行时可调项：
 | `src/game/zones.js` | `inkwave_sim::match::zones` | M2+ | Zone Control 规则 |
 | `src/game/bots.js`（easy 参数） | `inkwave_sim::bot` | M1 | 仅 easy；normal/hard M2+ |
 | `src/game/nav.js` | `inkwave_sim::nav` | M1 | 顶面连通航点图的简化实现 |
-| `src/game/specials.js` / `subs.js` / `kits/*` | `inkwave_sim::sub`（+`sub::{shaker,waddle,torpedo,tracer,boomerang}`）/ `weapon::{special,kit}` | M2/Task 34 | 15 副 + 19 特殊 + kit 武器（`subs.js` 已随 Task 34 落 `sub.rs`（SubSystem 核心 + 10 非 kit 设备 + `'dh'`/`['b']`/`['k','subs']` 网络语义）与 `sub/*.rs` 五 kit sub；`kits/brolly.js` 已随 Task 30 落 `weapon/brolly.rs`，`kits/blade.js` 已随 Task 32 落 `weapon/blade.rs`，`kits/bow.js`/`kits/mitts.js` 已随 Task 33 落 `weapon/bow.rs`/`weapon/mitts.rs`；余 specials 随 Task 35） |
+| `src/game/specials.js` / `subs.js` / `kits/*` | `inkwave_sim::sub`（+`sub::{shaker,waddle,torpedo,tracer,boomerang}`）/ `inkwave_sim::special`（+`special::*`）/ `weapon::kit` | M2/Task 34 · M3 Task 35 | 15 副 + 19 特殊 + kit 武器（`subs.js` 已随 Task 34 落 `sub.rs`（SubSystem 核心 + 10 非 kit 设备 + `'dh'`/`['b']`/`['k','subs']` 网络语义）与 `sub/*.rs` 五 kit sub；`kits/brolly.js` 已随 Task 30 落 `weapon/brolly.rs`，`kits/blade.js` 已随 Task 32 落 `weapon/blade.rs`，`kits/bow.js`/`kits/mitts.js` 已随 Task 33 落 `weapon/bow.rs`/`weapon/mitts.rs`；`specials.js` 已随 Task 35 落 `special.rs` + `special/*.rs`（19 特殊全 wired：充能 gauge 与消耗、`sp`/`spx`/`spst` tick 槽实值化、`['ev']` special:use/slam 事件、ghost/replication 对账、`special/world.rs` 世界侧交互） |
 | `src/game/cameraRig.js` | `inkwave::camera` | M1 | 简化第三人称；tilt-shift diorama M2+ |
 | `src/game/minimap.js` | `inkwave::ui::minimap` | M2+ | M1 HUD 只显百分比 |
 | `src/game/character.js`（4062 行，弹簧姿态系统） | `inkwave::render::character` | M1（占位） | M1 体块占位；完整过程化绑定 M2+ |

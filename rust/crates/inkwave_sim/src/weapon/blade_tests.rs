@@ -974,12 +974,14 @@ fn tr32_2_drop_dmg_far_lerp() {
             seed: 0.5,
             blast: false,
             pellet: None,
+            burst: None,
             ghost: false,
             below_falloff: 0.0,
             below_falloff_max: 0.0,
             volley: None,
             dmg_far: Some(rw.flick_damage_far),
             delay: 0.0,
+            sp: None,
         });
         let mut v = Actor::new(1, 1, &f.t);
         v.spawn_at(vec3(0.0, 0.05, z), 0.0, &f.sim(), &f.t);
@@ -997,6 +999,7 @@ fn tr32_2_drop_dmg_far_lerp() {
             None,
             &[],
             &mut owner,
+            None,
         );
         ps.drain_events()
             .iter()
@@ -1069,11 +1072,11 @@ fn tr32_2_blade_drop_delay_freezes_the_first_frames() {
     );
     assert_eq!(ps.list.len(), 7);
     let frozen = ps.list[6].pos;
-    ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w, &f.sb);
+    ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w, &f.sb, None);
     assert_eq!(ps.list[6].age, 0.0, "delay 0.018 > dt → frozen");
     assert_eq!(ps.list[6].pos, frozen, "a frozen round does not move");
     assert!(ps.list[0].age > 0.0, "delay 0 steps immediately");
-    ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w, &f.sb);
+    ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w, &f.sb, None);
     assert!(
         ps.list[6].age > 0.0,
         "the last drop launches once its delay clears"

@@ -93,6 +93,13 @@ pub const SOFT_PUSH_K: f32 = 0.5;
 pub const SPLAT_SPLASH_R: f32 = 1.7;
 /// JS attacker splash splat height above the victim feet (actor.js L228).
 pub const SPLAT_SPLASH_Y: f32 = 0.35;
+/// JS actor.js L827: the super-jump landing splat radius `1.4` — hardcoded
+/// (D-T35-4).
+pub const SUPERJUMP_LAND_R: f32 = 1.4;
+/// JS actor.js L827: the landing splat lift above the feet (`+ 0.3`).
+pub const SUPERJUMP_LAND_LIFT: f32 = 0.3;
+/// JS specials.js L744: `finish(true)`'s instant-fade opacity (`0.001`).
+pub const MARKER_FADE_NOW: f32 = 0.001;
 
 /// Match lifecycle phase (JS `state`; see module docs for the spec mapping).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,7 +148,9 @@ type SplatRecord = (usize, usize, SplatCause, Option<(usize, usize)>);
 
 /// Match event bus (JS `emit('match:state' / 'splatted' / 'turf' / ...)`).
 /// HUD / netcode / FX consumers drain this instead of a global bus.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+/// `SpecialUse` carries an owned id, so the bus is `Clone` (not `Copy`)
+/// since Task 35; consumers move the drained records, never copy them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MatchEvent {
     /// Phase transition (JS `match:state`).
     Phase(Phase),
@@ -167,6 +176,26 @@ pub enum MatchEvent {
     Respawn { team: usize, slot: usize },
     /// Clock crossed 60 s in a match longer than 60 s (JS `match:oneminute`).
     OneMinute,
+    /// An actor fired its special (JS `special:use`, actor.js L845; in the
+    /// netmatch `FORWARD` list L47 — the replication layer records the
+    /// `['ev', 'special:use', {actor, id}]` timeline for the receivers).
+    SpecialUse {
+        /// Activating actor identity `(team, slot)`.
+        owner: (usize, usize),
+        /// JS `id` — the `SPECIAL_ORDER` id.
+        id: String,
+    },
+    /// A slam impact landed (JS `special:slam`, actor.js L914; `FORWARD`
+    /// L47 — the receivers draw the impact ring from the packed
+    /// `{actor, pos, radius}` payload).
+    SpecialSlam {
+        /// Slamming actor identity `(team, slot)`.
+        owner: (usize, usize),
+        /// JS `pos` — the impact centre.
+        pos: Vec3,
+        /// JS `radius` — the impact radius (`SPECIALS.slam.radius`).
+        radius: f32,
+    },
     /// A round hit a proxy actor — JS `applyHit` route `'send'` (weapons.js
     /// L1551, netmatch.js `shouldApplyHit` L711-717): the shooter decided the
     /// hit, the victim's *owner* must apply it. The replication layer (Task
@@ -295,6 +324,12 @@ pub struct Match {
     /// of [`Match::step_masked`].
     #[serde(default)]
     pub dh_out: Vec<DeviceHitOut>,
+    /// Specials singleton (JS `G.specials`, specials.js): the world-object
+    /// list (missiles, bubbles, storm clouds, …) and the gid sequence. The
+    /// per-actor actives live on [`Actor::special_active`]; this holds the
+    /// cross-actor state.
+    #[serde(default)]
+    pub specials: crate::special::SpecialSystem,
     pub paint: PaintGrid,
     pub projectiles: ProjectileSim,
     /// Seeded stream for the judge tie-break + splash seeds (JS `Math.random`).
@@ -374,6 +409,7 @@ impl Match {
             subs: SubSystem::new(seed ^ 0x9e37_79b9),
             bomb_out: Vec::new(),
             dh_out: Vec::new(),
+            specials: crate::special::SpecialSystem::new(),
             paint: PaintGrid::new(world.collision),
             projectiles: ProjectileSim::new(seed),
             rng: Rng::new(seed ^ 0x5bd1_e995),
@@ -472,6 +508,10 @@ impl Match {
         self.subs = SubSystem::new(self.seed ^ 0x9e37_79b9);
         self.bomb_out.clear();
         self.dh_out.clear();
+        // JS rebuilds the `SpecialSystem` with the match; the sim clears the
+        // world-object list and the gid counter in place.
+        self.specials.world.clear();
+        self.specials.gid_seq = 0;
         for (a, r) in self.actors.iter_mut().zip(self.runners.iter_mut()) {
             r.reset();
             a.reset(t);
@@ -582,6 +622,10 @@ impl Match {
         let live = self.phase == Phase::Active;
         let intro = self.phase == Phase::Intro;
         let can_respawn = self.can_respawn();
+        // JS `SpecialSystem.update` L535: the cheer intents are collected
+        // here and drained after the sub step (JS's frame position — the
+        // boosts only bite from the next frame's weapon passes).
+        let mut cheer_edges: Vec<usize> = Vec::new();
         for i in 0..self.actors.len() {
             if remote.is_some_and(|m| m.get(i).copied().unwrap_or(false)) {
                 continue;
@@ -617,6 +661,31 @@ impl Match {
             if self.kinds[i] == WeaponKind::Mitts {
                 self.runners[i].ensure_mitts(w);
             }
+            // JS `IMPL.zipcaster.body` L1818-1826: the enemy slam scan runs
+            // *before* the pull; the body ladder has no roster access, so the
+            // match pre-checks it. On a hit the zip stops dead (JS L1821-1822:
+            // vel zeroed, zip + facing cleared) and the impact rides the
+            // actor flag; `s.body` stays set so the frame's body branch still
+            // runs (`_updateSpecial` did fire before JS's early return) and
+            // releases the body.
+            if self.actors[i].special_active.as_ref().is_some_and(|s| {
+                s.body
+                    && !s.ghost
+                    && matches!(&s.state, crate::special::KindState::Zipcaster(zs)
+                        if zs.zip.is_some())
+            }) && let Some(ei) =
+                crate::special::zipcaster::slam_scan(&self.actors, &self.actors[i], t)
+            {
+                let a = &mut self.actors[i];
+                a.vel = Vec3::ZERO; // JS L1821
+                a.sp_zip_impact = Some(crate::actor::ZipImpact::Slam(ei));
+                if let Some(s) = a.special_active.as_mut() {
+                    s.face_yaw = None; // JS L1822
+                    if let crate::special::KindState::Zipcaster(st) = &mut s.state {
+                        st.zip = None;
+                    }
+                }
+            }
             let a = &mut self.actors[i];
             // Respawn gating (see module docs): hold dead timers above the
             // step while the phase does not allow respawning.
@@ -637,6 +706,150 @@ impl Match {
             if intro && a.alive {
                 confine_to_own_pad(a, world);
             }
+            // JS `IMPL.strike.body` L1292 → `IMPL.strike.launch` (L1294-1301):
+            // the body half (inside `a.step`) raised the `launch` flag; the
+            // launch itself needs the registry + collision, so it runs here
+            // on the same frame.
+            if self.actors[i].peek_strike_launch() {
+                crate::special::strike::launch(
+                    i,
+                    &mut self.actors,
+                    &mut self.specials,
+                    world.collision,
+                );
+            }
+            // JS `IMPL.jetpack.body` L1561-1572: the blast fires inside the
+            // body ladder (it needs the projectile stream) — drain the raised
+            // flag on the same frame.
+            if self.actors[i].sp_jet_fire {
+                self.actors[i].sp_jet_fire = false;
+                self.projectiles
+                    .fire_jetpack_blast(&self.actors[i], &crate::special::specials().jetpack);
+            }
+            // JS L1574-1578: the exhaust trail splat (seed drawn only when
+            // the ground probe lands).
+            if self.actors[i].sp_jet_paint {
+                self.actors[i].sp_jet_paint = false;
+                crate::special::jetpack::paint_trail(
+                    &mut self.actors[i],
+                    world.collision,
+                    &mut self.paint,
+                    &mut self.rng,
+                );
+            }
+            // JS `IMPL.zipcaster.body` L1823 / L1832: the zipper impact
+            // ladder (slam or arrival) needs the roster — drain the flag.
+            if let Some(imp) = self.actors[i].sp_zip_impact.take() {
+                crate::special::zipcaster::impact(
+                    &mut self.actors,
+                    i,
+                    imp,
+                    world.collision,
+                    &mut self.paint,
+                    &mut self.rng,
+                    &mut self.projectiles,
+                    &mut self.subs,
+                    remote,
+                    t,
+                );
+            }
+            // JS `IMPL.jetpack.start` L1515 / `IMPL.zipcaster.start` L1775:
+            // the take-off pushes a `ReturnMarker` at the launch spot.
+            if let Some(icon) = self.actors[i].sp_marker.take() {
+                let (slot, team, pos) =
+                    (self.actors[i].slot, self.actors[i].team, self.actors[i].pos);
+                self.specials.world.push(crate::special::world::make_marker(
+                    slot, team, &icon, pos, false,
+                ));
+            }
+            // JS actor.js L827 + specials.js L709: the super-jump touch-down
+            // splats under the feet (one seed draw, normal turf credit) and
+            // wipes the home marker (`finish(true)`).
+            if self.actors[i].sp_superjump_land {
+                self.actors[i].sp_superjump_land = false;
+                let a = &mut self.actors[i];
+                if let Some(wi) = crate::special::world::find_marker(&self.specials.world, a.slot)
+                    && let crate::special::world::ObjectBody::Marker(mk) =
+                        &mut self.specials.world[wi].body
+                    && mk.back
+                {
+                    mk.done = true;
+                    mk.fade = MARKER_FADE_NOW;
+                }
+                let pos = a.pos;
+                let seed = self.rng.next_f32();
+                let area = self.paint.splat(
+                    world.collision,
+                    vec3(pos.x, pos.y + SUPERJUMP_LAND_LIFT, pos.z),
+                    SUPERJUMP_LAND_R,
+                    a.team,
+                    &SplatOpts {
+                        seed,
+                        stretch: None,
+                        stretch_amt: None,
+                        kind: None,
+                    },
+                );
+                a.add_turf(area, t);
+            }
+            // JS `SpecialSystem.update` L535: `if (a.intent.cheer) cheer(a)`.
+            if inp.cheer {
+                cheer_edges.push(i);
+            }
+            // Task 35 batch 2: the match-level special hooks. The actor
+            // event queue only drains at frame end, so these peeks fire the
+            // mechanism on the same frame the special started / landed.
+            let use_id = self.actors[i].peek_special_use().map(|s| s.to_string());
+            if let Some(id) = use_id.as_deref() {
+                // JS actor.js L844: `_startSpecial` ends the dodge roll.
+                self.runners[i].end_dodge();
+                match id {
+                    // JS specials.js L1266-1271: the sonar cast reveals
+                    // every enemy on the roster.
+                    "sonar" => crate::special::sonar::apply_reveal(i, &mut self.actors),
+                    // JS specials.js L1421: the kraken takes the weapon
+                    // runner's controls — start it from a clean slate.
+                    "kraken" => self.runners[i].reset(),
+                    // JS specials.js L1284-1285: the strike's bounds clamp,
+                    // the `botTarget` pick and the `autoT` draw (the
+                    // roster-side half of `IMPL.strike.start`).
+                    "strike" => crate::special::strike::begin(
+                        i,
+                        &mut self.actors,
+                        &self.specials,
+                        world.collision,
+                        &self.paint,
+                        &mut self.rng,
+                    ),
+                    // JS specials.js L1364: the wail bot auto-place timer
+                    // (`0.45 + rand*0.5`).
+                    "wail" => crate::special::wail::begin(&mut self.actors[i], &mut self.rng),
+                    // JS L1517 / L1601: `_swapWeapon` (L650) resets the
+                    // runner — the sim has no held-weapon swap, so the reset
+                    // stands in (deviation: the swapped `sp_jetgun` /
+                    // `sp_stamp` stats are never consulted).
+                    "jetpack" | "stamp" => self.runners[i].reset(),
+                    _ => {}
+                }
+            }
+            // JS actor.js L857: the storm throw spawns the glide bomb.
+            if self.actors[i].has_special_storm() {
+                self.projectiles.throw_storm(&self.actors[i]);
+            }
+            // JS actor.js L886-887: the slam landing runs `_slamImpact`.
+            if let Some(c) = self.actors[i].peek_special_slam() {
+                crate::special::slam_impact(
+                    &mut self.rng,
+                    &mut self.projectiles,
+                    &mut self.actors,
+                    i,
+                    c,
+                    world.collision,
+                    &mut self.paint,
+                    remote,
+                    t,
+                );
+            }
         }
 
         // ---- weapon runners (JS: each actor's `weaponRunner.update` inside
@@ -653,12 +866,24 @@ impl Match {
             if remote.is_some_and(|m| m.get(i).copied().unwrap_or(false)) {
                 continue;
             }
+            // Drain the end-of-special handoffs (JS `IMPL.blower.end`'s
+            // release / `IMPL.barrage.end`'s aim reset run inline at splat
+            // time; the sim routes them through actor flags) — even for a
+            // dead actor, before the alive short-circuit below.
+            if self.actors[i].sp_reset_aim {
+                self.actors[i].sp_reset_aim = false;
+                self.runners[i].aiming_sub = false;
+            }
+            crate::special::blower::drain_let(&mut self.actors[i], &mut self.specials);
             // Task 32: the melee scans (roller / brush / blade) need the rest
             // of the roster alongside the runner's own actor — `FoeScan`
             // splits the slice around the index (spec §6).
             // JS L145: `SK?.blocked?.(a, sub)` — the kit refusal check
-            // needs the device lists, which only the match layer has.
-            let sub_blocked = self.subs.kit_blocked(self.actors[i].sub, i);
+            // needs the device lists, which only the match layer has. The
+            // barrage's bomb overrides the loadout sub (weapons.js L136-137).
+            let sub_blocked = self
+                .subs
+                .kit_blocked(crate::special::barrage::effective_sub(&self.actors[i]), i);
             let (a, mut foes) = FoeScan::split_around(&mut self.actors, i);
             let r = &mut self.runners[i];
             if !a.alive {
@@ -666,37 +891,59 @@ impl Match {
                 a.fire_gate = FireGate::default();
                 continue;
             }
-            let gate = a.fire_gate;
+            let mut gate = a.fire_gate;
             let inp = if live {
                 inputs.get(i).copied().unwrap_or_default()
             } else {
                 ActorInput::default()
             };
+            // JS actor.js L371-373: capture the ink before the weapon pass
+            // (the reveal burn below measures *this frame's* spend against
+            // it) and let a special that owns the trigger (kraken — batch 2;
+            // zooka / blower — batch 3; jetpack / stamp / crab — batch 4)
+            // skip `weaponRunner.update`
+            // (`if (!(spx && G.specials.weapon(...)))` L373; the unimplemented
+            // stubs never take over).
+            let ink_before = a.ink;
+            let sp_takeover = crate::special::weapon_hook(
+                a,
+                dt,
+                &mut self.specials,
+                world.collision,
+                &mut self.rng,
+                &mut self.paint,
+                &mut self.projectiles,
+                t,
+                &inp,
+                &mut gate,
+            );
             // Per-actor loadout (spec D-2): the runner dispatches by kind.
             // `inp.fire` is the raw (ungated) intent the blade kit reads as
             // JS `a.intent.fire` (blade.js L630, spec D-T32-2).
             let ps_time = self.projectiles.time;
-            r.update(
-                dt,
-                &gate,
-                a,
-                self.kinds[i],
-                w,
-                sb,
-                inp.move_dir,
-                world.collision,
-                &mut self.projectiles,
-                &mut foes,
-                &mut self.paint,
-                t,
-                remote,
-                inp.fire,
-                ps_time,
-                &mut self.arrows,
-                &mut self.fists,
-                inp.jump,
-                sub_blocked,
-            );
+            if !sp_takeover {
+                r.update(
+                    dt,
+                    &gate,
+                    a,
+                    self.kinds[i],
+                    w,
+                    sb,
+                    inp.move_dir,
+                    world.collision,
+                    &mut self.projectiles,
+                    &mut foes,
+                    &mut self.paint,
+                    t,
+                    remote,
+                    inp.fire,
+                    ps_time,
+                    &mut self.arrows,
+                    &mut self.fists,
+                    inp.jump,
+                    sub_blocked,
+                );
+            }
             // A brolly launch this frame joins the world canopy list (JS
             // `addLaunched` → `LAUNCHED.push`, brolly.js L285).
             if let Some(c) = r.brolly_launch.take() {
@@ -736,6 +983,7 @@ impl Match {
                     sb,
                     Some(&mut self.subs),
                     remote,
+                    Some((&mut self.specials.world, &mut self.rng)),
                 );
             }
             // D-T34-9 deploy timing (D-T31-1 precedent): the runner has no
@@ -760,6 +1008,95 @@ impl Match {
                     ps_time,
                 );
             }
+            // JS actor.js L375: a sonar-revealed kid burns ink faster — the
+            // extra cost is the *increment* of this frame's spend measured
+            // against `ink_before` (the deferred `use_sub` above is part of
+            // that spend; JS runs `SUBS.use` inline inside the runner).
+            let a = &mut self.actors[i];
+            if a.status.reveal > 0.0 && a.ink < ink_before {
+                let burn = (ink_before - a.ink) * (crate::special::specials().sonar.ink_mul - 1.0);
+                a.ink = (a.ink - burn).max(0.0);
+            }
+            // JS specials.js L1436-1463: the kraken's hop gate, landing
+            // blast and trail paint run at the match level (the kind tick
+            // needs paint / collision / subs handles). It runs before the
+            // generic `tick` so the duration expiry sees the blast frame.
+            crate::special::kraken::tick(
+                &mut self.rng,
+                &mut self.projectiles,
+                &mut self.actors,
+                i,
+                dt,
+                world.collision,
+                &mut self.paint,
+                &mut self.subs,
+                remote,
+                t,
+            );
+            // JS `IMPL.stamp.tick` (L1655-1670): the flip windows + guard
+            // sweep need the projectile stream and the sub devices — the
+            // match runs it right before the generic `tick` (the kraken
+            // precedent above).
+            crate::special::stamp::tick_full(
+                &mut self.actors[i],
+                dt,
+                &mut self.projectiles,
+                &mut self.subs,
+            );
+            // JS actor.js L376: `if (specialActive) G.specials.tick(...)` —
+            // advance the non-body kinds (the body kinds already ran inside
+            // `Actor::step`). The sea check (JS L381, *after* the tick) runs
+            // inside `Actor::step` before this pass in the sim's two-pass
+            // frame order; batch-1 `tick` never kills, so the difference is
+            // unobservable (recorded deviation). `inp` drives the zip hang
+            // release (JS `IMPL.zipcaster.tick` L1882-1888 reads `a.intent`).
+            crate::special::tick(&mut self.actors[i], dt, &inp);
+            // JS `IMPL.stamp` slam ladder (L1694-1712): the weapon's pending
+            // swing and the tick's flip windows queued through
+            // `sp_stamp_slam` — drain in queue order (JS frame order: weapon
+            // before tick).
+            let slams = std::mem::take(&mut self.actors[i].sp_stamp_slam);
+            for (radius, reach) in slams {
+                crate::special::stamp::slam(
+                    &mut self.actors,
+                    i,
+                    radius,
+                    reach,
+                    world.collision,
+                    &mut self.paint,
+                    &mut self.rng,
+                    &mut self.projectiles,
+                    &mut self.subs,
+                    remote,
+                    t,
+                );
+            }
+            // JS L2005: the rolled crab's footprint paint (one seed draw).
+            // Local actors only — this loop skips proxies (the ghost-side
+            // muted drain lives in `net::replication`).
+            if self.actors[i].sp_crab_paint {
+                self.actors[i].sp_crab_paint = false;
+                crate::special::crab::paint_footprint(
+                    &mut self.actors[i],
+                    world.collision,
+                    &mut self.paint,
+                    &mut self.rng,
+                    false,
+                );
+            }
+            // JS L373-375: the special end's `returning()` / `finish()` on
+            // the owner's live marker.
+            crate::special::drain_marker_action(&mut self.actors[i], &mut self.specials);
+            // JS `IMPL.barrage.end` L1252: `a.weaponRunner.aimingSub = false`
+            // — routed through the actor flag (the kind stub has no runner).
+            if self.actors[i].sp_reset_aim {
+                self.actors[i].sp_reset_aim = false;
+                self.runners[i].aiming_sub = false;
+            }
+            // JS `IMPL.blower.end` L1505: the held bubble released when the
+            // special ends — the release needs the registry, so the match
+            // drains the actor's `sp_let` here.
+            crate::special::blower::drain_let(&mut self.actors[i], &mut self.specials);
         }
 
         // ---- soft push between actors (JS match.js L231-244; offline every
@@ -790,7 +1127,9 @@ impl Match {
             if area > 0.0 {
                 let (team, slot) = (self.launched[li].team, self.launched[li].slot);
                 if let Some(ai) = find_actor(&self.actors, team, slot) {
-                    self.actors[ai].turf += area;
+                    // JS brolly.js L337: the canopy stripe is credited through
+                    // `addTurf`, which also charges the special gauge.
+                    self.actors[ai].add_turf(area, t);
                     self.events.push(MatchEvent::Turf {
                         owner_team: team,
                         owner_slot: slot,
@@ -955,6 +1294,35 @@ impl Match {
             remote,
             &shields,
             &mut owner,
+            Some((&mut self.specials.world, &mut self.rng)),
+        );
+
+        // Task 35 batch 2: storm clouds. JS creates them inside
+        // `_updateBombs` and steps them in `_updateClouds` right after
+        // (projectiles.js), so the sim drains `pending_clouds` immediately
+        // after the projectile step and runs the shared world-object pass
+        // in the same frame. Batch-3/4 ballistic objects live in the same
+        // registry but JS steps them later (`specials.update`, specials.js
+        // L566-569, after subs) — revisit the placement when they land.
+        if !self.projectiles.pending_clouds.is_empty() {
+            let dur = crate::special::specials().storm.duration;
+            for spawn in self.projectiles.pending_clouds.drain(..) {
+                self.specials.world.push(crate::special::world::make_cloud(
+                    world.collision,
+                    &spawn,
+                    dur,
+                ));
+            }
+        }
+        crate::special::world::step_objects(
+            &mut self.specials.world,
+            dt,
+            &mut self.actors,
+            world.collision,
+            &mut self.paint,
+            &mut self.rng,
+            remote,
+            t,
         );
 
         // JS `snapShields` (L192): this frame's pose becomes the next
@@ -1001,13 +1369,48 @@ impl Match {
             ps_time,
         );
 
+        // JS `specials.update` L535: booyah cheers land before the shield
+        // ladder. The edges were collected from the actor inputs earlier in
+        // this step; the drain applies them now on the current sim time.
+        {
+            let ct = self.projectiles.time;
+            for i in cheer_edges.iter() {
+                crate::special::cheer(*i, &mut self.actors, ct);
+            }
+        }
+
+        // JS specials.js L542-563: the bubbler shield ladder runs in
+        // `SpecialSystem.update` (main.js L1119 — specials.update is the
+        // last system tick, after subs.update).
+        crate::special::update_shields(&mut self.actors, dt);
+
+        // JS `specials.update` L566-569: the batch-3 world objects (missile,
+        // tornado, twister, speaker, bubble, orb) step after the shield
+        // ladder, in reverse registry order like the JS loop.
+        {
+            let time = self.projectiles.time;
+            let mut ctx = crate::special::world::WorldCtx {
+                actors: &mut self.actors,
+                collision: world.collision,
+                paint: &mut self.paint,
+                rng: &mut self.rng,
+                subs: &mut self.subs,
+                sb,
+                t,
+                events: self.projectiles.events_mut(),
+                remote,
+                time,
+            };
+            crate::special::world::step_special_objects(&mut self.specials.world, dt, &mut ctx);
+        }
+
         // ---- scoring drains (JS `on('hit'/'weapon:impact')` + `_credit`).
         let pev = self.projectiles.drain_events();
-        self.route_turf(&pev);
+        self.route_turf(&pev, t);
         let sev = self.subs.drain_events();
         // A sub blast's turf credit rides the sub event queue (subs.js
         // `_credit`, L594) — route it like the projectile queue.
-        self.route_turf(&sev);
+        self.route_turf(&sev, t);
 
         // ---- proxy hits: JS `applyHit` route `'send'` (weapons.js L1551,
         // netmatch.js `shouldApplyHit` L711-717). The shooter decided the hit;
@@ -1157,6 +1560,7 @@ impl Match {
         // `lastDamage < 4`, JS actor.js L384).
         let mut splatted: Vec<SplatRecord> = Vec::new();
         let mut respawns: Vec<(usize, usize)> = Vec::new();
+        let mut sp_events: Vec<MatchEvent> = Vec::new();
         for a in self.actors.iter_mut() {
             for e in a.drain_events() {
                 match e {
@@ -1164,9 +1568,32 @@ impl Match {
                         splatted.push((a.team, a.slot, cause, attacker));
                     }
                     ActorEvent::Respawn => respawns.push((a.team, a.slot)),
+                    // JS `special:use` / `special:slam` are in the netmatch
+                    // `FORWARD` list (L47): the replication layer records
+                    // the `['ev', …]` timeline for the receivers.
+                    ActorEvent::SpecialUse { id } => {
+                        sp_events.push(MatchEvent::SpecialUse {
+                            owner: (a.team, a.slot),
+                            id,
+                        });
+                    }
+                    ActorEvent::SpecialSlam { pos, radius } => {
+                        sp_events.push(MatchEvent::SpecialSlam {
+                            owner: (a.team, a.slot),
+                            pos,
+                            radius,
+                        });
+                    }
+                    // `special:storm` (the cloud throw) is *not* in FORWARD —
+                    // the cloud rides the `['k','sp']` records instead;
+                    // `special:ready` is HUD-only. Both stay local.
+                    ActorEvent::SpecialStorm | ActorEvent::SpecialReady => {}
                     _ => {}
                 }
             }
+        }
+        for ev in sp_events {
+            self.events.push(ev);
         }
         for (team, slot) in respawns {
             self.events.push(MatchEvent::Respawn { team, slot });
@@ -1196,7 +1623,9 @@ impl Match {
                     },
                 );
                 if area > 0.0 {
-                    self.actors[ai].turf += area;
+                    // JS actor.js L229: the splash is credited via
+                    // `attacker.addTurf(...)` (gauge charge included).
+                    self.actors[ai].add_turf(area, t);
                     self.events.push(MatchEvent::Turf {
                         owner_team: at,
                         owner_slot: aslot,
@@ -1267,27 +1696,36 @@ impl Match {
     /// JS `_credit(p, area)` → `owner.addTurf(area)`: resolve the identity
     /// `(team, owner_slot)` payload to a roster index and credit the actor
     /// (spec: 比赛事件总线 — splat / 比分变化).
-    fn route_turf(&mut self, events: &[SimEvent]) {
+    fn route_turf(&mut self, events: &[SimEvent], t: &PlayerTuning) {
         for e in events {
-            let (owner_slot, team, area) = match e {
+            let (owner_slot, team, area, no_special) = match e {
                 SimEvent::Impact {
                     owner_slot,
                     team,
                     area,
+                    no_special,
                     ..
-                } => (*owner_slot, *team, *area),
+                } => (*owner_slot, *team, *area, *no_special),
                 SimEvent::Turf {
                     owner_slot,
                     team,
                     area,
-                } => (*owner_slot, *team, *area),
+                    no_special,
+                } => (*owner_slot, *team, *area, *no_special),
                 _ => continue,
             };
             if area <= 0.0 {
                 continue;
             }
             if let Some(idx) = find_actor(&self.actors, team, owner_slot) {
-                self.actors[idx].turf += area;
+                // JS `Projectiles._credit` (weapons.js L845) / subs.js L594:
+                // an `sp`-stamped source credits without charging the
+                // gauge (`addTurfNoSpecial`); everything else charges.
+                if no_special {
+                    self.actors[idx].add_turf_no_special(area);
+                } else {
+                    self.actors[idx].add_turf(area, t);
+                }
                 self.events.push(MatchEvent::Turf {
                     owner_team: team,
                     owner_slot,

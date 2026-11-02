@@ -517,6 +517,7 @@ fn blast(ctx: &mut Ctx, i: usize, muted: bool) {
         owner_slot: os,
         team: ot,
         area,
+        no_special: false,
     });
     // ---- damage: line of sight from just above the can (JS L514-522)
     let los_from = vec3(c.x, c.y + 0.3, c.z);

@@ -46,8 +46,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::{
     ActorSample, BombRecord, ControlFrame, DirectMsg, EventRecord, ForwardEvent, HostMsg,
-    KitRecord, ProjectileRecord, SplatRecord, Tick, TickEvent, TimedEvent, TrigData, TriggerRecord,
-    ZoneRecord,
+    KitRecord, KitVal, ProjectileRecord, SplatRecord, Tick, TickEvent, TimedEvent, TrigData,
+    TriggerRecord, ZoneRecord,
 };
 
 // ---------------------------------------------------------------------------
@@ -556,14 +556,13 @@ pub fn encode_record(e: &TickEvent) -> String {
         // array: JS writes the sub kind *string* at `data[2]`
         // (`[op, gid, kind, …]`, subs.js L77/L103), so the wire mirrors it.
         TickEvent::Kit(k) => {
-            let data = match (&*k.kind, k.sub_kind.as_deref()) {
-                ("subs", Some(s)) => arr(k
-                    .data
-                    .iter()
-                    .enumerate()
-                    .map(|(i, d)| if i == 2 { js_str(s) } else { num(dec(*d)) })),
-                _ => arr(k.data.iter().map(|d| num(dec(*d)))),
-            };
+            let data = arr(k.data.iter().enumerate().map(|(i, d)| match (i, d) {
+                (2, KitVal::Num(_)) if k.kind == "subs" && k.sub_kind.is_some() => {
+                    js_str(k.sub_kind.as_deref().unwrap_or_default())
+                }
+                (_, KitVal::Num(v)) => num(dec(*v)),
+                (_, KitVal::Str(s)) => js_str(s),
+            }));
             arr([js_str("k"), num(f64::from(k.nid)), js_str(&k.kind), data])
         }
         // ['z', e] (L148) — e carried verbatim.
@@ -639,19 +638,37 @@ pub fn decode_record(a: &[JVal]) -> Option<TickEvent> {
         })),
         "k" => {
             let data_arr = a.get(3).and_then(JVal::as_array);
+            let kind = gs(2).unwrap_or_default();
+            let mut data: Vec<KitVal> = data_arr
+                .map(|d| {
+                    d.iter()
+                        .map(|v| match v.as_str() {
+                            Some(s) => KitVal::Str(s.to_string()),
+                            None => KitVal::Num(v.as_f64().unwrap_or(0.0) as f32),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            // The subs record is a mixed array (subs.js L77/L103): the kind
+            // string rides `data[2]`; it is lifted into `sub_kind` and the
+            // slot keeps a `Num(0.0)` placeholder (JS index layout intact).
+            // Only for `subs` — the `sp` channel's strings are payload data.
+            let sub_kind = if kind == "subs" {
+                match data.get_mut(2) {
+                    Some(KitVal::Str(s)) => Some(std::mem::take(s)),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            if sub_kind.is_some() {
+                data[2] = KitVal::Num(0.0);
+            }
             Some(TickEvent::Kit(KitRecord {
                 nid: g(1) as u8,
-                kind: gs(2).unwrap_or_default(),
-                // The subs record is a mixed array (subs.js L77/L103): the
-                // kind string rides `data[2]`; the numeric vector keeps the
-                // JS index layout with a `0.0` placeholder there.
-                sub_kind: data_arr
-                    .and_then(|d| d.get(2))
-                    .and_then(JVal::as_str)
-                    .map(str::to_string),
-                data: data_arr
-                    .map(|d| d.iter().map(|v| v.as_f64().unwrap_or(0.0) as f32).collect())
-                    .unwrap_or_default(),
+                kind,
+                sub_kind,
+                data,
             }))
         }
         "z" => Some(TickEvent::Zone(ZoneRecord {
@@ -1476,7 +1493,7 @@ mod tests {
         let kit = TickEvent::Kit(KitRecord {
             nid: 2,
             kind: "mitts".into(),
-            data: vec![0.5, 1.25, 0.0],
+            data: vec![KitVal::Num(0.5), KitVal::Num(1.25), KitVal::Num(0.0)],
             sub_kind: None,
         });
         assert_eq!(encode_record(&kit), "[\"k\",2,\"mitts\",[0.5,1.25,0]]");

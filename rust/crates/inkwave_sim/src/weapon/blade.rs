@@ -319,6 +319,7 @@ impl BladeWave {
                         owner_slot: self.owner_slot,
                         team: self.team,
                         area,
+                        no_special: false,
                     });
                 }
             }
@@ -374,6 +375,7 @@ impl BladeWave {
                     victim_slot: None,
                     owner_slot: self.owner_slot,
                     area,
+                    no_special: false,
                 });
             }
             None => {
@@ -403,6 +405,7 @@ impl BladeWave {
                         owner_slot: self.owner_slot,
                         team: self.team,
                         area,
+                        no_special: false,
                     });
                 }
             }
@@ -685,6 +688,7 @@ fn ground_stroke(
             owner_slot: a.slot,
             team: a.team,
             area,
+            no_special: false,
         });
     }
 }

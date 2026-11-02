@@ -385,6 +385,9 @@ fn lodge(
             owner_slot: p.owner_slot,
             team: p.team,
             area,
+            // JS bow.js L39: live `owner.specialActive` gate (in `add_turf`),
+            // no stamped `sp` on arrows.
+            no_special: false,
         });
     }
 }
@@ -439,6 +442,7 @@ pub fn burst(
                 owner_slot: p.owner_slot,
                 team: p.team,
                 area,
+                no_special: false,
             });
         }
         // JS L146-158: splash damage — nearest point of the victim's body
@@ -483,6 +487,7 @@ pub fn burst(
         victim_slot: None,
         owner_slot: p.owner_slot,
         area: 0.0,
+        no_special: false,
     });
 }
 
@@ -601,6 +606,7 @@ impl BowArrow {
                         victim_slot: Some(actors[si].slot),
                         owner_slot: p.owner_slot,
                         area: 0.0,
+                        no_special: false,
                     });
                     if !p.lodge {
                         return false;
@@ -650,6 +656,7 @@ impl BowArrow {
                         owner_slot: p.owner_slot,
                         team: p.team,
                         area,
+                        no_special: false,
                     });
                 }
                 ps.push_event(SimEvent::Impact {
@@ -660,6 +667,7 @@ impl BowArrow {
                     victim_slot: None,
                     owner_slot: p.owner_slot,
                     area: 0.0,
+                    no_special: false,
                 });
             }
             return false;
@@ -691,6 +699,7 @@ impl BowArrow {
                             owner_slot: p.owner_slot,
                             team: p.team,
                             area,
+                            no_special: false,
                         });
                     }
                 }

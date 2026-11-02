@@ -136,8 +136,8 @@ use crate::net::wire::{
 };
 use crate::net::{
     ActorSample, ActorStatsRow, BombRecord, DirectMsg, EventRecord, ForwardEvent, HostMsg,
-    KitRecord, ProjectileRecord, SessionId, SplatRecord, Tick, TickEvent, TimedEvent, TrigData,
-    TriggerRecord,
+    KitRecord, KitVal, ProjectileRecord, SessionId, SplatRecord, Tick, TickEvent, TimedEvent,
+    TrigData, TriggerRecord,
 };
 use crate::paint::{SplatKind, SplatOpts};
 use crate::tuning::{Difficulty, PlayerTuning, Spritzer, SubSet, WeaponSet};
@@ -243,6 +243,13 @@ pub struct Replication {
     now: f64,
     /// The humans-only stage flag (JS `mapNoBots(this.cfg.map)`, L673).
     no_bots: bool,
+    /// Queued `{k:'dh', kind:'sp'}` bubble hurts awaiting the owner-side
+    /// world registry (Task 35 batch 3): `on_message` has no collision /
+    /// sub-system handles, so the hit rides to the next [`Replication::update`]
+    /// where the full [`crate::special::world::WorldCtx`] exists. JS applies
+    /// `netHurt` on packet arrival (between frames) — the deferral is at
+    /// most one frame (recorded deviation).
+    pending_sp_hurt: Vec<(u32, f32)>,
 }
 
 impl Replication {
@@ -269,6 +276,7 @@ impl Replication {
             clock_t: 0.0,
             now: 0.0,
             no_bots: map_no_bots(&cfg.map),
+            pending_sp_hurt: Vec::new(),
         }
     }
 
@@ -401,6 +409,30 @@ impl Replication {
     ) -> Vec<MatchEvent> {
         self.now += dt as f64;
 
+        // ---- queued ghost-bubble hurts (Task 35 batch 3, JS `netHurt`
+        // L325-326 on the owner's screen): the owner-side registry lives in
+        // `m.specials` and the hurt needs the full world context, so it
+        // lands here at the first frame boundary after the message.
+        if !self.pending_sp_hurt.is_empty() {
+            let pending = std::mem::take(&mut self.pending_sp_hurt);
+            for (gid, d) in pending {
+                let time = m.projectiles.time;
+                let mut ctx = crate::special::world::WorldCtx {
+                    actors: &mut m.actors,
+                    collision: sim.collision,
+                    paint: &mut m.paint,
+                    rng: &mut m.rng,
+                    subs: &mut m.subs,
+                    sb,
+                    t,
+                    events: m.projectiles.events_mut(),
+                    remote: Some(&self.remote).map(|v| &**v),
+                    time,
+                };
+                crate::special::net_hurt_obj(&mut m.specials, gid, d, &mut ctx);
+            }
+        }
+
         // ---- playback clocks + path sampling (JS L176-177, before the
         // tick send so the frame's samples ride the *next* packet's
         // timeline, exactly like `update`'s ordering).
@@ -516,6 +548,62 @@ impl Replication {
                         cause,
                     });
                 }
+                MatchEvent::SpecialUse { owner, id } => {
+                    // JS `_onLocalEvent` (L139-143) over the FORWARD list
+                    // (L47): `['ev', 'special:use', packEvent({actor, id})]`
+                    // — `packEvent` maps the actor to `{n: nid}` and passes
+                    // the string through (L803-813). Local actors only; the
+                    // receiver's `play_event` ignores the name (FX-only).
+                    if let Some(i) = find_actor(&m.actors, owner.0, owner.1)
+                        && !self.remote[i]
+                    {
+                        self.rec(TickEvent::Event(EventRecord {
+                            name: ForwardEvent::SpecialUse,
+                            payload: JVal::Obj(vec![
+                                (
+                                    "actor".to_string(),
+                                    JVal::Obj(vec![(
+                                        "n".to_string(),
+                                        JVal::Num(f64::from(self.nids[i])),
+                                    )]),
+                                ),
+                                ("id".to_string(), JVal::Str(id.clone())),
+                            ]),
+                        }));
+                    }
+                    rest.push(MatchEvent::SpecialUse { owner, id });
+                }
+                MatchEvent::SpecialSlam { owner, pos, radius } => {
+                    // JS `['ev', 'special:slam', packEvent({actor, pos,
+                    // radius})]` (actor.js L914): vector → `[r2, r2, r2]`,
+                    // number → `r3` (netmatch.js L803-813).
+                    if let Some(i) = find_actor(&m.actors, owner.0, owner.1)
+                        && !self.remote[i]
+                    {
+                        self.rec(TickEvent::Event(EventRecord {
+                            name: ForwardEvent::SpecialSlam,
+                            payload: JVal::Obj(vec![
+                                (
+                                    "actor".to_string(),
+                                    JVal::Obj(vec![(
+                                        "n".to_string(),
+                                        JVal::Num(f64::from(self.nids[i])),
+                                    )]),
+                                ),
+                                (
+                                    "pos".to_string(),
+                                    JVal::Arr(vec![
+                                        JVal::Num(wire::r2(f64::from(pos.x))),
+                                        JVal::Num(wire::r2(f64::from(pos.y))),
+                                        JVal::Num(wire::r2(f64::from(pos.z))),
+                                    ]),
+                                ),
+                                ("radius".to_string(), JVal::Num(wire::r3(f64::from(radius)))),
+                            ]),
+                        }));
+                    }
+                    rest.push(MatchEvent::SpecialSlam { owner, pos, radius });
+                }
                 other => rest.push(other),
             }
         }
@@ -565,7 +653,36 @@ impl Replication {
                     nid: self.nids[i],
                     kind: spawn.kind,
                     sub_kind: spawn.sub_kind,
-                    data,
+                    data: data.into_iter().map(KitVal::Num).collect(),
+                }));
+            }
+        }
+
+        // ---- specials-channel records (JS specials.js `rec(a, d)` →
+        // `netRec(a, 'sp', d)`, L42): drain each *local* actor's per-frame
+        // queue into `['k', nid, 'sp', data]` timeline records — the exact
+        // shape `recKit` (netmatch.js L134-137) writes. Op-2 (world-object
+        // spawn) records carry the gid the sim stamped in slot form
+        // (`slot * 100_000 + seq`); rewrite it into the wire form
+        // (`nid * 100_000 + seq`) so receivers key ghosts on `(src_nid,
+        // gid)` like JS `netId` (registry.js L64-65) — D-T34-5 pattern.
+        for (i, a) in m.actors.iter_mut().enumerate() {
+            if self.remote[i] || a.sp_records.is_empty() {
+                continue;
+            }
+            let nid = self.nids[i];
+            for mut rec in a.sp_records.drain(..) {
+                let op = rec.first().and_then(KitVal::as_f32).unwrap_or(-1.0) as i32;
+                if op == 2
+                    && let Some(KitVal::Num(g)) = rec.get_mut(2)
+                {
+                    *g = (u32::from(nid) * 100_000 + (*g as u32) % 100_000) as f32;
+                }
+                self.rec(TickEvent::Kit(KitRecord {
+                    nid,
+                    kind: "sp".to_string(),
+                    sub_kind: None,
+                    data: rec,
                 }));
             }
         }
@@ -617,6 +734,34 @@ impl Replication {
             for (i, &rem) in self.remote.iter().enumerate() {
                 if rem {
                     playback.apply(i, &mut m.actors[i], dt);
+                    // JS `SpecialSystem.update` → `_ghostTick` (specials.js
+                    // L533-570 / L287-298): every frame advances a proxy's
+                    // *ghost* active (timer, firing decay, duration expiry,
+                    // death end) regardless of the playback ready / alive
+                    // gates above — the sim runs it right after `applyRemote`
+                    // (JS runs it later in the same frame, one sub-frame of
+                    // skew, harmless for the sim).
+                    crate::special::ghost_tick(&mut m.actors[i], dt);
+                    // JS L296 → `GHOST.crab.tick` L2118 → `IMPL.crab.tick`
+                    // L2005: the ghost's rolled footprint raises the paint
+                    // request under `ghostMute` — drain it muted: the seed
+                    // draw still happens (specials.js L53 evaluates the
+                    // `Math.random()` argument before paint.js L470's mute
+                    // return), the splat / turf do not.
+                    if m.actors[i].sp_crab_paint {
+                        m.actors[i].sp_crab_paint = false;
+                        crate::special::crab::paint_footprint(
+                            &mut m.actors[i],
+                            sim.collision,
+                            &mut m.paint,
+                            &mut m.rng,
+                            true,
+                        );
+                    }
+                    // JS `SpecialSystem.end` L373: a ghost's clean `time` end
+                    // routes its proxy marker through `returning()` /
+                    // `finish()` — drain the action raised by `ghost_tick`.
+                    crate::special::drain_marker_action(&mut m.actors[i], &mut m.specials);
                     // JS `applyRemote` L398: `MAIN_KITS[kind]?.netApply?.(wr,
                     // S.ks | 0, dt)` — rebuild the remote brolly canopy pose
                     // so the held-shield assembly (match_.rs `refreshShields`,
@@ -938,6 +1083,8 @@ impl Replication {
                             // ghosts; the sim-side ghost stays a plain round.
                             blast: false,
                             pellet: None,
+                            // The `['p']` record carries no burst override.
+                            burst: None,
                             // JS `ghostProjectile` (netmatch.js L868-871)
                             // carries neither `belowFalloff` nor `volley` —
                             // the `['p']` record has no such fields and the
@@ -949,6 +1096,10 @@ impl Replication {
                             // falloff / delay — a ghost round is a plain one.
                             dmg_far: None,
                             delay: 0.0,
+                            // JS `_new` (L851) leaves `sp` undefined even
+                            // for ghosts — the L1570 lazy stamp reads this
+                            // screen's actor on the first update tick.
+                            sp: None,
                         });
                     }
                     TickEvent::Trigger(_) => {
@@ -979,6 +1130,10 @@ impl Replication {
                         if !self.remote[i] {
                             continue;
                         }
+                        // Numeric view of the mixed payload (kit records are
+                        // all-`Num` on the wire; the `sp` channel's strings
+                        // are read from `k.data` directly).
+                        let dnum: Vec<f32> = k.data.iter().map(|v| v.num_or(0.0)).collect();
                         match k.kind.as_str() {
                             // JS `ghost` guards `Array.isArray(d)` (L651); a
                             // short payload would pack `undefined` → NaN —
@@ -987,7 +1142,7 @@ impl Replication {
                                 if k.data.len() < 7 {
                                     continue;
                                 }
-                                let d = &k.data;
+                                let d = &dnum;
                                 // JS L652: `_gd.set(d[3], 0, d[4]).normalize()`.
                                 let dir = vec3(d[3], 0.0, d[4]).normalize_or(Vec3::Z);
                                 m.launched.push(LaunchedCanopy::new(
@@ -1009,7 +1164,7 @@ impl Replication {
                                 if k.data.len() < 6 {
                                     continue;
                                 }
-                                let d = &k.data;
+                                let d = &dnum;
                                 let pos = vec3(d[0], d[1], d[2]);
                                 // JS L269: `_gd.set(d[3], d[4], d[5]).normalize()`.
                                 let dir = vec3(d[3], d[4], d[5]).normalize_or(Vec3::Z);
@@ -1028,7 +1183,7 @@ impl Replication {
                                 if k.data.len() < 8 {
                                     continue;
                                 }
-                                let d = &k.data;
+                                let d = &dnum;
                                 let s = bow::bow_shot(d[6], &w.bow);
                                 let pos = vec3(d[0], d[1], d[2]);
                                 // JS L303: `_gd.set(d[3], d[4], d[5]).normalize()`.
@@ -1049,7 +1204,7 @@ impl Replication {
                             // `1` (land splash) / `2` (cling tick) are FX the
                             // sim does not model — consumed and ignored.
                             "mitts" => {
-                                let d = &k.data;
+                                let d = &dnum;
                                 if d.len() < 8 || d[0] != 0.0 {
                                     continue;
                                 }
@@ -1090,7 +1245,7 @@ impl Replication {
                                     i,
                                     k.nid,
                                     sk,
-                                    &k.data,
+                                    &dnum,
                                     &self.nids,
                                     sim.collision,
                                     &mut m.actors,
@@ -1101,6 +1256,41 @@ impl Replication {
                                     Some(&self.remote).map(|v| &**v),
                                     ps_time,
                                 );
+                            }
+                            // JS `_play` 'k' → `KIT_GHOSTS.sp.ghost` =
+                            // `specials.js netGhost(a, d)` (L267-276): the
+                            // owner's special lifecycle records drive the
+                            // proxy's ghost active and world-object list.
+                            // The payload is mixed `KitVal` (op / gid numbers
+                            // plus the string kind / reason slots).
+                            "sp" => {
+                                let ps_time = m.projectiles.time;
+                                let mut ctx = crate::special::world::WorldCtx {
+                                    actors: &mut m.actors,
+                                    collision: sim.collision,
+                                    paint: &mut m.paint,
+                                    rng: &mut m.rng,
+                                    subs: &mut m.subs,
+                                    sb,
+                                    t,
+                                    events: m.projectiles.events_mut(),
+                                    remote: Some(&self.remote).map(|v| &**v),
+                                    time: ps_time,
+                                };
+                                crate::special::net_ghost(i, &k.data, &mut m.specials, &mut ctx);
+                                // JS specials.js L2051: `GHOST.sonar.start`
+                                // *is* `IMPL.sonar.start` — a ghost cast
+                                // reveals this screen's enemies too ("the
+                                // reveal is everyone's"). The `revealed`
+                                // flag on the kind state makes it fire once
+                                // per cast even if the record replays.
+                                let needs_reveal =
+                                    m.actors[i].special_active.as_ref().is_some_and(|s| {
+                                        s.ghost && s.kind == "sonar" && !s.sonar_revealed()
+                                    });
+                                if needs_reveal {
+                                    crate::special::sonar::apply_reveal(i, &mut m.actors);
+                                }
                             }
                             // Batch two: the five kit subs ride `['k', nid,
                             // <kit id>, [op, gid, …]]` (kits/registry.js) —
@@ -1114,7 +1304,7 @@ impl Replication {
                                     i,
                                     k.nid,
                                     &k.kind,
-                                    &k.data,
+                                    &dnum,
                                     &self.nids,
                                     sim.collision,
                                     &mut m.actors,
@@ -1133,10 +1323,13 @@ impl Replication {
                     // visual copy of a remote player's splat bomb. JS has no
                     // remote guard on `'b'` (unlike `'k'`): the record lands
                     // on the owner's timeline, and a sender never replays
-                    // its own. The `storm` kind needs the special layer
-                    // (JS `throwStorm`, D-T34-1) — dropped upstream.
+                    // its own.
                     TickEvent::Bomb(b) => {
-                        if b.kind != "bomb" {
+                        // JS `ghostBomb` L879 branches on `kind === 'storm'`
+                        // (ghost throwStorm + ghost cloud); both kinds ride
+                        // the same record shape and `ghost_bomb` builds the
+                        // matching bomb (Task 35 batch 2, D-T34-1 retired).
+                        if b.kind != "bomb" && b.kind != "storm" {
                             continue;
                         }
                         let Some(i) = self.idx_of_nid(b.nid) else {
@@ -1148,6 +1341,10 @@ impl Replication {
                             vec3(b.vel[0], b.vel[1], b.vel[2]),
                             m.actors[i].slot,
                             m.actors[i].team,
+                            // JS `ghostBomb` L879 replays `throwBomb(a)` with
+                            // this screen's actor — `sp` reads its live
+                            // `specialActive` (weapons.js L1461).
+                            m.actors[i].special_active.is_some(),
                         );
                     }
                     // M1/M2 placeholder (`z`): no zone gameplay in scope —
@@ -1328,7 +1525,10 @@ impl Replication {
             // roster slot, not the session nid.
             "dh" => {
                 if let Some(DirectMsg::DeviceHit { kind, id, d }) = decode_direct(&v)
-                    && matches!(kind.as_str(), "subs" | "waddle" | "torpedo" | "torpedoArea")
+                    && matches!(
+                        kind.as_str(),
+                        "subs" | "waddle" | "torpedo" | "torpedoArea" | "sp"
+                    )
                 {
                     let src_nid = (id / 100_000) as u8;
                     let mut off = id % 100_000;
@@ -1341,7 +1541,15 @@ impl Replication {
                     }
                     if let Some(i) = self.idx_of_nid(src_nid) {
                         let gid = (m.actors[i].slot as u32) * 100_000 + off;
-                        m.subs.net_hurt(&kind, gid, d);
+                        if kind == "sp" {
+                            // Task 35 batch 3: a ghost bubble hurt on its
+                            // owner's registry — queued for the next
+                            // `update` (the registry needs the full world
+                            // context, which `on_message` does not carry).
+                            self.pending_sp_hurt.push((gid, d));
+                        } else {
+                            m.subs.net_hurt(&kind, gid, d);
+                        }
                     }
                 }
             }
@@ -3285,7 +3493,7 @@ mod tests {
                 kind: TickEvent::Kit(KitRecord {
                     nid: 0,
                     kind: kind.into(),
-                    data,
+                    data: data.into_iter().map(KitVal::Num).collect(),
                     sub_kind: None,
                 }),
             }],
@@ -3326,7 +3534,10 @@ mod tests {
                 kind: TickEvent::Kit(KitRecord {
                     nid: 0,
                     kind: "brolly".into(),
-                    data: vec![base.x, base.y, base.z, 0.0, -1.0, hp0, 1.2],
+                    data: vec![base.x, base.y, base.z, 0.0, -1.0, hp0, 1.2]
+                        .into_iter()
+                        .map(KitVal::Num)
+                        .collect(),
                     sub_kind: None,
                 }),
             }],
@@ -3807,7 +4018,7 @@ mod tests {
                 kind: TickEvent::Kit(KitRecord {
                     nid: 0,
                     kind: "torpedo".into(),
-                    data,
+                    data: data.into_iter().map(KitVal::Num).collect(),
                     sub_kind: None,
                 }),
             }],
@@ -4243,7 +4454,7 @@ mod tests {
                 kind: TickEvent::Kit(KitRecord {
                     nid: 0,
                     kind: "boomerang".into(),
-                    data,
+                    data: data.into_iter().map(KitVal::Num).collect(),
                     sub_kind: None,
                 }),
             }],

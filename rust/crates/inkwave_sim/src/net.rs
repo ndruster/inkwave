@@ -137,9 +137,8 @@ pub mod flags {
 /// sim state by [`ActorSample::from_actor`]; TR-15.2 requires the mapping to
 /// be lossless (full f32, no wire rounding).
 ///
-/// M1 scope is Tidewater + Spritzer only, so the kit/special slots (`ks`,
-/// `spx`, `spst`) and the charge/streaming flags carry their M1 constants
-/// (0 / false) and are documented per field.
+/// Task 35: the special slots (`sp`, `spx`, `spst`) and `F.special` are live
+/// (netmatch.js L738/L748/L750); `ks` remains the brolly-only kit pose.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ActorSample {
     /// Sender clock timestamp of the tick, seconds (`d.ts` → `s.t`; the JS
@@ -172,7 +171,8 @@ pub struct ActorSample {
     pub hp: f32,
     /// Ink (JS `Math.round(a.ink)`).
     pub ink: f32,
-    /// Special gauge `sp` (s[13]): M1 has no specials — constant 0.
+    /// Special gauge `sp` (s[13], JS `Math.round(a.special)`): the raw gauge
+    /// in turf points; the wire layer rounds at serialise time.
     pub sp: f32,
     /// Weapon charge `ch` (s[14], `wr.streaming ? burstFrac : charge`,
     /// linearly interpolated on playback; JS L748): Task 31 leaves every
@@ -202,9 +202,14 @@ pub struct ActorSample {
     /// canopy pose (`brolly_net_state`, brolly.js L636-641); every other kind
     /// — and every kit without a `netState` — packs 0.
     pub ks: u32,
-    /// Special extra state `spx` (s[22]): M1 — 0.
+    /// Special id index `spx` (s[22], JS `SPECIAL_ORDER.indexOf(a.specialId)
+    /// + 1`, netmatch.js L750): the *equipped* special, 1-based; `0` for an
+    /// unknown id (JS `-1 + 1`). The proxy restores `specialId` from it
+    /// (applyRemote L379) so the `F.special` placeholder knows what to name.
     pub spx: f32,
-    /// Special net state `spst` (s[23], `specialNetState(a)`): M1 — 0.
+    /// Special net state `spst` (s[23], `specialNetState(a)`, specials.js
+    /// L2124-2130): the crab roll/firing/hull byte or the booyah charge
+    /// 0..63; `0` for every other kind and for ghosts without a def.
     pub spst: u32,
 }
 
@@ -264,6 +269,11 @@ impl ActorSample {
         if a.on_enemy {
             f |= flags::ENEMY;
         }
+        // JS L738: any running special (including the net placeholder) sets
+        // `F.special`; the proxy side reacts in `applyRemote` (L379-385).
+        if a.special_active.is_some() {
+            f |= flags::SPECIAL;
+        }
         Self {
             t,
             x: a.pos.x,
@@ -278,7 +288,9 @@ impl ActorSample {
             f,
             hp: a.hp,
             ink: a.ink,
-            sp: 0.0,
+            // JS L748 `Math.round(a.special)` — full precision here, the
+            // wire rounds at serialise time.
+            sp: a.special,
             // JS L748 `wr.streaming ? wr.burstFrac : wr.charge` — `streaming`
             // is set only by the retired splatling (weapons.js L381-426), so
             // every wired kind (charger/spinner/bucket included) ships
@@ -303,8 +315,13 @@ impl ActorSample {
             } else {
                 0
             },
-            spx: 0.0,
-            spst: 0,
+            // JS L750: the *equipped* id's `SPECIAL_ORDER` index + 1
+            // (unknown ⇒ `-1 + 1 = 0`).
+            spx: a
+                .special_id
+                .as_deref()
+                .map_or(0.0, |id| (crate::special::order_index(id) + 1) as f32),
+            spst: crate::special::net_state(a),
         }
     }
 
@@ -501,24 +518,71 @@ pub struct EventRecord {
     pub payload: JVal,
 }
 
+/// One element of a [`KitRecord`]'s payload — the JS `data` arrays are
+/// *mixed*: numbers everywhere, plus strings at fixed indices (the subs kind
+/// string at `data[2]`, subs.js L77/L103; the specials channel's reason /
+/// object kind strings, specials.js L258/L268/L270/L296/L303/L314/L320).
+/// The wire writes `Num` as a rounded number and `Str` as a JSON string, so
+/// both shapes stay byte-identical to JS.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum KitVal {
+    /// A number (JS numeric array element).
+    Num(f32),
+    /// A string (JS string array element).
+    Str(String),
+}
+
+impl KitVal {
+    /// JS numeric read (`d[i] | 0` / `+d[i]`): `None` for a string element.
+    #[must_use]
+    pub fn as_f32(&self) -> Option<f32> {
+        match self {
+            Self::Num(v) => Some(*v),
+            Self::Str(_) => None,
+        }
+    }
+
+    /// JS string read: `None` for a number (JS `typeof` guards).
+    #[must_use]
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::Str(s) => Some(s),
+            Self::Num(_) => None,
+        }
+    }
+
+    /// f64 view for the wire layer's rounding helpers.
+    #[must_use]
+    pub fn as_f64(&self) -> Option<f64> {
+        self.as_f32().map(f64::from)
+    }
+
+    /// Numeric read with a `0.0` default (JS `d[i] || 0`).
+    #[must_use]
+    pub fn num_or(&self, default: f32) -> f32 {
+        self.as_f32().unwrap_or(default)
+    }
+}
+
 /// Kit world-object spawn `['k', nid, kind, data]` (recKit, netmatch.js
 /// L134-137): a fist/arrow/canopy/thrown sub replayed by the kit's
-/// `ghost(actor, data)`, visual-only. M1 has no kits/subs/specials, so this
-/// variant is the PROTO v1 shape placeholder only.
+/// `ghost(actor, data)`, visual-only, plus the specials channel
+/// (`kind == "sp"`, specials.js `rec` → `netGhost`, L267-276).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KitRecord {
     pub nid: u8,
-    /// Kit kind string (JS `kind`, e.g. `'mitts'`).
+    /// Kit kind string (JS `kind`, e.g. `'mitts'` / `'sp'`).
     pub kind: String,
     /// Sub-system kind string for `kind == "subs"` records — JS packs the
     /// mixed array `['k', nid, 'subs', [op, gid, kindStr, …]]` (subs.js
     /// L77/L103); the wire layer writes it back at `data[2]` and the decode
-    /// lifts it out again (the numeric vector keeps the JS index layout).
-    /// `None` for the main-weapon kits.
+    /// lifts it out again (the vector keeps the JS index layout with a
+    /// `Num(0.0)` placeholder there). `None` for the main-weapon kits and
+    /// the specials channel.
     #[serde(default)]
     pub sub_kind: Option<String>,
-    /// Short array of rounded numbers the kit packs (JS `data`).
-    pub data: Vec<f32>,
+    /// The mixed payload the kit/special packs (JS `data`).
+    pub data: Vec<KitVal>,
 }
 
 /// Zone Control decision record `['z', e]` (recZone, netmatch.js L148): the

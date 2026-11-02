@@ -43,7 +43,8 @@
 //!   - **App-layer fields do not exist in the sim** and are not ported:
 //!     `hurtFlash` (L374-375), `aimDir`/`aimPoint` (L362-364, derived from
 //!     `aim_yaw`/`aim_pitch` on demand), climbing `wallN` (L373, M1 has no
-//!     climb), special/super-jump/kit pose state (L379-398, M1 constants),
+//!     climb), super-jump / kit pose state (L386-398, M1 constants; the
+//!     special block L376-385 landed with Task 35),
 //!     landing & squid in/out FX and audio (L400-412), `anim.time` /
 //!     `_finishFrame` (L351, L428). The per-frame `landT` / `lastDamage`
 //!     increments (L414) are skipped too: `Actor` keeps `last_damage`
@@ -64,7 +65,7 @@
 //!     [`super::replication::Replication`]'s event replay (Task 23); `boss` /
 //!     `voices` (L178-180) are out of M2 turf scope.
 
-use crate::actor::{Actor, Form};
+use crate::actor::{Actor, Form, SpecialActive};
 use crate::net::flags;
 use crate::net::{ActorSample, SessionId, TimedEvent};
 use crate::tuning::PlayerTuning;
@@ -305,6 +306,10 @@ pub struct ActorNet {
     handoff: bool,
     spawn_pending: bool,
     death_tp: u32,
+    /// JS `n.spOff` (netmatch.js L383): seconds the `F.special` flag has been
+    /// off while a *ghost* active is still running; past 0.6 s the ghost is
+    /// ended (`'net'`) as one whose end record never arrived.
+    sp_off: f32,
 }
 
 impl ActorNet {
@@ -322,6 +327,7 @@ impl ActorNet {
             handoff: false,
             spawn_pending: false,
             death_tp: 0,
+            sp_off: 0.0,
         }
     }
 }
@@ -659,14 +665,52 @@ impl Playback {
             0
         };
         a.on_enemy = s.flag(flags::ENEMY);
-        // hp/ink (L376); `special` is an M1 constant (L376 `a.special = S.sp`)
+        // hp/ink/special gauge (L376: `a.hp = S.hp; a.ink = S.ink; a.special = S.sp`)
         a.hp = s.hp;
         a.ink = s.ink;
+        a.special = s.sp;
         // L377: the invuln bit is a hard 0.1 s window (the proxy never runs
         // `Actor::step`, so nothing else decrements it)
         a.invuln = if s.flag(flags::INVULN) { 0.1 } else { 0.0 };
         // L378: the turf stat only ever ratchets up
         a.turf = a.turf.max(s.turf);
+        // L379: the owner's loadout special (`SPECIAL_ORDER[spx - 1]`; 0 /
+        // out-of-range keeps the current id, exactly like JS's falsy / `undefined`
+        // guard).
+        if s.spx >= 1.0 {
+            let idx = (s.spx as usize) - 1;
+            if let Some(id) = crate::special::order().get(idx) {
+                a.special_id = Some(id.clone());
+            }
+        }
+        // L380-385: the `F.special` flag drives the proxy's special state.
+        // Flag on: reset the off-timer and keep / build the `net` placeholder
+        // active (JS L382 `{ id: a.specialId || a.weapon.special, net: true }`
+        // — the match builder always sets `special_id` from the weapon's
+        // special, so the JS fallback cannot pick a different id here; the
+        // placeholder is *not* a ghost — the owner's `['k','sp']` records
+        // replace it with a real ghost via `_startGhost`, specials.js L277-285).
+        // Flag off: a *ghost* gets the 0.6 s grace (its end record may still be
+        // in flight, L383); anything else — placeholder included — is dropped
+        // outright (L384). Finally `specialNetApply(a, S.spst)` (L385) feeds
+        // the ghost kinds' pose state from the packed `spst` word.
+        if s.flag(flags::SPECIAL) {
+            n.sp_off = 0.0;
+            if a.special_active.is_none() {
+                let id = a.special_id.clone().unwrap_or_default();
+                a.special_active = Some(Box::new(SpecialActive::net_placeholder(&id)));
+            }
+        } else if a.special_active.as_ref().is_some_and(|x| x.ghost) {
+            // JS L383 `> 0.6` is hardcoded in netmatch.js (D-T35-4).
+            const GHOST_OFF_TIMEOUT: f32 = 0.6; // JS L383
+            n.sp_off += dt;
+            if n.sp_off > GHOST_OFF_TIMEOUT {
+                crate::special::end(a, "net");
+            }
+        } else {
+            a.special_active = None;
+        }
+        crate::special::net_apply(a, s.spst);
         // L420-426: a respawned proxy stays hidden until the path shows the
         // new life's `tp`
         if n.spawn_pending {

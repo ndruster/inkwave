@@ -551,6 +551,7 @@ fn fire_blast(r: &mut WeaponRunner, a: &mut Actor, bw: &Brolly, ps: &mut Project
             trail_every: 0.0,   // JS L100 `trailEvery: 0`
             trail_radius: 0.42, // `fireCustom` default (L1204) — unused
             trail_start: -1.5,
+            burst: None,
         };
         // JS L103: `p.life = w.pelletLife` overrides the fireCustom default.
         ps.push_round(

@@ -200,7 +200,7 @@
 - 修复复验：`cargo fmt --all` + clippy `-D warnings` + workspace 447 passed 全绿，九段门禁复跑全 exit 0（日志同上）。
 
 ## Task 35: 特殊武器 19 个 + tick 槽实值化（sp/spx/spst）
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 34
 - **Description**:
@@ -211,6 +211,25 @@
   - `rule` TR-35.2: sp/spx/spst 槽 fixture 逐字节（含非零样本）；`['k']`/`['bm']`/`['bc']` 解码容忍测试。
   - `rule` TR-35.3: 充能联动：击杀/涂地/zone 反推 gauge 数值断言。
 - **Notes**: 19 个是大头，按机制族分组实现（弹道族/领域族/位移族/召唤族）；barrage×5 复用同主体。
+
+### Task 35 Completion Evidence（2026-11-02）
+- **TR-35.1 ✅**：19 个特殊（13 kind，barrage×5 共享主体）全部落地并逐值固定种子断言——批一（核心层：生命周期 start/netGhost/tick/body/move/weapon/end/remaining/filterDamage + gauge + 三槽 + `['k','sp']` 泛化混合载荷 + 13 桩，447→468）；批二（slam rise/hang/fall、storm 云雨+dps34 只打本地、bubbler 免伤击退钳 6.5+分享 1.5、sonar reveal 8 s、kraken hop/attack cd0.65/免伤击退，→475）；批三（strike aim7/flight2.2/龙卷 dps62 pull1.6、zooka interval1.0/speed34/伤 180 穿刺、wail charge1.3/blast3.2/dps260 穿墙、blower max3/inflate1.0/r0.9→2.1/pop55、booyah charge4.5/cheer0.12/fuse1.5/伤 220→60、barrage×5 gap 逐变体+无墨+主武器可用，→482）；批四（jetpack hover3.8/boost9/interval0.55/直伤 125/splash70→30/结束跳回、zipcaster range21/speed22/hang1.4/cd0.35/冲击 100/30、crab hp460/gun0.075×18 双抽风/cannon gap1.15/炮弹 150→40/roll 护甲 0.35/后上暴露 front<-0.45∨dy>2.4、stamp turn1.7/静止 6.0/strafe0.35/interval0.42/guard0.45/前弧 70°/flip 双段，含 determinism 双跑五分量全等，→487）；评审修复 +1（ghost blast attacker drop 回归，→488）。workspace **488 passed**（基线 447 单调递增）。全量九段门禁日志 `rust/tools/verify/logs/task35-gates-20261102T175845Z.log`（fmt/clippy/test/wasm32/cargo tree/trunk release/headless 600 帧/JS 树零改动，全 exit 0）。
+- **TR-35.2 ✅**：sp/spx/spst 非零样本 packer 逐字节（对 packActor L747-750 手算 fixture：`sp=Math.round(special)` 原始点值、`spx=indexOf+1`、`spst=specialNetState`——crab 位包 `roll|firing<<1|round(hull/TAU·255)<<2`、booyah `round(clamp(charge)·63)`）；`['k','sp']` 各 op（0/1/2/3/4，含字符串混合载荷）编解码 round-trip；`['bm']/['bc']` 容忍回归；`['b']` storm 弹体 + `it.sp` 旗标。
+- **TR-35.3 ✅**：涂地充能 `area×0.8` 钳 `special_cost`、特殊墨不充能（`add_turf_no_special` 全口径：slam 落点/风暴云雨/barrage 弹/jetpack 尾焰/crab 足迹/stamp 砸击均走 no-charge 路径并有 gauge 不变断言）、splat 保留 `active?cost·keep:min(cost,special)·keep`、ready 边沿事件、booyah cheer +12、cost 随武器 specialCost。zone 加成（zones.js L260 gaugeHeld/Neutral）留钩子，Task 36 接。
+- **架构落地**：新建 `special.rs`（生命周期/gauge/net_ghost 分发/世界对象注册表/blast/filterDamage）+ `special/{slam 族批二文件,barrage,bubbler,sonar,strike,zooka,wail,kraken,blower,jetpack,stamp,booyah,zipcaster,crab,world}.rs`；`actor.rs` 扩展（`special/special_id/special_active`、`SpecialActive` flags+KindState、`ActorStatus.reveal/shield/slow`、body/move_hook/weapon 钩子/hang/jump_back/superJump）；`net.rs` 三槽实值化 + KitRecord 字符串泛化；`net/replication.rs` from_actor/applyRemote（spx→special_id、spst→net_apply、0.6 s ghost 宽限）；`sub.rs` `it.sp` 旗标 + storm 建云；`match_.rs` special 步进与各 drain 队列（zip slam/stamp slam/jet fire·paint/marker 动作/超级跳落地擦 marker）。数值全走 `tuning.specials`/`weapons[*].special_cost`/`player.special_charge_rate`，JS 硬编码常量以命名 const + `// JS L…` 锚 + D-T35-4 记录。
+- **文档**：`spec.md` §7 偏差定案 D-T35-1..22 全部落档（见下 Review 附录判定）；`PORT_MAP.md` specials.js 行更新为 M3 Task 35 状态。
+
+### Task 35 Review 附录（独立评审：1 P0 / 1 P1 / 5 P2 → P0+P2-2 当场修复，P1+其余 P2 定案记录 → 门禁复验全绿）
+- 评审员实读 JS 复核通过：批四四机制数值全走 tuning、帧序（body 短路/weapon 钩子先于 runner/tick 次序）对齐 actor.js L274-277；crab hurt 暴露公式（L2017-2022）、spst 位包 Math.round 语义（L2127）、gatling 每轮 2 抽 RNG 序（L1970）、stamp 前弧 70°/guardSweep/flip 双段、zip hang 1.4+挂墙（actor.js L505）、jetpack 结束跳回链（jump_back→superJump→marker back）逐行一致；网络三槽/充能规则/ghost 不喷墨/锚点抽查/测试逐值性全部实核。
+- **P0 ✅** `special.rs blast()` 玩家伤害循环缺 ghost 攻击者 drop 门控（JS netmatch.js L711-717 `shouldApplyHit`：`attacker.remote → 'drop'` 先于 victim 检查）——接收端 ghost ts/sh/or/bubble 爆炸对本地玩家双重伤害。修复：攻击者 remote 掩码命中则整体跳过玩家伤害采集（`damage_area` 维持 `muted` 门控），注释带 JS 锚；回归测试 `tr35_b4_review_ghost_blast_attacker_drop` 四场景（ghost ts 落地爆炸无 Hit、owner 侧 Hit+HitSend 正常、ghost bubble 'x' 路由无伤害、本地气泡伤害正常）。
+- **P1（定案=D-T35-9 豁免）** zipcaster 系绳射线用 `aim_from(None)=aim_dir` 而非 JS L1795 原始 aimPoint——sim 不建模 aimPoint 输入，回退语义两端一致；spec §7 显式记录。
+- **P2-1（定案记录）** zip slam/stamp slam 与 duration 到期同帧时 record 次序 `[1,'time']` 先于 `[4,'zi']/[4,'sl']`（JS body/weapon 先于 tick）——仅接收端 ghost 同帧重放次序，无值差。
+- **P2-2 ✅** crab ghost footprint 不抽 seed 与 paint_splat「mute 下仍抽 seed」约定不一致：实读 JS（GHOST.crab.tick L2118 无条件调 IMPL.crab.tick、paint helper L53 seed 调用点求值、mute 只砍 splat 本体 paint.js L470）判定接收端确实消耗 RNG → `paint_footprint` 加 `muted` 参 seed 恒抽；`ghost_tick` crab 臂补 `crab::tick`；replication 层 muted drain。
+- **P2-3（定案=顺延）** crab 自身 hitR/hitH 放大受击盒（JS L1914/L2031）未实现，骑乘态命中盒偏小——记 D-T35-21，M4 或后续补。
+- **P2-4（定案可接受）** super-jump 途中 owner splat marker 不 finish（JS L710 视觉回调未接），30 s 安全帽兜底——D-T35-11。
+- **P2-5（定案记录）** zooka/blower `_swapWeapon` runner reset 未映射（match_.rs 仅 kraken/jetpack/stamp）——end 后首发射 1 帧级时序差，批二三以「runner 每帧被跳过」论证无值差。
+- 偏差候选判定：D-T35-6（torpedo blast None/None）**不成立**（torpedo 全走 `apply_hit_routed`，归因与 drop 均与 JS 一致）；D-T35-5/7/8/10/12/13/14/15/16（已修）/17/18/19/20/22 成立可接受，全部按 §7 递增编号落档 spec.md。
+- 修复复验：fmt/clippy/test 三门禁 + 九段矩阵全 exit 0（workspace **488 passed** > 447 基线），日志同上。
 
 ## Task 36: Zone Control 规则 + ['z'] 广播 + session 模式放开
 - **Status**: `pending`

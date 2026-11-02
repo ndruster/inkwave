@@ -27,6 +27,36 @@ pub fn fnv1a(s: &str) -> u64 {
     h
 }
 
+/// JS `new Actor(…)` L40 + `specialCost()` L129: the equipped special id and
+/// the gauge cost come from the weapon table (`WEAPONS[id].special` /
+/// `.specialCost`, config.js). The sim stores both per-actor (the tick sample
+/// carries the gauge `sp`, so the cost must live on the actor), stamped here
+/// at build time from the embedded tuning. Unknown / retired weapon ids fall
+/// back to the Spritzer, mirroring [`WeaponKind::from_kind_str`]'s rule in
+/// [`build_net_match`].
+fn weapon_special(weapon: &str) -> (&'static str, f32) {
+    // D-T35-2 pattern: a `OnceLock` over the embedded artifact keeps the
+    // table `'static` without plumbing a `&WeaponSet` through the builder.
+    static WS: std::sync::OnceLock<crate::tuning::WeaponSet> = std::sync::OnceLock::new();
+    let w = WS.get_or_init(|| crate::embedded_tuning().weapons);
+    let (id, cost) = match weapon {
+        "twins" => (w.twins.special.as_str(), w.twins.special_cost),
+        "brolly" => (w.brolly.special.as_str(), w.brolly.special_cost),
+        "blaster" => (w.blaster.special.as_str(), w.blaster.special_cost),
+        "spinner" => (w.spinner.special.as_str(), w.spinner.special_cost),
+        "charger" => (w.charger.special.as_str(), w.charger.special_cost),
+        "bow" => (w.bow.special.as_str(), w.bow.special_cost),
+        "roller" => (w.roller.special.as_str(), w.roller.special_cost),
+        "brush" => (w.brush.special.as_str(), w.brush.special_cost),
+        "blade" => (w.blade.special.as_str(), w.blade.special_cost),
+        "mitts" => (w.mitts.special.as_str(), w.mitts.special_cost),
+        "bucket" => (w.bucket.special.as_str(), w.bucket.special_cost),
+        // `shooter` and every unknown id (the Spritzer fallback).
+        _ => (w.shooter.special.as_str(), w.shooter.special_cost),
+    };
+    (id, cost as f32)
+}
+
 /// JS `new Match({roster: cfg.roster, …})` + `setup()` (match.js `_setupRoster`
 /// L107-113, placement L85-91): one actor per roster entry **in roster order**
 /// (the contract that keeps the replication layer's parallel arrays aligned),
@@ -63,6 +93,17 @@ pub fn build_net_match(
             };
             a.spawn_at(p, yaw, sim, t);
             a.invuln = 0.0;
+            // JS actor.js L40: a roster `special` names the id when it is a
+            // real `SPECIALS` key, else the weapon default; L129: the gauge
+            // cost is the weapon's `specialCost`.
+            let (wsp, wcost) = weapon_special(&r.weapon);
+            let id = r
+                .special
+                .as_deref()
+                .filter(|s| crate::special::def_by_id(s).is_some())
+                .unwrap_or(wsp);
+            a.set_special(id);
+            a.special_cost = wcost;
             a
         })
         .collect();

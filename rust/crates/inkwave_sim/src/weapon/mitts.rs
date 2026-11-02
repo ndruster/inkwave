@@ -384,6 +384,7 @@ fn release_leap(
                 owner_slot: a.slot,
                 team: a.team,
                 area,
+                no_special: false,
             });
         }
     }
@@ -531,6 +532,7 @@ fn land_splash(
             owner_slot: a_slot,
             team: a_team,
             area,
+            no_special: false,
         });
     }
     // JS L447-454: the damage ring, falloff from 0.6 m out, line of sight.
@@ -576,6 +578,7 @@ fn land_splash(
         victim_slot: None,
         owner_slot: a_slot,
         area: 0.0,
+        no_special: false,
     });
 }
 
@@ -758,6 +761,7 @@ pub fn burst_fist(
                 owner_slot: f.owner_slot,
                 team: f.team,
                 area,
+                no_special: false,
             });
         }
         // JS L164-170: splash damage to everyone near but the one it hit.
@@ -814,6 +818,7 @@ pub fn burst_fist(
         victim_slot,
         owner_slot: f.owner_slot,
         area: 0.0,
+        no_special: false,
     });
 }
 
@@ -935,6 +940,7 @@ impl MittsFist {
                         owner_slot: f.owner_slot,
                         team: f.team,
                         area,
+                        no_special: false,
                     });
                 }
             }
@@ -1098,6 +1104,7 @@ pub fn update(
                                 owner_slot: a.slot,
                                 team: a.team,
                                 area,
+                                no_special: false,
                             });
                         }
                     }

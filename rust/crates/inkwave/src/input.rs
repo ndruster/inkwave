@@ -158,6 +158,8 @@ pub fn map_input(
         fire: mouse.pressed(MouseButton::Left),
         sub: mouse.pressed(MouseButton::Right) || keys.pressed(KeyCode::KeyE),
         special: keys.pressed(KeyCode::KeyF) || keys.pressed(KeyCode::KeyQ),
+        // JS player.js L129: "Yeah!" cheer is a one-frame pulse on the C key.
+        cheer: keys.just_pressed(KeyCode::KeyC),
     };
 }
 
