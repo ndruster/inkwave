@@ -176,9 +176,22 @@ impl CollisionWorld {
         Self::from_layout(&crate::embedded_tidewater())
     }
 
+    /// Build the collision world for one variant mode of a layout (JS
+    /// main.js L242: `new Level(layoutFor(MAP_LAYOUTS[layoutId], mode), …)`
+    /// — only the primitives `in_mode` keeps are built; block ids are the
+    /// filtered positional order).
+    #[must_use]
+    pub fn from_layout_for(layout: &StageLayout, mode: &str) -> Self {
+        let filtered = layout.for_mode(mode);
+        Self::from_brushes(&filtered.primitives, layout.stage.bounds)
+    }
+
+    /// Default build: the Turf War mode (JS main.js L242, where `mode` is
+    /// `'turf'` unless the match runs a variant). Stages without variant-tagged
+    /// primitives (tidewater) build identically to the full primitive list.
     #[must_use]
     pub fn from_layout(layout: &StageLayout) -> Self {
-        Self::from_brushes(&layout.primitives, layout.stage.bounds)
+        Self::from_layout_for(layout, "turf")
     }
 
     #[must_use]
@@ -1144,6 +1157,8 @@ mod tests {
             no_paint: Vec::new(),
             mural: Vec::<Mural>::new(),
             oct: None,
+            only_in: None,
+            not_in: None,
         }
     }
 

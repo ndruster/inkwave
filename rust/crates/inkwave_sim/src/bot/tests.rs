@@ -26,6 +26,8 @@ fn flags() -> BrushCommon {
         no_paint: Vec::new(),
         mural: Vec::<Mural>::new(),
         oct: None,
+        only_in: None,
+        not_in: None,
     }
 }
 
@@ -78,6 +80,7 @@ fn flat_fix() -> Fix {
         spawn_barrier: stage.spawn_barrier,
         water_y: stage.water_y,
         surface_slots: Default::default(),
+        variant_counts: None,
     };
     let layout = crate::geometry::StageLayout {
         schema: "test".into(),

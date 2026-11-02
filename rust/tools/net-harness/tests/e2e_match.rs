@@ -116,6 +116,55 @@ fn tr36_zones_match_three_clients() {
     assert!(rep.ok(), "the zones match settles consistently");
 }
 
+/// Task 37 §4 (TR-37.2): the same full-stack turf scenario on Saltpan
+/// Basin — the harness builds world / sim / nav / zone layout from
+/// `embedded_layout("saltpan").for_mode("turf")` (JS main.js L242
+/// `layoutFor` path), spawn pads at ±42 z.
+#[test]
+fn tr37_saltpan_turf_three_clients() {
+    let mut opts = MatchOpts::plain(3, 42);
+    opts.stage = "saltpan".to_string();
+    let rep = run_match(&opts);
+    rep.print();
+    assert_eq!(rep.clients.len(), 3);
+    assert!(rep.clients.iter().all(|c| c.live));
+    assert!(rep.ok(), "the saltpan turf match settles consistently");
+}
+
+/// Task 37 §4 (TR-37.2): Crossroads Market in turf mode — the `onlyIn:
+/// 'zones'` pieces (hoist stage / lighter deck / gangplank) are filtered
+/// out of the positional primitive list before the world is built.
+#[test]
+fn tr37_crossmarket_turf_three_clients() {
+    let mut opts = MatchOpts::plain(3, 42);
+    opts.stage = "crossmarket".to_string();
+    let rep = run_match(&opts);
+    rep.print();
+    assert_eq!(rep.clients.len(), 3);
+    assert!(rep.clients.iter().all(|c| c.live));
+    assert!(rep.ok(), "the crossmarket turf match settles consistently");
+}
+
+/// Task 37 §4 (TR-37.2): Crossroads Market in zones mode — the zones-only
+/// geometry enters the collision world and the zone sampling, so this is
+/// the scenario that exercises the `for_mode("zones")` filtered list end
+/// to end. Same seams and assertions as `tr36_zones_match_three_clients`
+/// (test-shortened OT cap through the builder's `zones_tuning` seam): all
+/// three clients settle the same winner / reason, the host's `['z']`
+/// decision records replay to every follower within the quiet-window
+/// tolerance (count ±1 / penalty ±0.05, D-T36-5), no drops.
+#[test]
+fn tr37_crossmarket_zones_three_clients() {
+    let mut opts = MatchOpts::plain(3, 4242);
+    opts.stage = "crossmarket".to_string();
+    opts.mode = "zones".to_string();
+    opts.duration = 120.0;
+    let rep = run_match(&opts);
+    rep.print();
+    assert!(rep.clients.iter().all(|c| c.live));
+    assert!(rep.ok(), "the crossmarket zones match settles consistently");
+}
+
 /// TR-25.3 guest drop: a guest's socket dies mid-match; its actor is adopted
 /// as a bot on the host and keeps playing to settlement.
 #[test]

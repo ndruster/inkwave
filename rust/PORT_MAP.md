@@ -57,19 +57,20 @@ M1 渲染为**固定简化档**，唯一运行时可调项：
 | JS 模块 | Rust 目标 | 状态 | 移植备注 |
 |---|---|---|---|
 | `src/world/mapkit.js`（B/R/O/OCT/ARC DSL） | `tools/extract/extract-layout.mjs`（JS 侧求值）→ `inkwave_sim::geometry` | M1 | 图元在 node 侧求值后序列化，Rust 不重写 DSL |
-| `src/world/maps.js` | `assets/maps/*.json` 索引 | M1 | M1 仅 tidewater |
+| `src/world/maps.js` | `assets/maps/*.json` 索引（`inkwave_sim::embedded_layout(id)`） | M1/M3 Task 37 | tidewater + saltpan + crossmarket 三图；zones 合并口径 L118-119 走提取器（Task 36） |
 | `src/world/stages/tidewater/layout.js` | `assets/maps/tidewater.json` | M1 | 含 half 镜像展开与 meta 统计 |
 | `src/world/stages/tidewater/surfaces.js` | 提取到 layout JSON 的 color/pattern + `inkwave::render::material` | M1 | 程序化材质简化 |
 | `src/world/stages/tidewater/props.js`（2093 行） | `inkwave::render::props` | M2+ | M1 只保留影响碰撞/地标的体块 |
 | `src/world/stages/tidewater/murals.js` | — | M2+ | 装饰贴花 |
-| `src/world/stages/{kelpline,halyard,saltpan,crossmarket,lockgate,terraces,cargo}` | 同名 assets + 渲染 | M2+ | 数据管线 M1 已通用，新增地图以数据为主 |
+| `src/world/stages/{saltpan,crossmarket}/layout.js` | `assets/maps/{saltpan,crossmarket}.json` | M3 Task 37 | 提取器已泛化（stage CLI 参数）；含 onlyIn/notIn 变体旗标与 zones-data 合并；surfaces 槽位 34-39 入 meta；props/murals 装饰顺延 M4 |
+| `src/world/stages/{kelpline,halyard,lockgate,terraces,cargo}` | 同名 assets + 渲染 | M2+ | 数据管线 M1 已通用，新增地图以数据为主 |
 | `src/world/level.js` | `inkwave_sim::world`（碰撞）+ `inkwave::render::level` | M1 | |
 | `src/world/paint.js`（929 行） | `inkwave_sim::paint`（覆盖网格/计分）+ `inkwave::render::ink`（图集） | M1 | 架构照搬：每面独立二维网格 |
 | `src/world/inkShading.js`（314 行 GLSL） | `inkwave::render::ink` wgpu 材质 | M1（简化） | 高度/光泽/湿润 M2+ |
 | `src/world/levelMaterial.js`（719 行） | `inkwave::render::material` | M1（简化） | pattern 贴图做最小子集 |
 | `src/world/texlib.js` / `decor.js` / `dressing.js` / `murals.js` / `mapThumb.js` / `props*.js` | `inkwave::render::*` | M2+ | |
 | `src/world/environment.js`（3116 行） | `inkwave::render::environment` | M1（白天简化） | 黄昏主题、海况、灯光烘焙 M2+ |
-| `src/world/variants.js` / `zones-data.js` | `assets/maps/*.json`（mode variants） | M2+ | |
+| `src/world/variants.js` / `zones-data.js` | `inkwave_sim::geometry`（`in_mode`/`StageLayout::for_mode`）+ `collision::from_layout_for`；zones 入 `assets/maps/*.json` | M3 Task 36/37 | zones-data 合并（Task 36）；onlyIn/notIn 旗标随行入 JSON、按模式过滤保持 block id 位置序（Task 37） |
 
 ## `src/` 其他
 

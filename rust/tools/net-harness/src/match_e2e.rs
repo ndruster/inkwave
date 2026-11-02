@@ -47,7 +47,7 @@ use inkwave_sim::net::session::{
 };
 use inkwave_sim::net::transport::{FakeRelay, FakeTransport, LinkSim, Transport};
 use inkwave_sim::tuning::{PlayerTuning, Tuning, ZonesTuning};
-use inkwave_sim::{embedded_tidewater, embedded_tuning};
+use inkwave_sim::{embedded_layout, embedded_tuning};
 
 /// The session type of one harness client (the tr24 pattern,
 /// `match_link.rs` L418-428: shared virtual clock through one `FakeRelay`).
@@ -118,9 +118,28 @@ pub struct MatchOpts {
     /// duration override rides the same test-only shortening seam —
     /// Task 36 batch 3).
     pub mode: String,
+    /// Stage layout id (`"tidewater"` / `"saltpan"` / `"crossmarket"`,
+    /// Task 37 §4; the embedded layout the world / sim / nav / zone layout
+    /// are built from, mode-filtered by `mode`).
+    pub stage: String,
     pub drop: Option<DropAt>,
     /// Collect the kink / path-error smoothness stats (TR-25.2).
     pub stats: bool,
+}
+
+impl Default for MatchOpts {
+    fn default() -> Self {
+        Self {
+            clients: 3,
+            sim: None,
+            seed: 42,
+            duration: 15.0,
+            mode: "turf".to_string(),
+            stage: "tidewater".to_string(),
+            drop: None,
+            stats: false,
+        }
+    }
 }
 
 impl MatchOpts {
@@ -128,12 +147,8 @@ impl MatchOpts {
     pub fn plain(clients: usize, seed: u64) -> Self {
         Self {
             clients,
-            sim: None,
             seed,
-            duration: 15.0,
-            mode: "turf".to_string(),
-            drop: None,
-            stats: false,
+            ..Default::default()
         }
     }
 }
@@ -533,8 +548,16 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
     let ws = &tuning.weapons;
     let sb = &tuning.subs;
     let sp = &ws.shooter;
-    let layout = embedded_tidewater();
-    let world = CollisionWorld::from_layout(&layout);
+    // Task 37 §4: the stage-selectable layout. JS main.js L242 builds the
+    // level from `layoutFor(MAP_LAYOUTS[layoutId], mode)` — the collision
+    // world, `SimWorld`, `NavGraph` and the `zone_layout` handed to each
+    // client's match builder (below, `layout.zones.as_ref()`) must ALL
+    // consume the SAME mode-filtered primitive list: block ids are the
+    // filtered positional order (`StageLayout::for_mode`, geometry.rs
+    // L364). Tidewater carries no variant tags, so the default scenarios
+    // are bit-identical to the old `embedded_tidewater() + from_layout`.
+    let layout = embedded_layout(&opts.stage).for_mode(&opts.mode);
+    let world = CollisionWorld::from_brushes(&layout.primitives, layout.stage.bounds);
     let sim = SimWorld::new(&world, &layout);
     let nav = inkwave_sim::nav::NavGraph::new(&world, &layout, tp);
 

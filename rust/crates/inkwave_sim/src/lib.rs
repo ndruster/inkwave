@@ -37,6 +37,12 @@ pub const TUNING_JSON: &str = include_str!("../../../assets/tuning.json");
 /// Extracted Tidewater layout (`rust/assets/maps/tidewater.json`).
 pub const TIDEWATER_JSON: &str = include_str!("../../../assets/maps/tidewater.json");
 
+/// Extracted Saltpan Basin layout (`rust/assets/maps/saltpan.json`).
+pub const SALTPAN_JSON: &str = include_str!("../../../assets/maps/saltpan.json");
+
+/// Extracted Crossroads Market layout (`rust/assets/maps/crossmarket.json`).
+pub const CROSSMARKET_JSON: &str = include_str!("../../../assets/maps/crossmarket.json");
+
 /// Tuning compiled into the binary; panics only if the extracted artifact is
 /// malformed (the pipeline output is schema-tested in CI).
 #[must_use]
@@ -50,6 +56,34 @@ pub fn embedded_tuning() -> tuning::Tuning {
 pub fn embedded_tidewater() -> geometry::StageLayout {
     geometry::layout_from_str(TIDEWATER_JSON)
         .expect("assets/maps/tidewater.json must be a valid stage layout document")
+}
+
+/// Saltpan layout compiled into the binary.
+#[must_use]
+pub fn embedded_saltpan() -> geometry::StageLayout {
+    geometry::layout_from_str(SALTPAN_JSON)
+        .expect("assets/maps/saltpan.json must be a valid stage layout document")
+}
+
+/// Crossmarket layout compiled into the binary.
+#[must_use]
+pub fn embedded_crossmarket() -> geometry::StageLayout {
+    geometry::layout_from_str(CROSSMARKET_JSON)
+        .expect("assets/maps/crossmarket.json must be a valid stage layout document")
+}
+
+/// The embedded layout for a stage id (Task 37: the extracted stages).
+///
+/// # Panics
+/// Panics when `id` is not one of the embedded stage layouts.
+#[must_use]
+pub fn embedded_layout(id: &str) -> geometry::StageLayout {
+    match id {
+        "tidewater" => embedded_tidewater(),
+        "saltpan" => embedded_saltpan(),
+        "crossmarket" => embedded_crossmarket(),
+        other => panic!("no embedded stage layout for id `{other}`"),
+    }
 }
 
 #[cfg(test)]

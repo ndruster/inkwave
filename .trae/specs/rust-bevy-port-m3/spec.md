@@ -583,3 +583,55 @@ SubSystem 平移（subs.js 693 行，非 kit 10 key + splat bomb 在 weapons.js 
 - D-T36-9：e2e 测试缝 `build_net_match` 第 7 参 `zones_tuning: Option`（测试短化 OT cap 300→20 s，对齐 net-test.mjs L85 duration 短化惯例）；生产路径传 None 用嵌入式 tuning。成立。
 - 评审 P2-1 修复（非偏差）：`contest()` 加 `debug_assert!(z.owner >= 0)` 固化 JS L183/L178 短路前提。
 - 评审 P2-5 注记（不改）：harness 静默窗口采样在 rotateMin=30 s 约束下无覆盖缝隙风险。
+
+## Task 37 实施设计 — 新地图 ×2 提取（saltpan + crossmarket）+ 碰撞冒烟
+
+### §0 上游锚点（实读核实）
+- `src/world/stages/saltpan/layout.js`（160 行）：`SALTPAN` L47-158，`id:'saltpan'`、`bounds {-30..30, -46..46}` L49、`spawnPads [[-2,2.4,-42],[2,2.4,42]]` L50、`spawnBarrier 4.2` L51；`single` 2 件 L56-60、`half` 58 件 L61-152；本地 helper `rise()` L40（ramp 低端外延 0.6 m 贴边）、`chamfer()` L45（45° 倒角 obox，rotY=atan2(sz,sx)°）；SURF 图案引用 L33-35。
+- `src/world/stages/crossmarket/layout.js`（151 行）：`CROSSMARKET` L50-149，`bounds {-31..31, -44..44}` L52、`spawnPads [[0,2.6,-40.2],[0,2.6,40.2]]` L53；`single` 4 件（电车 TB 系）L59-66、`half` 54 件 L67-147；本地 helper `bldg()` L36-39（底层可涂 + 上层 paint:false/roof:true 两段）、`T()/TB()` L42-46（电车系框架 TH=atan(0.6)、rotY=DEG）、`BED=0.1`；`arcade-pier` 由数组 map 生成 5 件 L105。
+- **变体旗标**：`src/world/variants.js` L6 `inMode = (it,mode) => (!it.onlyIn || it.onlyIn===mode) && (!it.notIn || it.notIn!==mode)`；L16-18 `layoutFor` 对 single/half 过滤（zones/bounds/spawns 共享）；运行时 `src/main.js` L242 `new Level(layoutFor(MAP_LAYOUTS[layoutId], mode), colliders)`。saltpan 带旗标件 4 处：`loft-stair notIn:'zones'` L126、`loft-stair onlyIn:'zones'`（noPaint 两侧）L129、`shed-stair`/`shed-landing`/`dock-steps` onlyIn:'zones' L137/L138/L141；crossmarket：`hoist-stage`/`lighter-deck`/`gangplank` onlyIn:'zones' L144-146。
+- **surfaces 槽位**：saltpan `SURF {salt:34, mud:35, timber:36}`（stages/saltpan/surfaces.js L17）；crossmarket `SURF {setts:37, ashlar:38, tramway:39}`（stages/crossmarket/surfaces.js L16）。tidewater 28/29/30 已录。
+- **zones 合并口径**：maps.js L118-119（layout 自带 zones 优先，否则 ZONE_DEFS 逐字附上）；`src/world/zones-data.js` L31-34 saltpan（双 center 矩形 y -1.4..-0.9 + side 棚顶 y 3.0..4.4）、L36-39 crossmarket（单 center orect(X31=[0.857,0.514],5,6) + side orect(-22.88,-13.72,X31,6.2,3.95)，y -0.2..0.5）。Task 36 提取器的 `ZONE_DEFS[L.id]` 合并不变。
+- **提取器现状**：`rust/tools/extract/extract-layout.mjs` 硬编码 tidewater（L23 import / L30 outPath / L125 surfaceSlots）；`mirrorDef` L41-49 逐字复制 level.js；`normBrush` L53-82 显式化全部旗标——**不含 onlyIn/notIn**（需补）。
+- **Rust 消费面**：`lib.rs` L38/L50 `TIDEWATER_JSON`/`embedded_tidewater()`；`geometry.rs` L320-330 `StageLayout{schema,source,stage,primitives(位置序=上游 block id),zones,meta}`；`collision.rs` L180-181 `from_layout → from_brushes(&layout.primitives, bounds)`；`nav.rs` L153 以 block id 反查 `l.primitives[id]`（**过滤必须整体替换 primitives，保持位置一致**）；harness `match_e2e.rs` L536-539 硬编码 tidewater 布局 + `from_layout`，`MatchOpts` L106-124 无 stage 字段。
+
+### §1 提取器泛化（rust/tools/extract/extract-layout.mjs）
+- CLI：`node extract-layout.mjs [stage]`，缺省 `tidewater`；stage ∈ {tidewater, saltpan, crossmarket}，非法值报错退出。动态 `import(`../../../src/world/stages/${stage}/layout.js`)`；outPath=`assets/maps/${stage}.json`；`source.path` 随之。
+- `normBrush` 补两字段（显式化风格一致）：`onlyIn: d.onlyIn ?? null`、`notIn: d.notIn ?? null`；`mirrorDef` 的 `...d` 展开天然携带旗标（镜像件与母件同旗标，与 JS 先过滤后镜像等价：旗标随件走，过滤幂等）。
+- `meta.surfaceSlots` 改 per-stage 表：tidewater {herringbone:28,terrazzo:29,stucco:30}、saltpan {salt:34,mud:35,timber:36}、crossmarket {setts:37,ashlar:38,tramway:39}。
+- `meta.variantCounts`：`{turf:{box,obox,ramp,total}, zones:{…}}`，用 JS 逐字 `inMode` L6 过滤 union 后计数（Rust 侧交叉断言 `for_mode` 结果一致）。
+- schema 维持 `inkwave.stage_layout.v1`（新增字段皆可选/向后兼容）；stable-json 连跑逐字节一致（TR-37.1）。三图全部重生成（tidewater.json 会新增 onlyIn/notIn:null 与 variantCounts 键——确定性重跑，Rust 解析测试同步）。
+
+### §2 Rust 数据层（geometry.rs / lib.rs）
+- `Brush` 各变体公共段补 `#[serde(default)] only_in: Option<String>` / `not_in: Option<String>`（serde rename camelCase 对齐 JSON；null→None）。
+- 新增 `pub fn in_mode(only_in, not_in, mode) -> bool`（variants.js L6 逐字）+ `StageLayout::for_mode(&self, mode: &str) -> StageLayout`（layoutFor L16-18 语义：`primitives` 整体替换为过滤结果，其余字段 clone；mode 取 `"turf"`/`"zones"`）。位置序=过滤后 block id，nav/collision/zones 全部消费过滤后布局，无需各自改造。
+- `LayoutMeta` 补 `#[serde(default)] variant_counts: Option<VariantCounts>`（含 turf/zones 两组 PrimitiveCounts）。
+- `lib.rs`：`SALTPAN_JSON`/`CROSSMARKET_JSON` include_str + `embedded_saltpan()`/`embedded_crossmarket()` + `embedded_layout(id: &str) -> StageLayout`（三 id，未知 id panic 带信息）。
+
+### §3 碰撞世界（collision.rs）
+- `CollisionWorld::from_layout` 语义改为 **turf 模式**（JS main.js L242 缺省 mode='turf'：`inMode` 排除 onlyIn:'zones'）。新增 `from_layout_for(layout, mode)`；`from_layout` = `from_layout_for(layout, "turf")`。tidewater 无旗标件 → 行为逐字节不变（回归由既有 TR-3.x/冒烟守住）。
+- 冒烟测试（新 `geometry.rs` tests 或独立 tests）：两图 × 两模式——① spawn pad 正下射线命中 solid 地面（出生点落地）；② bounds 内网格采样可行走顶面计数 > 阈值（长条图中心带）；③ zones 模式下 `zone_cells`（Task 36）对 center/side 取格非空（saltpan 双 center 各非空 + side 棚顶非空；crossmarket center/side 非空）；turf 模式下 crossmarket side zone（hoist-stage 区）取格显著变空/变少（onlyIn 件被过滤的证据）。
+
+### §4 harness 多图（tools/net-harness）
+- `MatchOpts` 补 `stage: String`（Default `"tidewater"`）；`run_match` 用 `embedded_layout(&opts.stage).for_mode(&opts.mode)` 构建 world/sim/nav（L536-539 改造点）。既有 scenario 全部缺省 tidewater 不变。
+- TR-37.2 新 scenario：`tr37_saltpan_turf_three_clients`、`tr37_crossmarket_turf_three_clients`、`tr37_crossmarket_zones_three_clients`（选 crossmarket 打 zones 以覆盖 onlyIn:'zones' 几何进世界路径；复用 Task 36 zones 短化缝）。断言沿用 tr36：三端结算一致、`['z']` 无丢弃、收敛窗口内 zone 状态一致。
+
+### §5 TR 对应
+- TR-37.1：stable-json 双跑逐字节一致 ×3 图；Rust 解析交叉断言 meta（primitiveCounts/sourceCounts/variantCounts/bounds/spawnPads 与 JS 侧数值 diff 复核——提取日志 + 测试锚字面量）。
+- TR-37.2：上列三 scenario 全绿。
+
+### §6 分批
+- 批一：提取器泛化 + 三图 JSON 重生成 + geometry/lib/collision 数据层 + 冒烟测试（Rust 单测为主）。
+- 批二：harness MatchOpts.stage + 三 scenario + 回归。
+
+### §7.1 实施定案与偏差（批一落地后回填）
+- D-T37-1：§0 计数笔误修正——saltpan `half` 实为 58 件（union 118=2+58+58）、crossmarket `single` 实为 4 件（union 112=4+54+54），以提取器实测为准。
+- D-T37-2：§3 冒烟第③项「crossmarket turf 模式 side zone 取格显著变空」**前提不成立**——side zone orect 的 y 带 -0.2..0.5（zones-data.js L38）不含 zones-only 吊装台（y 2.8-3.1，layout.js L144）/驳船（y -0.9..-0.3，L145，在带内但位于 polygon 外）；两模式 pier 取格同为 1566。定案：mode 过滤证据改由块数（112 vs 106）+ landing 旗标件仅 zones 模式在场断言（测试已落档）。
+- D-T37-3：tidewater.json 重生成 diff 为纯增键（onlyIn/notIn:null ×359 + variantCounts），唯一改动行是 `source.commit`（HEAD 位移，不可避免）。
+- D-T37-4：saltpan `dock-steps` 两模式各 2 件（西侧无旗标 L124 + zones 侧东支 L141），与 shed-stair/shed-landing（turf 全消）不同——旗标语义按件生效，非按 tag 聚合。
+- 评审（批一+批二）：0 P0 / 0 P1 / 3 P2 全部闭环——P2-1 提取器 `d.onlyIn ?? null` 改 `|| null` 对齐 variants.js L6 falsy 语义（空串旗标不落 `Some("")`，in_mode 文档注记同步；三图 JSON 重跑逐字节不变）；P2-2 测试 `expect_blocks` 死脚手架删除；P2-3 `for_mode` 文档补注 `meta.variant_counts` 保持 union 计数。
+
+### §7 风险与裁剪
+- saltpan `chamfer()`/crossmarket `TB()` 产出的 obox rotY 为负角/非轴对齐——mirrorDef 对 rotY 的处理：JS level.js 镜像 obox 只转 center（rotY 不变？核对 mirrorDef L47：center 取反，rotY 原样）——180° 旋转复合性质使 rotY 不需变化（提取器逐字复制 level.js，天然一致）。
+- `intro`/`art`/`decor` 字段不入布局 JSON（M1 口径：呈现/相机为 M4；碰撞冒烟不需要）。
+- 装饰 props（props.js 1.8-2.1k 行/图）不提取（tasks.md Notes M1 口径）；saltpan L22 "catwalk 下 braced off（prop colliders）"的可站立性依赖 props——冒烟阈值按无 props 世界校准，REVIEW_CHECKLIST 记「props 碰撞体顺延」。

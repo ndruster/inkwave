@@ -186,6 +186,21 @@ pub struct BrushCommon {
     pub mural: Vec<Mural>,
     /// Octagon-platform source marker `[cx, cz, circumradius]`.
     pub oct: Option<Vec3>,
+    /// Built only in this variant mode (JS `onlyIn`, variants.js L2).
+    #[serde(default)]
+    pub only_in: Option<String>,
+    /// Built in every mode except this one (JS `notIn`, variants.js L3).
+    #[serde(default)]
+    pub not_in: Option<String>,
+}
+
+/// Does a primitive carrying these variant flags belong to `mode`?
+/// JS variants.js L6: `(it, mode) => (!it.onlyIn || it.onlyIn === mode) && (!it.notIn || it.notIn !== mode)`
+/// — the JS falsy check treats `""` as absent; the extractor normalises that
+/// away (`d.onlyIn || null`), so `Some("")` never reaches the JSON.
+#[must_use]
+pub fn in_mode(only_in: Option<&str>, not_in: Option<&str>, mode: &str) -> bool {
+    (only_in.is_none() || only_in == Some(mode)) && (not_in.is_none() || not_in != Some(mode))
 }
 
 /// Playfield bounds (XZ rectangle).
@@ -240,6 +255,18 @@ pub struct LayoutMeta {
     pub spawn_barrier: f32,
     pub water_y: f32,
     pub surface_slots: HashMap<String, u16>,
+    /// Per-mode primitive counts over the union list (extractor port of the
+    /// variants.js L6 filter; cross-checked by [`StageLayout::for_mode`]).
+    #[serde(default)]
+    pub variant_counts: Option<VariantCounts>,
+}
+
+/// [`PrimitiveCounts`] for each variant mode of a stage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VariantCounts {
+    pub turf: PrimitiveCounts,
+    pub zones: PrimitiveCounts,
 }
 
 /// Zone Control zone layout (Task 36 §1): the extractor merges `ZONE_DEFS`
@@ -327,6 +354,35 @@ pub struct StageLayout {
     #[serde(default)]
     pub zones: Option<ZoneLayout>,
     pub meta: LayoutMeta,
+}
+
+impl StageLayout {
+    /// The layout as built in `mode` (JS `layoutFor`, variants.js L16-18;
+    /// runtime use main.js L242): `primitives` is replaced by the [`in_mode`]
+    /// filtered list, everything else is shared. The filter keeps positional
+    /// order, so block ids stay consistent for the collision/nav consumers
+    /// of the filtered layout. Note `meta.variant_counts` keeps the UNION
+    /// counts (the extractor's `primitives` list before filtering); the
+    /// filtered length equals `variant_counts[mode].total`.
+    #[must_use]
+    pub fn for_mode(&self, mode: &str) -> StageLayout {
+        StageLayout {
+            schema: self.schema.clone(),
+            source: self.source.clone(),
+            stage: self.stage.clone(),
+            primitives: self
+                .primitives
+                .iter()
+                .filter(|p| {
+                    let c = p.common();
+                    in_mode(c.only_in.as_deref(), c.not_in.as_deref(), mode)
+                })
+                .cloned()
+                .collect(),
+            zones: self.zones.clone(),
+            meta: self.meta.clone(),
+        }
+    }
 }
 
 /// Parse a stage layout document from JSON.
@@ -534,6 +590,428 @@ mod tests {
     }
 
     // --- helpers ---
+
+    fn saltpan() -> StageLayout {
+        crate::embedded_saltpan()
+    }
+    fn crossmarket() -> StageLayout {
+        crate::embedded_crossmarket()
+    }
+
+    fn kind_counts(l: &StageLayout) -> PrimitiveCounts {
+        let (mut b, mut o, mut r) = (0u32, 0u32, 0u32);
+        for p in &l.primitives {
+            match p {
+                Brush::Box { .. } => b += 1,
+                Brush::Obox { .. } => o += 1,
+                Brush::Ramp { .. } => r += 1,
+            }
+        }
+        PrimitiveCounts {
+            boxes: b,
+            obox: o,
+            ramp: r,
+            total: l.primitives.len() as u32,
+        }
+    }
+
+    fn tag_count(l: &StageLayout, tag: &str) -> usize {
+        l.primitives
+            .iter()
+            .filter(|p| p.common().tag.as_deref() == Some(tag))
+            .count()
+    }
+
+    // JS variants.js L6 truth table (untagged shared; onlyIn/notIn exclusive).
+    #[test]
+    fn in_mode_matches_js() {
+        assert!(in_mode(None, None, "turf"));
+        assert!(in_mode(None, None, "zones"));
+        assert!(in_mode(Some("zones"), None, "zones"));
+        assert!(!in_mode(Some("zones"), None, "turf"));
+        assert!(in_mode(None, Some("zones"), "turf"));
+        assert!(!in_mode(None, Some("zones"), "zones"));
+    }
+
+    // TR-37.1: Saltpan stage info matches the node side (saltpan/layout.js
+    // L47-51) and the per-stage surface slots (saltpan/surfaces.js L17).
+    #[test]
+    fn saltpan_stage_info() {
+        let l = saltpan();
+        assert_eq!(l.schema, "inkwave.stage_layout.v1");
+        assert_eq!(l.source.path, "src/world/stages/saltpan/layout.js");
+        assert_eq!(l.source.commit.len(), 40);
+        assert_eq!(l.stage.id, "saltpan");
+        assert_eq!(
+            l.stage.bounds,
+            Bounds {
+                min_x: -30.0,
+                max_x: 30.0,
+                min_z: -46.0,
+                max_z: 46.0
+            }
+        );
+        assert_eq!(
+            l.stage.spawn_pads,
+            vec![[-2.0, 2.4, -42.0], [2.0, 2.4, 42.0]]
+        );
+        assert_eq!(l.stage.spawn_barrier, 4.2);
+        assert_eq!(l.stage.water_y, -1.6);
+        assert_eq!(l.meta.bounds, l.stage.bounds);
+        assert_eq!(l.meta.spawn_pads, l.stage.spawn_pads);
+        assert_eq!(l.meta.spawn_barrier, l.stage.spawn_barrier);
+        assert_eq!(l.meta.water_y, l.stage.water_y);
+        assert_eq!(l.meta.surface_slots.get("salt"), Some(&34));
+        assert_eq!(l.meta.surface_slots.get("mud"), Some(&35));
+        assert_eq!(l.meta.surface_slots.get("timber"), Some(&36));
+    }
+
+    // TR-37.1: Saltpan parsed counts equal meta and the frozen extract-run
+    // numbers (a9dc44a: 118 primitives; turf 110, zones 116).
+    #[test]
+    fn saltpan_counts_match_meta() {
+        let l = saltpan();
+        let c = kind_counts(&l);
+        assert_eq!(c, l.meta.primitive_counts);
+        assert_eq!(
+            c,
+            PrimitiveCounts {
+                boxes: 68,
+                obox: 14,
+                ramp: 36,
+                total: 118
+            }
+        );
+        assert_eq!(
+            l.meta.source_counts,
+            SourceCounts {
+                single: 2,
+                half: 58,
+                half_mirrored: 58
+            }
+        );
+        let vc = l
+            .meta
+            .variant_counts
+            .expect("extractor emits variantCounts");
+        assert_eq!(
+            vc.turf,
+            PrimitiveCounts {
+                boxes: 66,
+                obox: 14,
+                ramp: 30,
+                total: 110
+            }
+        );
+        assert_eq!(
+            vc.zones,
+            PrimitiveCounts {
+                boxes: 68,
+                obox: 14,
+                ramp: 34,
+                total: 116
+            }
+        );
+        // Rust `for_mode` reproduces the JS-side filter exactly.
+        assert_eq!(kind_counts(&l.for_mode("turf")), vc.turf);
+        assert_eq!(kind_counts(&l.for_mode("zones")), vc.zones);
+    }
+
+    // TR-37.1: Crossmarket stage info (crossmarket/layout.js L50-54) and the
+    // per-stage surface slots (crossmarket/surfaces.js L16).
+    #[test]
+    fn crossmarket_stage_info() {
+        let l = crossmarket();
+        assert_eq!(l.schema, "inkwave.stage_layout.v1");
+        assert_eq!(l.source.path, "src/world/stages/crossmarket/layout.js");
+        assert_eq!(l.source.commit.len(), 40);
+        assert_eq!(l.stage.id, "crossmarket");
+        assert_eq!(
+            l.stage.bounds,
+            Bounds {
+                min_x: -31.0,
+                max_x: 31.0,
+                min_z: -44.0,
+                max_z: 44.0
+            }
+        );
+        assert_eq!(
+            l.stage.spawn_pads,
+            vec![[0.0, 2.6, -40.2], [0.0, 2.6, 40.2]]
+        );
+        assert_eq!(l.stage.spawn_barrier, 4.2);
+        assert_eq!(l.stage.water_y, -1.6);
+        assert_eq!(l.meta.bounds, l.stage.bounds);
+        assert_eq!(l.meta.spawn_pads, l.stage.spawn_pads);
+        assert_eq!(l.meta.surface_slots.get("setts"), Some(&37));
+        assert_eq!(l.meta.surface_slots.get("ashlar"), Some(&38));
+        assert_eq!(l.meta.surface_slots.get("tramway"), Some(&39));
+    }
+
+    // TR-37.1: Crossmarket parsed counts equal meta and the frozen extract-run
+    // numbers (a9dc44a: 112 primitives; turf 106, zones 112).
+    #[test]
+    fn crossmarket_counts_match_meta() {
+        let l = crossmarket();
+        let c = kind_counts(&l);
+        assert_eq!(c, l.meta.primitive_counts);
+        assert_eq!(
+            c,
+            PrimitiveCounts {
+                boxes: 60,
+                obox: 34,
+                ramp: 18,
+                total: 112
+            }
+        );
+        assert_eq!(
+            l.meta.source_counts,
+            SourceCounts {
+                single: 4,
+                half: 54,
+                half_mirrored: 54
+            }
+        );
+        let vc = l
+            .meta
+            .variant_counts
+            .expect("extractor emits variantCounts");
+        assert_eq!(
+            vc.turf,
+            PrimitiveCounts {
+                boxes: 60,
+                obox: 30,
+                ramp: 16,
+                total: 106
+            }
+        );
+        assert_eq!(vc.zones, c);
+        assert_eq!(kind_counts(&l.for_mode("turf")), vc.turf);
+        assert_eq!(kind_counts(&l.for_mode("zones")), vc.zones);
+    }
+
+    // TR-37.1: saltpan's merged ZONE_DEFS entry (zones-data.js L31-34): two
+    // Great-Pan quarters as the centre, the packing-shed roof as the side.
+    #[test]
+    fn saltpan_zones() {
+        let l = saltpan();
+        let z = l.zones.expect("saltpan carries hand-drawn zones");
+        assert_eq!(z.center.len(), 2);
+        // rect(3.6, 13, -0.8, 8) (zones-data.js L32).
+        assert_eq!(
+            z.center[0].parts(),
+            &[vec![[3.6, -0.8], [13.0, -0.8], [13.0, 8.0], [3.6, 8.0]]][..]
+        );
+        assert_eq!(z.center[0].y0, Some(-1.4));
+        assert_eq!(z.center[0].y1, Some(-0.9));
+        // rect(-13, -3.6, -8, 0.8).
+        assert_eq!(
+            z.center[1].parts(),
+            &[vec![[-13.0, -8.0], [-3.6, -8.0], [-3.6, 0.8], [-13.0, 0.8]]][..]
+        );
+        assert_eq!(z.center[1].y0, Some(-1.4));
+        assert_eq!(z.center[1].y1, Some(-0.9));
+        // side: rect(-26, -15, -25, -18), the shed roof band y 3.0..4.4.
+        assert_eq!(
+            z.side.parts(),
+            &[vec![
+                [-26.0, -25.0],
+                [-15.0, -25.0],
+                [-15.0, -18.0],
+                [-26.0, -18.0]
+            ]][..]
+        );
+        assert_eq!(z.side.y0, Some(3.0));
+        assert_eq!(z.side.y1, Some(4.4));
+    }
+
+    // TR-37.1: crossmarket's merged ZONE_DEFS entry (zones-data.js L36-39):
+    // the hall floor along the tram (one centre orect) + the tram pier side.
+    #[test]
+    fn crossmarket_zones() {
+        let l = crossmarket();
+        let z = l.zones.expect("crossmarket carries hand-drawn zones");
+        assert_eq!(z.center.len(), 1);
+        // orect(0, 0, X31=[0.857, 0.514], 5, 6) (zones-data.js L11/L37).
+        assert_eq!(
+            z.center[0].parts(),
+            &[vec![
+                [-1.201, -7.712],
+                [7.369, -2.572],
+                [1.201, 7.712],
+                [-7.369, 2.572]
+            ]][..]
+        );
+        assert_eq!(z.center[0].y0, Some(-0.2));
+        assert_eq!(z.center[0].y1, Some(0.5));
+        // orect(-22.88, -13.72, X31, 6.2, 3.95) (L38).
+        assert_eq!(
+            z.side.parts(),
+            &[vec![
+                [-26.163, -20.292],
+                [-15.536, -13.918],
+                [-19.597, -7.148],
+                [-30.224, -13.522]
+            ]][..]
+        );
+        assert_eq!(z.side.y0, Some(-0.2));
+        assert_eq!(z.side.y1, Some(0.5));
+    }
+
+    // JS variants.js L6/L16-18 semantics on the real stages: turf drops every
+    // onlyIn:'zones' piece, zones drops every notIn:'zones' piece. Saltpan's
+    // loft-stair pair swaps sides (layout.js L126 paintable / L129 noPaint
+    // sides); the Zone-Control access pieces only exist in `zones`
+    // (L137/L138/L141); crossmarket's goods landing likewise (L144-146).
+    #[test]
+    fn for_mode_filters_variant_flags() {
+        let sp = saltpan();
+        let turf = sp.for_mode("turf");
+        let zones = sp.for_mode("zones");
+        assert!(
+            turf.primitives
+                .iter()
+                .all(|p| p.common().only_in.as_deref() != Some("zones"))
+        );
+        assert!(
+            zones
+                .primitives
+                .iter()
+                .all(|p| p.common().not_in.as_deref() != Some("zones"))
+        );
+        assert_eq!(tag_count(&turf, "shed-stair"), 0);
+        assert_eq!(tag_count(&turf, "shed-landing"), 0);
+        // the west dock flight (L124, no flags) is always built; the east
+        // spur flight (L141) joins it only in `zones`.
+        assert_eq!(tag_count(&turf, "dock-steps"), 2);
+        assert_eq!(tag_count(&zones, "shed-stair"), 2);
+        assert_eq!(tag_count(&zones, "shed-landing"), 2);
+        assert_eq!(tag_count(&zones, "dock-steps"), 4);
+        // the loft-stair: one pair per mode, never both twins together —
+        // the turf twin paints its sides, the zones twin does not.
+        assert_eq!(tag_count(&turf, "loft-stair"), 2);
+        assert!(
+            turf.primitives
+                .iter()
+                .filter(|p| p.common().tag.as_deref() == Some("loft-stair"))
+                .all(|p| p.common().no_paint.is_empty())
+        );
+        assert_eq!(tag_count(&zones, "loft-stair"), 2);
+        assert!(
+            zones
+                .primitives
+                .iter()
+                .filter(|p| p.common().tag.as_deref() == Some("loft-stair"))
+                .all(|p| p.common().no_paint.len() == 2)
+        );
+
+        let cm = crossmarket();
+        assert_eq!(tag_count(&cm.for_mode("turf"), "hoist-stage"), 0);
+        assert_eq!(tag_count(&cm.for_mode("turf"), "lighter-deck"), 0);
+        assert_eq!(tag_count(&cm.for_mode("turf"), "gangplank"), 0);
+        assert_eq!(tag_count(&cm.for_mode("zones"), "hoist-stage"), 2);
+        assert_eq!(tag_count(&cm.for_mode("zones"), "lighter-deck"), 2);
+        assert_eq!(tag_count(&cm.for_mode("zones"), "gangplank"), 2);
+    }
+
+    // Tidewater carries no variant flags: both modes build the full layout.
+    #[test]
+    fn tidewater_for_mode_is_a_noop() {
+        let l = layout();
+        assert!(
+            l.primitives
+                .iter()
+                .all(|p| p.common().only_in.is_none() && p.common().not_in.is_none())
+        );
+        assert_eq!(l.for_mode("turf").primitives.len(), 359);
+        assert_eq!(l.for_mode("zones").primitives.len(), 359);
+        let vc = l
+            .meta
+            .variant_counts
+            .expect("extractor emits variantCounts");
+        assert_eq!(vc.turf, l.meta.primitive_counts);
+        assert_eq!(vc.zones, l.meta.primitive_counts);
+    }
+
+    // TR-37 collision smoke ①: every spawn pad of the new stages lands on a
+    // solid, walkable top face in both modes (down-ray from 1 m above the pad;
+    // the pad y is the deck top the extractor froze, layout.js L50/L53).
+    #[test]
+    fn new_stages_spawn_pads_land() {
+        for id in ["saltpan", "crossmarket"] {
+            let l = crate::embedded_layout(id);
+            for mode in ["turf", "zones"] {
+                let w = crate::collision::CollisionWorld::from_layout_for(&l, mode);
+                assert_eq!(
+                    w.blocks.len(),
+                    l.for_mode(mode).primitives.len(),
+                    "{id}/{mode}: world blocks == filtered primitives"
+                );
+                for pad in &l.stage.spawn_pads {
+                    let h = w.raycast(
+                        glam::vec3(pad[0], pad[1] + 1.0, pad[2]),
+                        -glam::Vec3::Y,
+                        2.0,
+                        false,
+                    );
+                    assert!(h.hit, "{id}/{mode} pad {pad:?}: no hit below");
+                    assert!(
+                        (h.point.y - pad[1]).abs() < 1e-3,
+                        "{id}/{mode} pad {pad:?}: top at {}",
+                        h.point.y
+                    );
+                    assert!(
+                        h.normal.y >= crate::collision::WALKABLE,
+                        "{id}/{mode} pad {pad:?}: non-walkable normal {:?}",
+                        h.normal
+                    );
+                }
+            }
+        }
+        // from_layout is the turf default (JS main.js L242).
+        let l = crate::embedded_layout("saltpan");
+        assert_eq!(
+            crate::collision::CollisionWorld::from_layout(&l)
+                .blocks
+                .len(),
+            l.meta.variant_counts.expect("turf").turf.total as usize
+        );
+    }
+
+    // TR-37 collision smoke ②: coarse grid down-sampling of the bounds counts
+    // walkable paintable/turf tops (ray from y=20 down 25 m, 2 m pitch).
+    // Observed counts (commit a9dc44a, geometry only — no props, spec §7):
+    //   saltpan     turf 1205, zones 1205
+    //   crossmarket turf  798, zones  820 (the zones-only landing adds 22 tops)
+    // Floor is a conservative 500, well below the smallest observed number.
+    #[test]
+    fn new_stages_walkable_sampling() {
+        for id in ["saltpan", "crossmarket"] {
+            let l = crate::embedded_layout(id);
+            for mode in ["turf", "zones"] {
+                let w = crate::collision::CollisionWorld::from_layout_for(&l, mode);
+                let mut count = 0usize;
+                let mut x = l.stage.bounds.min_x;
+                while x <= l.stage.bounds.max_x {
+                    let mut z = l.stage.bounds.min_z;
+                    while z <= l.stage.bounds.max_z {
+                        let h = w.raycast(glam::vec3(x, 20.0, z), -glam::Vec3::Y, 25.0, false);
+                        if h.hit
+                            && h.normal.y >= crate::collision::WALKABLE
+                            && h.face >= 0
+                            && w.faces[h.face as usize].paintable
+                        {
+                            count += 1;
+                        }
+                        z += 2.0;
+                    }
+                    x += 2.0;
+                }
+                println!("walkable-samples {id}/{mode}: {count}");
+                assert!(count > 500, "{id}/{mode}: only {count} walkable samples");
+            }
+        }
+    }
 
     fn mirror_brush(a: &Brush, b: &Brush) -> bool {
         if std::mem::discriminant(a) != std::mem::discriminant(b) {

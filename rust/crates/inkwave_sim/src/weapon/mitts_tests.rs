@@ -35,6 +35,8 @@ fn flags() -> BrushCommon {
         no_paint: Vec::new(),
         mural: Vec::<Mural>::new(),
         oct: None,
+        only_in: None,
+        not_in: None,
     }
 }
 

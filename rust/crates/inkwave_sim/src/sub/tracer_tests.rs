@@ -240,6 +240,8 @@ fn tr34_1_tracer_max_bounces_terminates() {
         no_paint: Vec::new(),
         mural: Vec::<Mural>::new(),
         oct: None,
+        only_in: None,
+        not_in: None,
     };
     let deck = Brush::Box {
         min: [-10.0, -1.0, -10.0],

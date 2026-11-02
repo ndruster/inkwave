@@ -622,3 +622,100 @@ fn tr36_10_placeholder_layout_branch() {
     assert!(!zc.point_in_active(Vec3::new(100.0, 0.0, 100.0)));
     assert!(zc.state().placeholder);
 }
+
+// ------------------------------------------------ TR-37 ③ zone-cells smoke
+
+/// TR-37 collision smoke ③: the new stages' frozen zone outlines sit on real
+/// paintable turf in `zones` mode — every centre zone and the side zone of
+/// each stage returns non-empty [`zone_cells`] (the saltpan centre is the
+/// Great Pan's two quarters, zones-data.js L32, so both parts must be live).
+/// Observed `zones`-mode counts (commit a9dc44a): saltpan centre 1348 +
+/// 1348, shed-roof side 1408; crossmarket centre 1526, pier side 1566.
+#[test]
+fn tr37_zone_cells_are_live_on_the_new_stages() {
+    for id in ["saltpan", "crossmarket"] {
+        let l = crate::embedded_layout(id);
+        let world = CollisionWorld::from_layout_for(&l, "zones");
+        let paint = PaintGrid::new(&world);
+        let zl = l.zones.as_ref().expect("extracted zone layout");
+        for (name, def) in zl
+            .center
+            .iter()
+            .enumerate()
+            .map(|(i, z)| (format!("center{i}"), z))
+            .chain([("side".to_string(), &zl.side)])
+        {
+            let (cells, center, reach) = zone_cells(def, &paint, &world);
+            println!("zone-cells {id}/{name}: {} cells", cells.len());
+            assert!(!cells.is_empty(), "{id}: {name} zone has no live cells");
+            assert!(reach.is_finite() && reach > 0.0, "{id}: {name} reach");
+            // the flood centre lies over the stage inside the band
+            let y0 = def.y0.unwrap_or(-2.0);
+            let y1 = def.y1.unwrap_or(6.0);
+            assert!(center[1] >= y0 - 0.1 && center[1] <= y1 + 0.1);
+        }
+        // saltpan: TWO centre quarters (zones-data.js L32), crossmarket: one
+        assert_eq!(
+            zl.center.len(),
+            if id == "saltpan" { 2 } else { 1 },
+            "{id}: centre zone count"
+        );
+    }
+}
+
+/// TR-37 ③b: the crossmarket side zone is the tram pier deck (zones-data.js
+/// L38, y -0.2..0.5). The zones-only landing pieces (layout.js L144-146:
+/// hoist-stage top y 2.8-3.1, lighter-deck top y -0.9..-0.3, the gangplank
+/// at x -22.85 outside the pier outline) fall outside that band/polygon, so
+/// the pier's own turf carries the cells in BOTH modes — the variant drop
+/// does not shrink the zone (deviation from the batch-1 brief's "drops
+/// materially" premise, verified empirically). Observed (commit a9dc44a):
+/// side-zone cells 1566 in `zones` mode, 1566 in `turf` mode.
+#[test]
+fn tr37_crossmarket_side_zone_survives_the_turf_drop() {
+    let l = crate::embedded_layout("crossmarket");
+    let zl = l.zones.as_ref().expect("crossmarket zones");
+    let mut counts = Vec::new();
+    for mode in ["zones", "turf"] {
+        let world = CollisionWorld::from_layout_for(&l, mode);
+        let paint = PaintGrid::new(&world);
+        let (cells, _, _) = zone_cells(&zl.side, &paint, &world);
+        println!("crossmarket side zone cells [{mode}]: {}", cells.len());
+        counts.push(cells.len());
+    }
+    // the zone never empties, in either mode…
+    assert!(counts[0] > 0 && counts[1] > 0, "side zone live: {counts:?}");
+    // …and the 6 variant blocks the turf mode drops (106 vs 112, meta
+    // variantCounts) are not pier-floor cells: the count is unchanged.
+    assert_eq!(
+        counts[0], counts[1],
+        "pier cells must not depend on the zones-only landing"
+    );
+    // the evidence that the mode drop IS real: the turf world loses the six
+    // landing blocks (and their faces) entirely.
+    let zones_world = CollisionWorld::from_layout_for(&l, "zones");
+    let turf_world = CollisionWorld::from_layout_for(&l, "turf");
+    assert_eq!(zones_world.blocks.len(), 112);
+    assert_eq!(turf_world.blocks.len(), 106);
+    assert!(
+        zones_world.faces.len() > turf_world.faces.len(),
+        "the dropped landing contributed faces: zones {} vs turf {}",
+        zones_world.faces.len(),
+        turf_world.faces.len()
+    );
+    // the landing itself is zones-only in the layout (layout.js L144-146).
+    let tagged = |mode: &str| {
+        l.for_mode(mode)
+            .primitives
+            .iter()
+            .filter(|p| {
+                matches!(
+                    p.common().tag.as_deref(),
+                    Some("hoist-stage") | Some("lighter-deck") | Some("gangplank")
+                )
+            })
+            .count()
+    };
+    assert_eq!(tagged("zones"), 6, "zones mode carries the landing");
+    assert_eq!(tagged("turf"), 0, "turf mode drops it");
+}

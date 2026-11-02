@@ -3394,6 +3394,8 @@ fn wall_world() -> CollisionWorld {
         no_paint: Vec::new(),
         mural: Vec::<crate::geometry::Mural>::new(),
         oct: None,
+        only_in: None,
+        not_in: None,
     };
     let deck = crate::geometry::Brush::Box {
         min: [-10.0, -1.0, -10.0],

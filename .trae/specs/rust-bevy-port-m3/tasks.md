@@ -261,7 +261,7 @@
 - 修复复验：fmt/clippy/test 三门禁 + 九段矩阵全 exit 0（workspace **509 passed** > 488 基线），日志同上。
 
 ## Task 37: 新地图 ×2 提取（saltpan + crossmarket）+ 碰撞冒烟
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: medium
 - **Depends On**: Task 28
 - **Description**:
@@ -271,6 +271,20 @@
   - `rule` TR-37.1: 提取产物与 JS layout 数值 diff 复核（stable-json）。
   - `rule` TR-37.2: 两图 Rust↔Rust turf 完整局 + 一图 zones 完整局（harness）。
 - **Notes**: 装饰 props 不提取（M1 口径）；渲染复用体块材质档。
+
+### Completion Evidence（2026-11-02）
+- **TR-37.1 提取与数值 diff**：`extract-layout.mjs` 泛化为 stage CLI（tidewater/saltpan/crossmarket，未知 stage 拒绝 exit 1）；三图 stable-json 双跑逐字节一致（批一报告 + 评审复跑 + P2-1 修复后复跑三图 BYTE-STABLE-OK）。产物：`saltpan.json` 118 件（68 box/14 obox/36 ramp；turf 110/zones 116）、`crossmarket.json` 112 件（60/34/18；turf 106/zones 112）；`tidewater.json` 重生成纯增键（onlyIn/notIn:null ×359 + variantCounts，唯一改动行 source.commit，D-T37-3）。zones-data.js L31-39 两图 zone 多边形逐字入 `zones` 键（评审手核 orect(X31) toFixed(3) 全等）；surfaces 槽位 34-39 入 meta。Rust 解析交叉断言 11 项（geometry.rs tests：stage info/counts/zones 字面量/for_mode 旗标过滤/tidewater no-op/出生点落地射线/可行走采样 saltpan 1205、crossmarket 798-820，floor >500）。
+- **TR-37.2 harness 完整局**：`MatchOpts.stage` + `run_match` 按 `embedded_layout(stage).for_mode(mode)` 单源构建 world/sim/nav/zone_layout（block id 位置序一致，JS main.js L242 口径）；新 scenario `tr37_saltpan_turf_three_clients`（1311 帧，winner=1，覆盖差 <0.5pp）、`tr37_crossmarket_turf_three_clients`（1311 帧）、`tr37_crossmarket_zones_three_clients`（8811 帧，zones 全 7 项断言含 `['z']` 无丢弃 + D-T36-5 静默窗口收敛，复用 OT cap 短化缝）——e2e 套件 9/9。
+- **规则平移**：variants.js L6 `in_mode` 逐字（geometry.rs L200-204）；L16-18 `layoutFor` → `StageLayout::for_mode`；level.js L27 先滤后镜像与 Rust union 过滤等价性经 mirrorDef `...d` 旗标携带证明（评审实核 saltpan 配对旗标 10 件=5×2）；`CollisionWorld::from_layout` 定案 turf 缺省（main.js L242）。
+- **管线接线**：lib.rs `embedded_saltpan/embedded_crossmarket/embedded_layout(id)`；BrushCommon `only_in/not_in` serde default；15 处构造点 + nav/tests LayoutMeta 同步。
+- **门禁**：九段矩阵全 exit 0（fmt/clippy/test/wasm32/cargo tree/trunk release/headless 600/JS 树零改动），workspace **525 passed**（>509 基线，+13 sim +3 harness），日志 `rust/tools/verify/logs/task37-gates-20261102T213942Z.log`。
+
+### Review 附录
+- 独立评审（批一+批二全量 diff）：**0 P0 / 0 P1 / 3 P2**，APPROVE。锚抽查 18 处全真（variants.js L2/L3/L6/L16-18、main.js L242、maps.js L118-119、zones-data L5/L11/L31-39、两图 layout.js/surfaces.js 各锚）；计数算术复核（118=2+58+58、112=4+54+54、旗标件 kind 增量吻合）；`cargo tree -p inkwave_sim` 仍仅 glam/serde/serde_json；JS 树/server/ 零改动。
+- **P2-1 ✅**：`in_mode` 对 `Some("")` 与 JS falsy 分歧（不可达）→ 提取器 `d.onlyIn || null` 对齐 truthiness + 文档注记；三图重跑字节不变。
+- **P2-2 ✅**：`new_stages_spawn_pads_land` 死脚手架 `expect_blocks` 删除。
+- **P2-3 ✅**：`for_mode` 文档补注 meta.variant_counts 保持 union 计数。
+- 偏差定案 D-T37-1..4 见 spec.md §7.1（含 crossmarket side-zone 取格 turf/zones 等值的前提修正——过滤证据改块数+旗标在场断言）。
 
 ## Task 38: bot normal/hard + 武器/副/特殊使用 + zone tactic
 - **Status**: `pending`
