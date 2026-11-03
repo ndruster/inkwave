@@ -950,6 +950,8 @@ pub fn encode_direct(m: &DirectMsg) -> String {
             ("w", js_str(w)),
             ("c", num(f64::from(*c))),
         ]),
+        // `c` is an `i32` crablet id (netmatch.js L153 sends the raw integer);
+        // `f64::from` is exact for the id range.
     }
 }
 
@@ -976,7 +978,7 @@ pub fn decode_direct(v: &JVal) -> Option<DirectMsg> {
             d: f("d") as f32,
             weak: f("weak") != 0.0,
             w: v.field("w").and_then(JVal::as_str)?.to_string(),
-            c: f("c") as i8,
+            c: f("c") as i32,
         }),
         _ => None,
     }
@@ -1896,6 +1898,35 @@ mod tests {
             let m = decode_direct(&v).unwrap_or_else(|| panic!("direct {name}"));
             assert_eq!(encode_direct(&m), s, "direct {name}");
         }
+    }
+
+    // `c` is an unbounded `crabSeq++` id (bossBrain.js L336): ids >= 128 must
+    // survive encode/decode without an i8 wrap (255 must not alias -1).
+    #[test]
+    fn bhit_crab_id_wider_than_i8_round_trips() {
+        for c in [128i32, 200, 255, 1000] {
+            let m = DirectMsg::BossHit {
+                a: 3,
+                d: 12.5,
+                weak: false,
+                w: "crab".to_string(),
+                c,
+            };
+            let s = encode_direct(&m);
+            assert!(s.contains(&format!(",\"c\":{c}}}")), "bytes {s}");
+            let back = decode_direct(&parse_json(&s).unwrap()).unwrap();
+            assert_eq!(back, m, "round trip c={c}");
+        }
+        // -1 stays the body sentinel.
+        let m = DirectMsg::BossHit {
+            a: 3,
+            d: 1.0,
+            weak: true,
+            w: "slam".to_string(),
+            c: -1,
+        };
+        let s = encode_direct(&m);
+        assert_eq!(decode_direct(&parse_json(&s).unwrap()).unwrap(), m);
     }
 
     #[test]

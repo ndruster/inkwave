@@ -168,3 +168,53 @@ tuning v3（boss 全数据表入产物）+ wire 金标准（B/bhit/bm/bc/res-bos
 - **D-T41-6 §1 勘误（实读修正，已改正文）**：招名 **sweep/frenzy**（非 beam/spin；HZ 的 beam* 参数属 sweep）；slam tele **1.15**；HZ 含 **frenzyR 8.8/frenzyDps 52**；bossHazards L35 **SAFE_PAD=.6**（tuning 节命名 reachStep）/L36 REACH_N 96；bossNav L15 **PAD_MARGIN=[3.5,1.0]**（tuning 节命名 padr）；BOSS.weapon 键集 roller/slam/bomb/sticky/seeker/burst/shaker/waddle/torpedo（boss.js L22）。
 - **D-T41-7 评审**：独立只读评审 **APPROVE**（无 P0/P1）。P2 五项：①§1 锚点过期→已按 D-T41-6 修正文；②source.path 未含 boss 源→已修并重生成；③s[18] 仅 Null 视为无 move（JS `||null` 对 falsy 亦 null）→接受（move 恒为对象或缺省，无行为差）；④wire bc 注释失准→已修注释；⑤reachStep 与 SAFE_PAD 不同名→接受（schema.md 已注对应）。
 - 测试：inkwave_sim 470 passed（+16 vs M3 基线 454 sim 侧），workspace 567（+13 vs 554）。
+
+## Task 42 实施设计（2026-11-03，实读锚点后定稿）
+
+### §0 目标
+`inkwave_sim::boss::{Boss, BossNav}`：Boss 实体状态机 + 导航 + hitShapes 查询 + 伤害链 + pack/unpack/follow/adopt/handoff。不含 Brain 选招/Hazards（Task 43）、match 分支（Task 44）、联网驱动（Task 45）。附带提取扩展：hitPos rest 坐标 + nav 三常量。
+
+### §1 JS 锚点（实读，上一窗口 boss.js/bossNav.js 全读 + 本窗口补核）
+- boss.js：BOSS 常量 L15-25；构造 L31-72（st 契约 L62、log L48、crabs Map L47、_rain L67）；_spawnPoint L75-93（planIds 重心+评分 `min(Dw,6)*1.5+min(Dv,5)-dist*0.25`、yaw=atan2(pad.x-x,pad.z-z)、24 次 turnOk 修正）；update L100-116；_modelUpdate L119-140（st；movePhaseAt/moveTimes/beamAngle 属 Task 43，本任务 move 恒 None 路径先行）；segHit L205-231（weak 优先 te-0.02、_hs 复用对象）；_segCrabs L232-250（crab r=0.55、cy+0.35）；rollHit L252-269（drum 低层球过滤 h.pos.y-h.r>cy+0.7）；rayDist L272-284；hit L288-302（倍率链 weak×stunned×BOSS.weapon[wid]??1、invuln/!visible 挡、guest sendBossHit、min 无上限）；splash L304-321（先 crab d<R+0.4 全额 dmax；body 最近非 weak 球 bd<R + LOS 才 hit 线性衰减）；rain/_flushRain L323-334（0.3s 批、wid='storm'）；applyDamage L337-350（dead/invuln/!visible/非 playing 挡、d=min(d,hp)、bossDmg/weakHits stats、flashN/weakN、d>=60→hurt=clamp(d/160,.3,1)、hp<=0.001→_defeat 否则 brain.checkPhase）；remoteHit L352-359（log.recv/recvDmg、d.c>=0→_hitCrab(fromNet)、否则 applyDamage(min(d,2000))）；_defeat L361-368；_hitCrab L371-381；crabPop L383-388（recBoss ['bc',id,r2x,r2y,r2z,killed?1:0]）；_crabBurst L390-402（host paint splat、inPad 0.3 挡）；_crabVisuals L407-418（dead 1.2s 后删）；pack L422-431（18 槽+full&&move 第 19；r2/r3 精度 L496-497；flags bit1 stun/2 dead/4 invuln/8 visible；mv=move.t0 或 -1；crabs 活者 [id,r2x,r2y,r2z,r2yaw,round hp]；hp=round(hp*10)/10、maxHp=round）；unpack L432-434；onMove L436；_follow L439-472（pos=S+err、vel 差分 dt>0、len^2>400 回退 S.vx/vz、bt=max、f 位解、S.f&2→dead、anim 变→animT0=bt、S.move→onMove、mv>=0→hz.moves find t0、fl/wk 计数 flash、crabSeen/missT>0.6 掉、speed 平滑 min(sp,8) lerp dt*8）；adopt L475-480；handoff L482（buf 清+handoff 标记）。
+- bossNav.js：WALL_BODY L10、FLOOR_BODY L11、PLAN_WALL 2.9 L12、PLAN_FLOOR 1.8 L13、STRIDE 1.35 L14、PAD_MARGIN L15；构造 L19-30（step 0.5、x0=minX+0.25、kind 0floor/1wall/2drop/3pad、pads=spawnPads r=spawnBarrier）；_build L32-91（floorY=0.25m 直方图众数（g>-5 计 Math.round(g*4)）、g>=best-0.55 否则 kind2、4 高度点 [STRIDE+.1,2.6,3.8,5.2] pointInside→kind1、pad margin 按 team 索引→kind3、非 kind1 时 floor=best、Dw=_field(kind==1)、Dv=_field(kind>=2,edge=true)、ok=Dw>=2.9&&Dv>=1.8、连通域 8 邻域 stack flood、score=size*(0.4+dist_centroid_to_pad0/span)、planIds=最佳域）；_field L94-113（R=14 暴力、offs 预计算排序、out?edge:match、d=max(0,dd-st*0.5)）；xz/cell/wallClear/floorClear/kindAt(越界=2)/floorAt(0.45 吸附)/inPad/isPlan L115-126；poseOk L129-134；turnOk L137-141；cast L144-159（stepLen 0.25、停止后 claw 前 9 扇形 a=-0.9+k/8*1.8 距 f.r+0.6 kindAt==1→wall）；_cellOk/lineOk L161-167（slack 0.3、采样 n=ceil(d/(step*0.8))）；nearestPlan L170-186（r<60 ring 搜索）；path L189-230（A* 8 邻域代价 hypot(dx,dz)*step*(1+max(0,5-Dw)*0.1+max(0,3-Dv)*0.15)、iter<40000、stamp 数组复用、回溯>8000 截断、string-pulling）；randomPoint L233；MinHeap L236-260。
+- bossBrain.js（本任务仅 checkPhase 纯函数）：L41-43 `checkPhase()`：`f=hpFrac(); want = f<=phases[1]?3 : f<=phases[0]?2 : 1; if want>phase && want>pendingPhase → pendingPhase=want`；onDefeat L45（move/path/plan 清）。roar 触发在 brain.update=Task 43。
+- **hitPos 静态求值路线（本窗口实读定案）**：bossModelGeo.js `buildRig` L318-367 的 `add()` 只设 position（L321-325，无 quaternion）⇒ rest 骨链 matrixWorld ≡ 纯平移 T(rest[bone])；`getSocket` L151-154 = `off.applyMatrix4(bone.matrixWorld)`，`off = p - rest[bone]`（L56）⇒ **rest 世界坐标 ≡ sockets 表模型空间字面点 p**。sockets 表 L822-830（依赖真实导出 CONT L274/ARMS L303-306/HEAD L309-313/cont L276/V3）。特例（bossModel.js L57-59 覆盖，同样无需 rig）：shellF=RotX(CONT.pitch)·(0,0.05,1.5)+CONT.pos；shellR=RotX(CONT.pitch)·(0,0.1,-1.55)+CONT.pos；body=(0,2.2,2.3)。HIT 十球名=shellF/shellR/body/clawL/clawR/eyeL/eyeR/belly/crackL/crackR（bossModel.js L14-18，Task 41 已提取 socket/r/weak）。
+- Rust 接口面（本窗口实读）：`BossSnap`/`BossCrab` net.rs L367/L387（19 槽，Task 41 wire.rs encode_boss_snap L496/decode L545）；`collision.rs`：`point_inside(p,pad,exclude,scratch)` L250、`ground_height(x,z,y_max,skip_grates)` L268、`los(a,b)` L394；`SimWorld` actor.rs L80-98（collision+spawn_pads[Vec3;2]+spawn_barrier）；`tuning.rs`：`Boss` L1393-1418、`BossNavTuning{wall_body,floor_body,padr}` L1556、`BossHitSocket{socket,r,weak}` L1571；lib.rs 模块表 L13-29（无 boss）。
+
+### §2 设计
+- **提取扩展**（extract-tuning.mjs，沿用切块 eval+assertContains）：①`boss.nav` 增 `planWall/planFloor/stride`（bossNav.js L12-14 字面切片）；②`boss.hit` 各项增 `pos:[x,y,z]`：sockets 表 L822-830 切片 eval（context 注入真实 CONT/ARMS/HEAD/cont + THREE shim——node_modules/three 存在，直接 import 真 THREE 更稳）+ 特例三式（锚 L57-59）；③schema 版本 `inkwave.tuning.v3→v4`；④交叉校验脚本 `rust/tools/verify/boss-hitpos-crosscheck.mjs`：import 真 three+buildRig，按 getSocket 语义（bone rest 平移复合）重算 10 球世界坐标，与 tuning.json hitPos 逐值容差 1e-4 断言——静态路线的独立证据链。tuning.rs：`BossHitSocket` 增 `pos: [f32;3]`；`BossNavTuning` 增三字段。
+- **`boss/nav.rs`**：BossNav 逐行平移（构造入参=&CollisionWorld+SimWorld pads/bounds；grid Vec2D<u8> kind + f32 floor + Dw/Dv 场；A* 用 Vec MinHeap，tie-breaking 对齐 JS 堆序以保证确定性）。
+- **`boss/mod.rs`**：Boss 实体（状态字段对齐构造 L31-72；crabs=Vec<BossCrabState>，id 单调；`hit_shapes()` 每帧世界球表=rest pos 经 Ry(yaw)·+pos 变换（root 语义：model space→world，实读 bossModel.js root position/rotation 设置行后锚定）+ active 规则（belly=!dead&&!below&&(stunned||phase>=3)——P[C.belly] 动画项属 Task 43，本任务以 stunned||phase>=3 近似并注记；crack=!dead&&!below&&tear——Task 43 前恒 false；below=模型下沉项 P[C.by]，本任务 below 恒 false 注记）；segHit/rollHit/rayDist/hit/splash/rain/applyDamage/remoteHit/_defeat/_hitCrab/crabPop/_crabBurst/pack→BossSnap/unpack/_follow/adopt/handoff 全量；Brain 依赖以 `pending_phase` 字段+`check_phase()` 纯函数承载，选招/roar 留 Task 43 接口）。
+- 数值全走 tuning（含 hitPos）；JS 锚注释 `// JS <file> L<line>`。
+
+### §3 实施批次（委派）
+- 批次 A：提取扩展+tuning.rs+schema.md+锚定单测+crosscheck 脚本（含重生成 tuning.json，DETERM 双跑）。
+- 批次 B：`boss/nav.rs` + 单测（Tidewater 构建、poseOk/turnOk/cast/path 行为）。
+- 批次 C：`boss/mod.rs` + 单测（TR-42.1 全项）。
+- 主上下文实读核验 → 独立评审 → 修复 → 九段门禁。
+
+### §4 测试
+- TR-42.1：HP 缩放（units×hpDiff 逐档）、phase 阈值 [.66,.33]（checkPhase 边界值）、hitShapes 逐球命中判定（weak 优先、te-0.02 提前、rollHit 低层过滤、splash LOS）、伤害倍率链、rain 批（0.3s/storm）、remoteHit crab 分支、pack→BossSnap→unpack→_follow 往返逐字段。
+- TR-42.2：BossNav 三图冒烟（出生点 inPlan、path 不出界、kindAt 越界=2、nearestPlan）；hitPos crosscheck 脚本入门禁（node 段）。
+- 基线 567 单调递增；JS 树零改动。
+
+### §5 风险
+- sockets 表 eval 依赖 ARMS/HEAD 的 `.normalize()/clone()` 等 THREE 方法——用真 three import（node_modules 已存在），不用 shim。
+- A* tie-breaking 与 JS 堆不一致 → 路径漂移：单测钉参考路径（JS 侧 node 跑 bossNav.path 导出参考序列，Rust 断言逐点一致）。
+- active 规则的动画项（P[C.belly]/tear/below）Task 43 前不可求值：以保守近似+JS 锚注记，评审确认。
+- trunk 段沙箱 OOM 持续存在 → 沿用 DEGRADED 口径。
+
+### §6 验收
+九段门禁全绿（task42-gates-*.log，TRUNK 允许 DEGRADED 注记）；测试数 >567；JS 树零改动；crosscheck 脚本 PASS。
+
+### §7 定案（实施后回填 §8）
+
+### §8 Task 42 定案（2026-11-03，实施+评审后）
+- **D-T42-1 hitPos 静态求值路线**：rest 骨链纯平移（buildRig add() 只设 position，bossModelGeo.js L321-325）⇒ socket rest 世界坐标 ≡ sockets 表模型空间字面点 p；shellF/shellR/body 特例（bossModel.js L57-59）经 off+T(rest) 复合消去 rest ⇒ 纯字面式。双证据链：提取脚本 slice-eval（静态）+ `boss-hitpos-crosscheck.mjs` 真 THREE Group.updateMatrixWorld 动态骨链复算（10/10 容差 1e-4）。schema v4。
+- **D-T42-2 BossNav 精度**：内部运算 f64、存储 f32（对齐 JS Float32Array 舍入语义）；A* 两条固定路径以 node 参考 harness（真 bossNav.js+level.js+Tidewater）逐点钉定；`Math.round` 复刻 `floor(x+0.5)`；MinHeap 弹出序单测钉定。
+- **D-T42-3 任务描述 vs 源码**：`_build` 的 floor 赋值 JS L57 实为 `if (k)`（kind≠0 含 wall 均设 floor=best），非「kind≠1」；按源码移植，构建逐位测试证实与 JS 一致。
+- **D-T42-4 root 变换与近似**：world = pos + Ry(yaw)·rest（THREE Ry 约定 x'=cos·x+sin·z）。动画项近似（归属 Task 43，代码注释注明）：belly=`!dead&&(stunned||phase>=3)`（丢 `P[C.belly]>0.5` 姿态项）、crack=false（依赖 `A.sp.tear.x`）、below=false（依赖 `P[C.by]`）。
+- **D-T42-5 评审修复**：P1-1 `BossHit.c` i8→i32（crabSeq 无上限，255 别名 -1 本体哨兵；bossBrain.js L336 实读）+ 大 id 往返测试；P1-2 guest 上行 `d` 走 `r2(dec(d))`（netmatch.js L153 实读）+ `log.sent/sentDmg` 计数补全（原被误归 Task 43）+ 测试期望 60.000004→60.0；P2-1 blocked 事件加 `is_local` 门控（boss.js L294 实读）；P2-3 lerp 注释更正（THREE f64）。
+- **D-T42-6 主上下文核验补漏**：`BossAttacker.has_nid` 门控（netmatch.js L152 `attacker.nid === undefined` 不发上行但仍本地预测）——评审未列，核验 JS 实读后补，含专项测试。
+- **D-T42-7 接受项**：P2-2 f32 状态 + `mv` f32 量化 ⇒ Rust-host↔JS-guest 混部不受支持（PROTO v1 同语言部署口径不变）；P2-3 splash/rain 嵌套 hypot vs JS 三参 Math.hypot（~1ulp，仅 LOS 边界翻转理论风险，改动收益低于风险）。
+- 测试：inkwave_sim 506 passed（470→506，+36），workspace 基线 567 单调递增（门禁日志为准）。

@@ -32,7 +32,7 @@
 - 处置后复验：fmt/clippy/test 重跑全绿（567 passed），TRUNK 按环境性 DEGRADED 记录，不阻塞提交。
 
 ## Task 42: Boss sim 核心——Boss 实体/BossNav/hitShapes/快照
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 41
 - **Description**:
@@ -43,6 +43,22 @@
   - `rule` TR-42.1: 固定种子状态机单测——HP 缩放（units×hpDiff）、phase 阈值 [.66,.33]、hitShapes 命中判定逐球、pack→unpack 往返逐字段一致。
   - `rule` TR-42.2: BossNav 三图冒烟（boss 出生/巡逻不出界、charge 撞墙 stun）。
 - **Notes**: hitShapes 几何从 JS 渲染模型剥离进 sim 是本任务核心设计点（spec Background）。
+
+### Task 42 Completion Evidence（2026-11-03）
+- **TR-42.1 ✅**：`boss/mod.rs` ≡ boss.js 497 行全量平移（194 条 JS 锚注释）——实体状态机/bt 时钟/_spawnPoint（planIds 重心+评分+24 turnOk 修正）/hitShapes 世界球查询（rest pos 经 `pos+Ry(yaw)·rest` 变换，weak 先测 te-0.02 提前、rollHit 低层过滤、_hs 复用）/伤害倍率链（weak×stunned×weapon 表逐键测试 75/93.75/312.5）/splash LOS/crab R+0.4/rain 批 0.3s storm/remoteHit crab 分支/applyDamage 挡链+hp 缩放/checkPhase [.66,.33]/pack→BossSnap→unpack→_follow 往返逐字段/adopt/handoff。
+- **TR-42.2 ✅**：`boss/nav.rs` ≡ bossNav.js 260 行——_build 直方图/kind 场/Dw/Dv/连通域/score、poseOk/turnOk/cast/lineOk/nearestPlan/A* path/randomPoint/MinHeap；**path 以 node 参考 harness（真 bossNav.js+level.js+Tidewater）逐点钉定**（两条固定起终点路径逐点一致 + floorY/网格/planIds/area 逐位断言）；Tidewater 冒烟（出生 poseOk、kindAt 越界=2、floorAt 吸附、inPad）。
+- **提取扩展 ✅**：schema v4——`hit[].pos` rest 模型空间坐标（纯平移骨链静态求值 + `boss-hitpos-crosscheck.mjs` 真 THREE 动态骨链交叉校验 10/10 容差 1e-4，双证据链）+ `nav.planWall/planFloor/stride`（bossNav.js L12-14）；tuning.json 连跑逐字节一致；`tuning.rs` 类型+锚定测试（boss_hit_pos_values 逐球 1e-6）。
+- **九段门禁**：`rust/tools/verify/logs/task42-gates-20261103T155339Z.log` — FMT/CLIPPY/TEST(**workspace 603 passed**=567+36，inkwave_sim 506)/WASM(cargo check wasm32)/TREE/DETERM/XCHK(crosscheck ok)/HEADLESS(600 帧)/JS_TREE_CLEAN 全绿；**TRUNK=DEGRADED**：3 次重试 wasm-bindgen SIGKILL（与 Task 41 同沙箱 OOM，累计 8 次），按 M3 先例 D-T40-1 判环境性，判定已追记日志，不阻塞提交。
+
+### Task 42 Review 附录（独立评审：0 P0 / 2 P1 / 3 P2 → 全部当场处置 → APPROVE 闭环）
+- 评审员实核：194 锚抽查 ≥40 条一致；boss.js L288-482/bossNav.js L144-260/bossModel.js/bossBrain.js/netmatch.js 逐式对照；tuning v4 双证据链成立；测试非同义反复。
+- **P1-1 ✅** `BossHit.c` i8→i32（`crabSeq++` 无上限，id 255 会别名 -1 本体哨兵；bossBrain.js L336 实读）+ wire 大 id 往返测试（128/200/255/1000 逐字节钉定）。
+- **P1-2 ✅** guest 上行 `d` 补 `r2(dec(d))` 量化（netmatch.js L153 实读）+ `log.sent/sentDmg` 计数补全（原被误归 Task 43）+ 测试期望修正（60.000004→60.0，raw d 进审计、r2 值上线）。
+- **P2-1 ✅** blocked 事件加 `is_local` 门控（boss.js L294 实读）+ 非 local 无事件断言。
+- **P2-2 ✅（接受）** f32 状态+`mv` 量化 ⇒ Rust-host↔JS-guest 混部不支持——spec D-T42-7 声明（PROTO v1 同语言部署口径不变）。
+- **P2-3 ✅** lerp 注释更正（THREE f64）；嵌套 hypot vs 三参 Math.hypot（~1ulp）接受并记录 D-T42-7。
+- **主上下文核验补漏 ✅**（评审未列）：`BossAttacker.has_nid` 门控——JS netmatch.js L152 `attacker.nid === undefined` 不发上行但仍本地预测，含专项测试。
+- 处置后复验：fmt/clippy/test 全绿（inkwave_sim 506 passed），门禁重跑九段如上。
 
 ## Task 43: BossBrain + BossHazards——六招与危害求值
 - **Status**: `pending`

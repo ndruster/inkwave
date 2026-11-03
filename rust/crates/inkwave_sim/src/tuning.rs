@@ -1,8 +1,9 @@
 //! Gameplay tuning constants, extracted from upstream `src/config.js` into
-//! `assets/tuning.json` (schema `inkwave.tuning.v3`) by the Task 3 pipeline,
+//! `assets/tuning.json` (schema `inkwave.tuning.v4`) by the Task 3 pipeline,
 //! extended to the full M3 content set by Task 28 (12 weapons / 15 subs /
-//! 19 specials / zones / three difficulties) and with the HULLBREAKER boss
-//! data tables by Task 41 (slice+eval of `src/boss/*.js`, schema v3).
+//! 19 specials / zones / three difficulties), with the HULLBREAKER boss
+//! data tables by Task 41 (slice+eval of `src/boss/*.js`) and the boss hit
+//! sphere rest positions + nav plan constants by Task 42 batch A (v3 → v4).
 //!
 //! Units: metres / seconds / m·s⁻¹ / m·s⁻²; HP and ink are points. Weapon
 //! spread / arc / fan / leap-angle fields are degrees; every other angle is
@@ -43,8 +44,9 @@ pub struct Tuning {
     #[serde(rename = "teamPalettes")]
     pub team_palettes: Vec<TeamPalette>,
     pub difficulty: DifficultySet,
-    /// HULLBREAKER boss data tables (Task 41, schema v3): `BOSS`, `BOSS_MODE`,
-    /// `MOVES` / `PACE` / `HZ` / … , `HIT`, brain + nav arrays.
+    /// HULLBREAKER boss data tables (Task 41, extended by Task 42 batch A,
+    /// schema v4): `BOSS`, `BOSS_MODE`, `MOVES` / `PACE` / `HZ` / … , `HIT`
+    /// (with rest `pos`), brain + nav arrays (with plan constants).
     pub boss: Boss,
 }
 
@@ -1382,12 +1384,13 @@ impl DifficultySet {
 }
 
 // ---------------------------------------------------------------------------
-// Task 41 (tuning v3): the HULLBREAKER boss data tables. Extracted from
-// src/boss/{boss,bossMode,bossHazards,bossModel,bossBrain,bossNav}.js via the
-// slice+eval path in extract-tuning.mjs; line anchors in the tests below.
+// Task 41 (tuning v3, extended by Task 42 batch A to v4): the HULLBREAKER boss
+// data tables. Extracted from src/boss/{boss,bossMode,bossHazards,bossModel,
+// bossBrain,bossNav,bossModelGeo}.js via the slice+eval path in
+// extract-tuning.mjs; line anchors in the tests below.
 // ---------------------------------------------------------------------------
 
-/// Top-level `boss` section (schema v3).
+/// Top-level `boss` section (schema v4).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Boss {
@@ -1549,14 +1552,21 @@ pub struct BossBrainTuning {
     pub cool_rnd: [f32; 4],
 }
 
-/// `WALL_BODY` / `FLOOR_BODY` / `PAD_MARGIN` (bossNav.js L10-15). The design
-/// spec's `padr` is the JS `PAD_MARGIN` pair.
+/// `WALL_BODY` / `FLOOR_BODY` / `PAD_MARGIN` (bossNav.js L10-15) plus the plan
+/// thresholds `PLAN_WALL` / `PLAN_FLOOR` / `STRIDE` (bossNav.js L12-14, Task 42
+/// batch A). The design spec's `padr` is the JS `PAD_MARGIN` pair.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BossNavTuning {
     pub wall_body: [NavFootprint; 2],
     pub floor_body: [NavFootprint; 3],
     pub padr: [f32; 2],
+    /// Planned-cell wall clearance (m): `ok = Dw >= PLAN_WALL` (bossNav.js L12).
+    pub plan_wall: f32,
+    /// Planned-cell floor clearance (m): `ok = Dv >= PLAN_FLOOR` (bossNav.js L13).
+    pub plan_floor: f32,
+    /// Obstacles up to this high (m) are stepped over (bossNav.js L14).
+    pub stride: f32,
 }
 
 /// One model-space clearance circle `{ z, r }` (feet at y 0, facing +z).
@@ -1566,12 +1576,20 @@ pub struct NavFootprint {
     pub r: f32,
 }
 
-/// One `HIT` entry (bossModel.js L14-18): socket name, sphere radius, weak flag.
+/// One `HIT` entry (bossModel.js L14-18): socket name, sphere radius, weak
+/// flag and the rest model-space sphere centre `[x, y, z]` (m, feet at y 0,
+/// facing +z; Task 42 batch A). The pos is derived statically in
+/// extract-tuning.mjs — the rest bone chain is pure translation, so the socket
+/// world point equals the sockets-table literal (bossModelGeo.js L822-830),
+/// with the three constructor overrides (bossModel.js L57-59) winning over the
+/// table — and re-verified against a real `buildRig()` + `matrixWorld`
+/// composite by rust/tools/verify/boss-hitpos-crosscheck.mjs.
 #[derive(Debug, Clone, Deserialize)]
 pub struct BossHitSocket {
     pub socket: String,
     pub r: f32,
     pub weak: bool,
+    pub pos: [f32; 3],
 }
 
 /// Parse a tuning document from JSON.
@@ -1662,7 +1680,7 @@ mod tests {
     #[test]
     fn schema_and_provenance() {
         let t = tuning();
-        assert_eq!(t.schema, "inkwave.tuning.v3");
+        assert_eq!(t.schema, "inkwave.tuning.v4");
         assert_eq!(t.source.path, "src/config.js + src/boss/*.js");
         assert_eq!(t.source.commit.len(), 40, "commit must be a full sha");
     }
@@ -2772,6 +2790,9 @@ mod tests {
         assert_eq!(n.floor_body[1], NavFootprint { z: 0.0, r: 1.5 });
         assert_eq!(n.floor_body[2], NavFootprint { z: -2.3, r: 1.45 });
         assert_eq!(n.padr, [3.5, 1.0]); // JS src/boss/bossNav.js L15 (PAD_MARGIN)
+        assert_eq!(n.plan_wall, 2.9); // JS src/boss/bossNav.js L12 (PLAN_WALL)
+        assert_eq!(n.plan_floor, 1.8); // JS src/boss/bossNav.js L13 (PLAN_FLOOR)
+        assert_eq!(n.stride, 1.35); // JS src/boss/bossNav.js L14 (STRIDE)
     }
 
     #[test]
@@ -2794,6 +2815,37 @@ mod tests {
             assert_eq!(&hit[i].socket, socket, "hit[{i}].socket");
             assert_eq!(hit[i].r, *r, "hit[{i}].r");
             assert_eq!(hit[i].weak, *weak, "hit[{i}].weak");
+        }
+    }
+
+    // TR-42.2: the rest model-space hit sphere centres (Task 42 batch A),
+    // hard-coded from the `node tools/verify/boss-hitpos-crosscheck.mjs`
+    // output; tolerance 1e-6 covers the f32 rounding of the JSON doubles.
+    #[test]
+    fn boss_hit_pos_values() {
+        let hit = &tuning().boss.hit;
+        let expected: [(&str, [f32; 3]); 10] = [
+            ("shellF", [0.0, 2.8700721, 0.19519856]), // JS src/boss/bossModel.js L57
+            ("shellR", [0.0, 3.2848348, -2.8268822]), // JS src/boss/bossModel.js L58
+            ("body", [0.0, 2.2, 2.3]),                // JS src/boss/bossModel.js L59
+            ("clawL", [2.0816699, 0.84443354, 5.327832]), // JS src/boss/bossModelGeo.js L823
+            ("clawR", [-1.8269395, 1.5461211, 5.197982]), // JS src/boss/bossModelGeo.js L823
+            ("eyeL", [0.64, 3.74, 3.1]),              // JS src/boss/bossModelGeo.js L825
+            ("eyeR", [-0.64, 3.74, 3.1]),             // JS src/boss/bossModelGeo.js L825
+            ("belly", [0.0, 1.25, 2.25]),             // JS src/boss/bossModelGeo.js L826
+            ("crackL", [1.12, 3.522741, -1.4585618]), // JS src/boss/bossModelGeo.js L828
+            ("crackR", [-1.12, 3.522741, -1.4585618]), // JS src/boss/bossModelGeo.js L828
+        ];
+        for (i, (socket, pos)) in expected.iter().enumerate() {
+            assert_eq!(&hit[i].socket, socket, "hit[{i}].socket");
+            for (k, &want) in pos.iter().enumerate() {
+                assert!(
+                    (hit[i].pos[k] - want).abs() < 1e-6,
+                    "hit[{i}] {socket}.pos[{k}]: {} vs {}",
+                    hit[i].pos[k],
+                    want
+                );
+            }
         }
     }
 }

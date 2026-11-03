@@ -1,4 +1,4 @@
-# tuning.json — 字段模式（schema `inkwave.tuning.v3`）
+# tuning.json — 字段模式（schema `inkwave.tuning.v4`）
 
 由 `rust/tools/extract/extract-tuning.mjs` 从上游 `src/config.js` 提取（v3 起另含 `src/boss/*.js`
 的 boss 数据表，切源+eval 方式，不经 ESM import），**不要手改**。
@@ -11,6 +11,10 @@ Task 29 移除（消费端改读 `weapons.shooter`）。
 v2→v3（Task 41 / TR-41.1）：新增顶层 `boss` 节（HULLBREAKER 全数据表：BOSS/BOSS_MODE/MOVES/
 PACE/HZ/HIT/brain/nav，提取自 `src/boss/{boss,bossMode,bossHazards,bossModel,bossBrain,bossNav}.js`）；
 其余各节数值不变。
+v3→v4（Task 42 批次 A）：`boss.nav` 新增 `planWall` `planFloor` `stride` 三字段；`boss.hit`
+各项新增 `pos:[x,y,z]`（rest 模型空间球心，见下）；其余各节数值不变。提取新增
+`src/boss/bossModelGeo.js` 切块 eval（真 THREE，node_modules 已有），`source.path` 的
+`src/boss/*.js` glob 已覆盖之。
 权威数值以本 JSON 为准（本文档只描述字段与语义，逐值锚定见 `inkwave_sim` 单测）。
 
 ## 顶层
@@ -288,9 +292,23 @@ JSON 键为蛇形（`barrage_sticky` 等），Rust 侧显式 rename。
 `wallBody=[{z:2.3,r:2.5},{z:-1.8,r:2.6}]`（L10，爪/腿/壳缘 vs 墙）、
 `floorBody=[{z:2.2,r:1.45},{z:0,r:1.5},{z:-2.3,r:1.45}]`（L11，躯干须在地面之上）、
 `padr=[3.5,1.0]`（L15，JS 常量名 `PAD_MARGIN`：身体远离出生垫屏障的边距，[队垫, 其余]）。
+v4 新增规划三常量：`planWall=2.9`（L12，JS `PLAN_WALL`：可规划单元需 Dw≥2.9，爪有回转余地）、
+`planFloor=1.8`（L13，JS `PLAN_FLOOR`：Dv≥1.8，身体稳在地面之上）、
+`stride=1.35`（L14，JS `STRIDE`：不高于此高度的障碍可直接跨过）。
 
 ### boss.hit（`HIT`，src/boss/bossModel.js L14-18，未导出，切源）
 
-10 个判定球 `{socket, r, weak}`，顺序即 JS 数组序：
+10 个判定球 `{socket, r, weak, pos}`，顺序即 JS 数组序：
 shellF 1.8 / shellR 1.8 / body 1.05 / clawL 0.85 / clawR 0.55（weak=false，L16）；
 eyeL 0.4 / eyeR 0.4 / belly 0.8 / crackL 0.7 / crackR 0.7（weak=true，L17）。
+
+v4 新增 `pos=[x,y,z]`：rest（无动画）模型空间球心坐标，米。推导依据（spec Task 42 §1）：
+`buildRig` 的 `add()` 只设 bone.position（`src/boss/bossModelGeo.js` L320-327，无四元数）⇒
+rest 骨链 matrixWorld ≡ 纯平移 T(rest[bone])；`getSocket` = `off.applyMatrix4(bone.matrixWorld)`
+（`src/boss/bossModel.js` L151-154），`off = p − rest[bone]`（L56）⇒ rest 世界坐标 ≡ sockets 表
+字面点 p（`src/boss/bossModelGeo.js` L822-830）。特例三个由构造器覆盖（L56 循环之后，L57-59 生效）：
+`shellF = RotX(CONT.pitch)·(0,0.05,1.5)+CONT.pos`（L57）、
+`shellR = RotX(CONT.pitch)·(0,0.1,-1.55)+CONT.pos`（L58）、`body = (0,2.2,2.3)`（L59）。
+独立证据链：`rust/tools/verify/boss-hitpos-crosscheck.mjs` 用真 THREE 跑真 `buildRig()` +
+`updateMatrixWorld` 复合重算十球，容差 1e-4 断言与 `pos` 一致；逐值锚定见
+`inkwave_sim` 单测 `boss_hit_pos_values`。

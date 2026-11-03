@@ -12,6 +12,7 @@
 
 pub mod actor;
 pub mod autopilot;
+pub mod boss;
 pub mod bot;
 pub mod collision;
 pub mod geometry;

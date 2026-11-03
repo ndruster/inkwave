@@ -67,51 +67,101 @@
     },
     "hit": [
       {
+        "pos": [
+          0,
+          2.870072120859314,
+          0.1951985641452454
+        ],
         "r": 1.8,
         "socket": "shellF",
         "weak": false
       },
       {
+        "pos": [
+          0,
+          3.284834784883212,
+          -2.8268821648446005
+        ],
         "r": 1.8,
         "socket": "shellR",
         "weak": false
       },
       {
+        "pos": [
+          0,
+          2.2,
+          2.3
+        ],
         "r": 1.05,
         "socket": "body",
         "weak": false
       },
       {
+        "pos": [
+          2.0816699383453194,
+          0.8444335388489346,
+          5.327832305755327
+        ],
         "r": 0.85,
         "socket": "clawL",
         "weak": false
       },
       {
+        "pos": [
+          -1.826939454265398,
+          1.546121091469204,
+          5.197981808846601
+        ],
         "r": 0.55,
         "socket": "clawR",
         "weak": false
       },
       {
+        "pos": [
+          0.64,
+          3.74,
+          3.1
+        ],
         "r": 0.4,
         "socket": "eyeL",
         "weak": true
       },
       {
+        "pos": [
+          -0.64,
+          3.74,
+          3.1
+        ],
         "r": 0.4,
         "socket": "eyeR",
         "weak": true
       },
       {
+        "pos": [
+          0,
+          1.25,
+          2.25
+        ],
         "r": 0.8,
         "socket": "belly",
         "weak": true
       },
       {
+        "pos": [
+          1.1199999999999999,
+          3.5227410035304954,
+          -1.458561796243391
+        ],
         "r": 0.7,
         "socket": "crackL",
         "weak": true
       },
       {
+        "pos": [
+          -1.1199999999999999,
+          3.5227410035304954,
+          -1.458561796243391
+        ],
         "r": 0.7,
         "socket": "crackR",
         "weak": true
@@ -220,6 +270,9 @@
         3.5,
         1
       ],
+      "planFloor": 1.8,
+      "planWall": 2.9,
+      "stride": 1.35,
       "wallBody": [
         {
           "r": 2.5,
@@ -381,9 +434,9 @@
     "turnRateSlow": 1.5,
     "waterY": -1.6
   },
-  "schema": "inkwave.tuning.v3",
+  "schema": "inkwave.tuning.v4",
   "source": {
-    "commit": "5e8e8244a90870b1f8d004275d116545dafb088c",
+    "commit": "b392a06041f88ef326e34ba67df3e9e8d1a6643a",
     "path": "src/config.js + src/boss/*.js"
   },
   "specialOrder": [

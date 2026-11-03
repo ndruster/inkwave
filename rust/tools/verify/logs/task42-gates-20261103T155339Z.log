@@ -1,0 +1,103 @@
+=== fmt ===
+FMT_EXIT=0
+sed: /root/.trae-cn-server/bin/stable-5d9926ed75dce7fa36dff87dbef5fb53e06b790a-debian10/modules/ai-agent/libselinux.so.1: no version information available (required by sed)
+=== clippy ===
+CLIPPY_EXIT=0
+sed: /root/.trae-cn-server/bin/stable-5d9926ed75dce7fa36dff87dbef5fb53e06b790a-debian10/modules/ai-agent/libselinux.so.1: no version information available (required by sed)
+sed: /root/.trae-cn-server/bin/stable-5d9926ed75dce7fa36dff87dbef5fb53e06b790a-debian10/modules/ai-agent/libselinux.so.1: no version information available (required by sed)
+    Checking inkwave_sim v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave_sim)
+    Checking relay-shim v0.1.0-m1 (/root/work/project/inkwave/rust/tools/relay-shim)
+    Checking inkwave v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave)
+    Checking net-harness v0.1.0-m1 (/root/work/project/inkwave/rust/tools/net-harness)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 18.08s
+=== test ===
+TEST_EXIT=0
+sed: /root/.trae-cn-server/bin/stable-5d9926ed75dce7fa36dff87dbef5fb53e06b790a-debian10/modules/ai-agent/libselinux.so.1: no version information available (required by sed)
+running 69 tests
+test result: ok. 69 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.16s
+running 507 tests
+test paint::tests::flood_same_region_replaces_running_flood ... ok
+test result: ok. 506 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 37.84s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 5 tests
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 4 tests
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.00s
+running 11 tests
+test tr38_difficulty_ladder_monotonic has been running for over 60 seconds
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 107.53s
+running 8 tests
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+=== wasm32 check ===
+WASM_EXIT=0
+sed: /root/.trae-cn-server/bin/stable-5d9926ed75dce7fa36dff87dbef5fb53e06b790a-debian10/modules/ai-agent/libselinux.so.1: no version information available (required by sed)
+    Checking inkwave_sim v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave_sim)
+    Checking inkwave v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.84s
+=== cargo tree -p inkwave_sim ===
+TREE_EXIT=0
+sed: /root/.trae-cn-server/bin/stable-5d9926ed75dce7fa36dff87dbef5fb53e06b790a-debian10/modules/ai-agent/libselinux.so.1: no version information available (required by sed)
+inkwave_sim v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave_sim)
+├── glam v0.30.10
+│   └── serde_core v1.0.229
+├── serde v1.0.229
+│   ├── serde_core v1.0.229
+│   └── serde_derive v1.0.229 (proc-macro)
+│       ├── proc-macro2 v1.0.107
+│       │   └── unicode-ident v1.0.26
+│       ├── quote v1.0.47
+│       │   └── proc-macro2 v1.0.107 (*)
+│       └── syn v3.0.6
+│           ├── proc-macro2 v1.0.107 (*)
+│           ├── quote v1.0.47 (*)
+│           └── unicode-ident v1.0.26
+└── serde_json v1.0.151
+    ├── itoa v1.0.18
+    ├── memchr v2.8.3
+    ├── serde_core v1.0.229
+    └── zmij v1.0.23
+=== tuning+fixture determinism (rerun, must be byte-identical) ===
+7735c7355a18ff0c4ec72edd5b52a7c5b9c59d95cb787c1a72c99a0e24db148b  rust/assets/tuning.json
+4d92b861287f4baad140db25104bcac84d1d2fee3c463da2e8fa049a07ed4c6e  rust/assets/net-fixtures.json
+DETERM_EXIT=0
+=== boss hitPos crosscheck (node, dynamic bone chain) ===
+XCHK_EXIT=0
+sed: /root/.trae-cn-server/bin/stable-5d9926ed75dce7fa36dff87dbef5fb53e06b790a-debian10/modules/ai-agent/libselinux.so.1: no version information available (required by sed)
+  crackR  bone=abdomen world=[-1.1199999999999999, 3.5227410035304954, -1.458561796243391]
+ok
+=== trunk build (retry<=3, SIGKILL false-green guard) ===
+trunk attempt 1 rejected (rc=1, sigkill_hits=2)
+trunk attempt 2 rejected (rc=1, sigkill_hits=2)
+trunk attempt 3 rejected (rc=1, sigkill_hits=2)
+sed: /root/.trae-cn-server/bin/stable-5d9926ed75dce7fa36dff87dbef5fb53e06b790a-debian10/modules/ai-agent/libselinux.so.1: no version information available (required by sed)
+2026-11-03T16:02:19.554610Z  INFO   2: error from asset pipeline
+2026-11-03T16:02:19.554613Z  INFO   3: running wasm-bindgen
+2026-11-03T16:02:19.554615Z  INFO   4: wasm-bindgen call to executable '/root/.cargo/bin/wasm-bindgen' with args: '["--target=web", "--out-dir=/root/work/project/inkwave/rust/target/wasm-bindgen/release", "--out-name=inkwave", "/root/work/project/inkwave/rust/target/wasm32-unknown-unknown/release/inkwave.wasm", "--no-typescript"]' returned a bad status: signal: 9 (SIGKILL)
+TRUNK_EXIT=1
+=== headless ===
+HEADLESS_EXIT=0
+sed: /root/.trae-cn-server/bin/stable-5d9926ed75dce7fa36dff87dbef5fb53e06b790a-debian10/modules/ai-agent/libselinux.so.1: no version information available (required by sed)
+     Running `target/release/inkwave --headless --frames 600`
+[inkwave] boot: sim crate 0.1.0-m1 (headless = true)
+[inkwave] headless frames complete
+=== JS tree git status ===
+JS_TREE_CLEAN
+GATES_DONE
+=== TRUNK verdict ===
+3 gate retries all wasm-bindgen SIGKILL (rc=1, sigkill_hits=2 each) — same sandbox OOM
+as Task 41 (5 further attempts there). wasm32 cargo check (WASM_EXIT=0) + headless (600
+frames) + full wasm-boundary tests green => DEGRADED per M3 precedent D-T40-1:
+environmental, not a Task 42 regression. Non-blocking for commit.

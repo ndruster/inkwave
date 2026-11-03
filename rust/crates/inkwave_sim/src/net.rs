@@ -826,8 +826,11 @@ pub enum DirectMsg {
         /// Weapon id string (`wid`; `'crab'` for crablet hits, boss.js
         /// L296/L374).
         w: String,
-        /// Crablet id, `-1` for boss hits (L150 default).
-        c: i8,
+        /// Crablet id, `-1` for boss hits (L150 default). Raw roster integer
+        /// on the wire (`c: crab`, L153) — widened from `i8` because
+        /// `crabSeq++` (bossBrain.js L336) is unbounded and 255 would alias
+        /// the `-1` body sentinel.
+        c: i32,
     },
 }
 
