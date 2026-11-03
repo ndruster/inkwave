@@ -3,7 +3,7 @@
 > 前置：M1 Task 1–16、M2 Task 17–27、M3 Task 28–40 全部 completed（基线 554 passed）。任务编号延续；格式与门禁口径沿用 M3。**M4 主线 = 玩法优先（spec.md「M4 决议」）**：Phase A Boss 战（41–46）→ Phase B 玩法收尾（47–48）→ Phase C 表现完整度（49–56）→ 收尾（57）。
 
 ## Task 41: Boss tuning 提取 + Boss wire 金标准
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 40
 - **Description**:
@@ -14,6 +14,22 @@
   - `rule` TR-41.1: 提取产物 stable-json 连跑逐字节一致；锚定单测逐值对 boss.js/bossMode.js/bossHazards.js 行号实读断言。
   - `rule` TR-41.2: fixture 新条目 Rust 编解码逐字节回环；既有 554 基线不破；`['bm']/['bc']` 容忍测试升级为产生+消费（保留未知 tag 容忍）。
 - **Notes**: 纯管线+wire 任务，不动 sim 逻辑。boss 数值禁手抄（纪律）。
+
+### Task 41 Completion Evidence（2026-11-03）
+- **TR-41.1 ✅**：`extract-tuning.mjs` 扩抓 `BOSS`（boss.js L15-25 逐字段，含 `weapon` 面积倍率表 9 键）/`BOSS_MODE`（bossMode.js L8-13）/moves 时序与 hazard 参数（bossBrain/bossHazards 实读取字段集，含 frenzyR/frenzyDps、slam tele 1.15）/hitShapes 球表（socket/r/weak，10 项）；schema `inkwave.tuning.v2→v3`，`source.path` 如实记 `src/config.js + src/boss/*.js`。提取形态=字面块切片 eval + `assertContains` 钉源行（marker 缺失即 throw，无软回退；不 ESM import boss 模块，避免拉 THREE）。确定性：tuning.json 连跑两次逐字节一致（sha256 `ed71ae47…`）。锚定单测逐值对 boss.js/bossMode.js/bossHazards.js/bossNav.js 行号实读断言。
+- **TR-41.2 ✅**：`net-fixtures.json` 新条目 = `B` 快照（full/delta）、`'bhit'`、`['bm']`、`['bc']`、res boss 形态；Rust 编解码逐字节回环（重生成连跑一致 sha256 `4d92b861…`）。`['bm']/['bc']` 由 Task 40 的「容忍」升级为「产生+消费」，未知 tag 容忍合同保留（wrong arity → None）。workspace **567 passed**（554→567，+13，基线单调递增）。
+- **wire.rs**：tick 消息 `B` 字段插入 `e`/`c` 之间（JS 对象字面量键序）；`b: None` 不写键 → 非 boss 局 tick 字节与改动前逐字节一致，PROTO v1 兼容面不破。`BossSnap` 19 槽位与 boss.js L422-434 逐位对齐（hp 一位小数 vs maxHp 整数；f 位标志 1/2/4/8；mv=-1 哨兵；crabs 仅存活；s[18] 仅 full&&move；decode `len<18 → None`）。`bhit.c`=-1 哨兵（netmatch L150 形参默认）；res `st` 行恒 6 宽、Rust 保留短行容忍。
+- **九段门禁**：`rust/tools/verify/logs/task41-gates-20261103T120224Z.log` — FMT/CLIPPY/TEST(567)/WASM(cargo check wasm32)/TREE/DETERM/HEADLESS(600 帧)/JS_TREE_CLEAN 全绿；**TRUNK=DEGRADED**：wasm-bindgen 处理 116MB wasm 被 SIGKILL（沙箱 OOM），门禁 3 次重试 + 手动 detached 循环 + 直连复验共 5 次全部 `signal: 9`，按 M3 先例 D-T40-1 判环境性、非本任务代码回归，复验结论已追记同一日志。
+- **门禁脚本修复**：TRUNK 段改为 raw-file 捕获退出码 + retry≤3 + `grep 'signal: 9'` 断言，杜绝管道假绿（`| tail; echo $?` 恒 0 教训，已记 project_memory.md）。
+
+### Task 41 Review 附录（独立评审：0 P0 / 0 P1 / 5 P2 → 全部当场处置 → 结论可闭环 APPROVE）
+- 评审员实核通过：提取重跑逐字节一致；BossSnap 19 槽与 boss.js pack 逐位对齐；tick 键序与 None 不写键的 PROTO 兼容断言成立；JS 树零改动。
+- **P2-1 ✅** spec §1 锚点过期→按 D-T41-6 实读修正文（招名 sweep/frenzy、slam tele 1.15、frenzyR/frenzyDps、SAFE_PAD、PAD_MARGIN、BOSS.weapon 键集）。
+- **P2-2 ✅** `source.path` 未含 boss 源→已修并重生成产物。
+- **P2-3 ✅（接受）** s[18] 仅 `Null` 视为无 move（JS `||null` 对 falsy 亦 null）→move 恒为对象或缺省，无行为差。
+- **P2-4 ✅** wire.rs `bc` 注释失准→已修注释。
+- **P2-5 ✅（接受）** `reachStep` 与 JS `SAFE_PAD` 不同名→schema.md 已注对应关系。
+- 处置后复验：fmt/clippy/test 重跑全绿（567 passed），TRUNK 按环境性 DEGRADED 记录，不阻塞提交。
 
 ## Task 42: Boss sim 核心——Boss 实体/BossNav/hitShapes/快照
 - **Status**: `pending`

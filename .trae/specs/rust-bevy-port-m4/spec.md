@@ -110,3 +110,61 @@
 - **When**: 每任务收尾全跑
 - **Then**: 全绿；测试数 >554 单调；JS 树/`server/` 零改动；sim 依赖面不变
 - **Evidence**: `rust/tools/verify/logs/taskNN-gates-*.log`
+
+---
+
+## Task 41 实施设计（2026-11-03，实读锚点后定稿）
+
+### §0 目标
+tuning v3（boss 全数据表入产物）+ wire 金标准（B/bhit/bm/bc/res-boss 编解码）。不动 sim 逻辑。
+
+### §1 JS 锚点（本窗口实读）
+- **boss.js L15-25** `export const BOSS`：hpPerUnit 18000、hpDiff{easy .75,normal 1,hard 1.3}、dmgDiff{.7,1,1.2}、paceDiff{1.25,1,.85}、weak 2.5/stunned 1.25、weapon 倍率表{roller .3,slam .6,bomb/sticky/seeker/burst/shaker/waddle/torpedo .75}（L22 实读）、phases [.66,.33]、intro 1.8/introLen 3.4/roarLen 1.9。
+- **boss.js L422-431 pack(full)**：`[r3 bt, r2 x, r2 y, r2 z, r3 yaw, r2 vx, r2 vz, round(hp*10)/10, phase, f, move?t0:-1, anim, r2 turn, flashN, weakN, killer, crabs, round(maxHp)]`；f 位：1 stunned/2 dead/4 invuln/8 visible（L424）；crabs 每只 `[id, r2 x, r2 y, r2 z, r2 yaw, round(hp)]`（L426）；full&&move 时 s[18]=move。
+- **boss.js L432-434 static unpack(s, ts)**：`{t:ts, bt..maxHp: s[0..17], move: s[18]||null}`。
+- **bossMode.js L8-13** `export const BOSS_MODE`：duration 240/intro 7.2/finishWin 5.2/finishLose 3.2/squad 8；L15 squadUnits{human 1.0, bot 0.6}。
+- **bossHazards.js L17-24** `export const MOVES`（6 招 tele/act/rec，L18-23 实读：slam{1.15,1.9,1.0}/barrage{.85,0,.8}/sweep{1.15,2.1,.9}/charge{1.15,0,.9}/crablets{.9,.8,.6}/frenzy{1.2,3.0,1.7}——**招名是 sweep/frenzy，非 beam/spin**；HZ 内 beam* 参数为 sweep 的光束几何）；L25 PACE [1,1,.88,.78]；L26 MIN_TELE .7；L27-34 HZ（slamR 3.3/slamDmg 48/ringSpeed 9.5/ringR0 2.4/ringMax 19/ringW .55/ringH .5/ringDmg 32/barrelR 2.4/barrelDmg 52/barrelFlight 1.3/barrelGap .26/beamLen 17/beamW .95/beamDps 170/chargeSpeed[0,13,14.5,16]/chargeRamp .35/chargeDmg 55/chargeMin 6/stun[0,4.2,3.7,3.3]/**frenzyR 8.8/frenzyDps 52**/crabR 2.1/crabDmg 40/crabHp 30/crabLife 12/crabSpeed[0,4.4,4.4,5.2]）；L35-36 SAFE_PAD .6/REACH_N 96（private，切源；tuning 节内命名 reachStep/reachN）。
+- **bossModel.js L14-18** `const HIT`（未导出，需切源）：10 球 `['shellF',1.8,false],['shellR',1.8,false],['body',1.05,false],['clawL',.85,false],['clawR',.55,false],['eyeL',.4,true],['eyeR',.4,true],['belly',.8,true],['crackL',.7,true],['crackR',.7,true]`。
+- **bossBrain.js L12-15**（private，切源）：SPEED[0,2.9,3.3,3.8]/TURN[0,1.25,1.45,1.75]/COOL[0,1.05,.8,.6]/COOL_RND[0,.8,.6,.45]。
+- **bossNav.js L10-11**（exported）：WALL_BODY[{z:2.3,r:2.5},{z:-1.8,r:2.6}]/FLOOR_BODY[{z:2.2,r:1.45},{z:0,r:1.5},{z:-2.3,r:1.45}]；PAD_MARGIN [3.5,1.0]（L15，private，切源；tuning 节内命名 padr）。
+- **netmatch.js**：L196 `msg.B = boss.pack(this.bossN % 10 === 0)`（每 10 tick full 一次，其余 delta 无 s[18]）；L150-153 sendBossHit `{k:'bhit', a:nid, d:r2(dmg), weak:0|1, w, c:crab}`——**c 缺省 -1 哨兵（`crab = -1` 形参默认值），非 null**；L215 case 'bhit' → `remoteHit(d)`；L494 `['bm', ...]` 中（`boss.onMove(e[2])`，e[2]=record `{id,t0,s,d,p}`，s=seed，d=[tele,act,rec]，p=per-move 参数对象）；L496 `['bc', id, x, y, z, killed?1:0]`（`_crabBurst`）；L652-654 res：`{k:'res', cov, win, mode, bo:result.boss, st:[[nid, round(turf), splats, deaths, round(bossDmg)||0, weakHits||0]×8]}`——**st 行恒 6 宽（JS 对所有模式写 bossDmg||0）**；L659 res 应用。
+
+### §2 设计
+**tuning v3**：`schema: 'inkwave.tuning.v3'`，新增顶层 `boss` 节：`{boss:{...}, mode:{...}, squadUnits:{human,bot}, moves:{6×{tele,act,rec}}, pace:[4], minTele, hz:{...}, brain:{speed,turn,cool,coolRnd}, nav:{wallBody,floorBody,padr}, hit:[10×{socket,r,weak}]}`。提取方式：**不用 ESM import**（boss.js 拉 THREE/ctx 浏览器全局），沿用 gen.mjs 的**切源+eval**模式（`const BOSS = {`→`};`、`const MOVES = {`→`};`、`const HZ = {`→`};`、`const HIT = [`→`];`、四个 brain 数组、nav 两数组+PAD_MARGIN），每块 `assertContains` 钉住上下文行（防上游漂移）。`tuning.rs` 加 `Boss` 类型（f32/u32 语义同 M3；socket 名 String；phases/pace/chargeSpeed/stun/crabSpeed 为 `[f32;4]` 或 Vec）；`tuning.schema.md` 更新 v3；锚定单测逐值对行号。
+
+**wire.rs**：
+- `BossSnap` 结构体（bt/x/y/z/yaw/vx/vz/hp/phase/f/mv/anim/turn/flash/weak/killer/crabs/maxHp/move:Option<JVal>），`encode_boss_snap(full)`/`decode_boss_snap` 手写（异质数组用 JVal 保序，数值 r2/r3 语义对齐 pack）。
+- `Tick` 增 `b: Option<BossSnap>`（None 时不写 `B` 键 → 非 boss 局字节不变，PROTO v1 兼容）。
+- `'bhit'`：`BhitMsg{a,d,weak,w,c:Option<i32>}` 编解码。
+- `['bm', rec]`/`['bc', id,x,y,z,killed]`：record passthrough（rec 存 JVal 保序；bc typed）。
+- res：`bo: Option<JVal>` + `st` 行 6 元素（bossDmg/weakHits 追加，缺省 0 容忍）。
+- **fixture**（gen.mjs 扩展）：切 `pack`/`unpack` 方法体 eval，用**固定假 boss 状态**（无 Math.random）产 B full+delta 两态；bhit/bm/bc/res-boss 各产金样；Rust 侧逐字节回环断言。`['bm']/['bc']` 容忍测试升级为产生+消费双向。
+
+### §3 实施批次
+- **批一**：extract-tuning.mjs + tuning.rs + schema.md + 锚定 单测（TR-41.1）。
+- **批二**：wire.rs（BossSnap/bhit/bm/bc/res）+ gen.mjs fixture + wire 回环 单测（TR-41.2）。
+
+### §4 测试
+- TR-41.1：连跑两次逐字节一致；boss 节逐值锚定（BOSS/BOSS_MODE/MOVES/HZ/HIT/brain/nav）。
+- TR-41.2：B full/delta、bhit、bm、bc、res-boss fixture 逐字节回环；非 boss 局 tick 字节不变；554 基线不破。
+
+### §5 风险
+- 切源 eval 的边界匹配（`};` vs `};;`）——沿用 gen.mjsn.mjs 已验证的 slice() 模式
+- pack 数值精度：hp `round(*10)/10`（1 位小数）vs maxHp `round()`（整数）——JVal 序列化须区分。
+- flags 位语义（1/2/4/8）与 mv=-1 哨兵——写入 schema.md 注释。
+- 不新增依赖；sim 依赖面不变。
+
+### §6 验收
+九段门禁全绿（task41-gates-*.log）；测试数 >554；JS 树零改动。
+
+### §7 定案（实施后回填 §8）
+
+### §8 Task 41 定案（2026-11-03 实施后）
+- **D-T41-1 提取**：切源+eval（非 ESM import，boss.js 拉 THREE 浏览器全局），每块 `assertContains` 钉源行、找不到 marker 即 throw（无软回退）；schema v3；`source.path` 如实记 `src/config.js + src/boss/*.js`；tuning.json 重生成，连跑两次逐字节一致（sha256 `ed71ae47…`）。
+- **D-T41-2 BossSnap**：19 槽位与 boss.js L422-434 逐位对齐（hp 一位小数 vs maxHp 整数；f 位标志 1/2/4/8；mv=-1 哨兵；crabs 仅存活只；s[18] 仅 full&&move）；decode `len<18 → None`。
+- **D-T41-3 tick B 键**：插入 e 与 c 之间（JS 对象字面量键序）；`b: None` 不写键 → 非 boss 局 tick 字节与改动前逐字节一致，PROTO v1 兼容面不破。
+- **D-T41-4 bm/bc**：`['bm', rec]` arity 2、rec 以 JVal passthrough 保序；`['bc', id,x,y,z,killed]` arity 6 typed；wrong arity → None（Task 40 容忍合同保留）；right-arity 非数值槽经 `g` 钳 0（JS packer 恒写数字，仅防坏 relay）。
+- **D-T41-5 bhit/res**：bhit `c` 为 **-1 哨兵**（netmatch L150 `crab = -1` 形参默认，非 null）；res `st` 行恒 6 宽（JS 对所有模式写 `bossDmg||0`/`weakHits||0`），Rust 解码保留短行容忍；`bo: Option<JVal>`。
+- **D-T41-6 §1 勘误（实读修正，已改正文）**：招名 **sweep/frenzy**（非 beam/spin；HZ 的 beam* 参数属 sweep）；slam tele **1.15**；HZ 含 **frenzyR 8.8/frenzyDps 52**；bossHazards L35 **SAFE_PAD=.6**（tuning 节命名 reachStep）/L36 REACH_N 96；bossNav L15 **PAD_MARGIN=[3.5,1.0]**（tuning 节命名 padr）；BOSS.weapon 键集 roller/slam/bomb/sticky/seeker/burst/shaker/waddle/torpedo（boss.js L22）。
+- **D-T41-7 评审**：独立只读评审 **APPROVE**（无 P0/P1）。P2 五项：①§1 锚点过期→已按 D-T41-6 修正文；②source.path 未含 boss 源→已修并重生成；③s[18] 仅 Null 视为无 move（JS `||null` 对 falsy 亦 null）→接受（move 恒为对象或缺省，无行为差）；④wire bc 注释失准→已修注释；⑤reachStep 与 SAFE_PAD 不同名→接受（schema.md 已注对应）。
+- 测试：inkwave_sim 470 passed（+16 vs M3 基线 454 sim 侧），workspace 567（+13 vs 554）。

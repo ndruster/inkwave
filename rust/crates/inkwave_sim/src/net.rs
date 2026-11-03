@@ -337,9 +337,9 @@ impl ActorSample {
 // Tick & event timeline
 // ---------------------------------------------------------------------------
 
-/// The owner tick `{k:'t', ts, a:[…], e:[…]}` (`_sendTick`, netmatch.js
+/// The owner tick `{k:'t', ts, a:[…], e:[…], B?, c?}` (`_sendTick`, netmatch.js
 /// L190-203). The host additionally rides `c` (its clock snapshot —
-/// [`HostMsg::Clock`]) and `B` (boss state, out of M1 scope) on this frame.
+/// [`HostMsg::Clock`]) and `B` (boss snapshot, Task 41) on this frame.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Tick {
     /// Sender clock time, `r3(now())`.
@@ -352,6 +352,75 @@ pub struct Tick {
     /// carries its own sender-clock timestamp (JS `_rec` prefixes `r3(now())`,
     /// netmatch.js L107).
     pub events: Vec<TimedEvent>,
+    /// Boss snapshot `msg.B` — the host rides `boss.pack(bossN % 10 === 0)`
+    /// on every tick while a live boss sim exists (netmatch.js L195-196).
+    /// `None` (every non-boss match) ⇒ the `B` key is **absent** on the wire,
+    /// so turf/zone tick bytes are unchanged from the pre-Task-41 shape
+    /// (PROTO v1 compat).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub b: Option<BossSnap>,
+}
+
+/// One live crablet inside a [`BossSnap`] — `pack`'s crab tuple
+/// `[id, r2(x), r2(y), r2(z), r2(yaw), Math.round(hp)]` (boss.js L426).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct BossCrab {
+    /// Monotonic host id (`crabSeq++`, bossBrain.js L336).
+    pub id: u32,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub yaw: f32,
+    /// Integer HP on the wire (`Math.round(c.hp)`, boss.js L426).
+    pub hp: u32,
+}
+
+/// The boss snapshot `msg.B` — `Boss.pack(full)`'s heterogeneous array
+/// (boss.js L422-431), decoded by `Boss.unpack` (L432-434). Index layout
+/// (the wire order `encode_boss_snap`/`decode_boss_snap` must reproduce):
+/// `[r3 bt, r2 x, r2 y, r2 z, r3 yaw, r2 vx, r2 vz, round(hp*10)/10, phase,
+/// f, mv, anim, r2 turn, flashN, weakN, killer, crabs, round(maxHp), move?]`
+/// — `f` bits: 1 stunned / 2 dead / 4 invuln / 8 visible (L424); `mv` is the
+/// active move's `t0` or `-1` (L427); `move` (index 18) rides only on the
+/// every-10th **full** snapshot while a move is live (L429, netmatch.js L196).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BossSnap {
+    /// Boss clock time (index 0, `r3`), monotonic on screen (`_follow` L447).
+    pub bt: f32,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub yaw: f32,
+    pub vx: f32,
+    pub vz: f32,
+    /// One-decimal HP (`Math.round(hp * 10) / 10`, boss.js L427).
+    pub hp: f32,
+    /// Phase 0..3 (L427).
+    pub phase: u32,
+    /// State bits: 1 stunned, 2 dead, 4 invuln, 8 visible (L424).
+    pub f: u32,
+    /// Active move's `t0`, or `-1` when idle (L427-428).
+    pub mv: f32,
+    /// Set-piece anim: 0 none, 1 intro, 2 roar (boss.js L43, L428).
+    pub anim: u32,
+    /// Turn rate (`r2`, L428).
+    pub turn: f32,
+    /// Cumulative hit-flash counter (`flashN`, L428; guest compares at L455).
+    pub flash: u32,
+    /// Cumulative weak-hit counter (`weakN`, L428; guest compares at L456).
+    pub weak: u32,
+    /// Nid of the killer, `-1` while alive (L428; boss.js L42/L364).
+    pub killer: i32,
+    /// Live crablets (dead ones are skipped by `pack`, L426).
+    pub crabs: Vec<BossCrab>,
+    /// Integer max HP (`Math.round(maxHp)`, L428).
+    pub max_hp: u32,
+    /// The active move record `{id, t0, s, d, p}` (bossBrain.js L291) —
+    /// present only on full snapshots (`s[18]`, L429); kept verbatim as
+    /// [`JVal`] so its field order survives the round trip. (`move` is a
+    /// Rust keyword; the JS name rides the serde rename.)
+    #[serde(default, rename = "move")]
+    pub move_rec: Option<JVal>,
 }
 
 /// Splat record `['s', x, y, z, radius, team, seed, kind, sx, sy, sz, amt]`
@@ -700,9 +769,22 @@ pub enum TickEvent {
     Kit(KitRecord),
     /// Zone Control decision (JS `'z'`) — M1 placeholder (Turf War only).
     Zone(ZoneRecord),
-    // Boss Battle records `['bm', …]` (move) / `['bc', …]` (crablet burst),
-    // netmatch.js L494/L496: out of M1 scope (no boss), intentionally not
-    // modelled — M2 Boss port adds them here.
+    /// Boss move record `['bm', rec]` (recBoss, bossBrain.js L294; host
+    /// timeline; guests feed it to `Boss.onMove` — netmatch.js L494,
+    /// boss.js L436). `rec` is the `{id, t0, s, d, p}` object (bossBrain.js
+    /// L291) carried **verbatim** as [`JVal`] so its field order survives the
+    /// round trip (the hazards replay reads it by name, like JS `hz.add`).
+    BossMove(JVal),
+    /// Crablet burst `['bc', id, x, y, z, killed?1:0]` (boss.js L386; guests
+    /// pop the crab at the position — netmatch.js L496 `_crabBurst`).
+    BossCrabBurst {
+        id: u32,
+        x: f32,
+        y: f32,
+        z: f32,
+        /// `!!e[6]` on the guest side (netmatch.js L496).
+        killed: bool,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -772,18 +854,19 @@ pub enum HostMsg {
     /// 0.5`). Not a standalone wire message — the host's [`Tick`] carries it
     /// as its `c` field; modelled as a variant so the type exists here.
     Clock { phase: String, t: f32 },
-    /// `{k:'res', cov, win, st:[…]}` — the final result (sendResult,
-    /// netmatch.js L650-655). The host's final count is the result on every
-    /// screen (NET.md "Ink and hits"). Zone Control adds the `mode:'zones'`
-    /// plus `zc/zp/zr/zo/zl` extras (JS L652-653, Task 36 batch 3); the boss
-    /// (`bo`) stays an M2+ placeholder.
+    /// `{k:'res', cov, win, mode?, bo?, st:[…]}` — the final result
+    /// (sendResult, netmatch.js L650-655). The host's final count is the
+    /// result on every screen (NET.md "Ink and hits"). Zone Control adds the
+    /// `mode:'zones'` plus `zc/zp/zr/zo/zl` extras (JS L652-653, Task 36
+    /// batch 3); Boss Battle adds `mode:'boss'` + `bo` (Task 41).
     Result {
         /// `result.coverage` fractions `[team0, team1]`.
         coverage: [f32; 2],
         /// `result.winner` team index.
         winner: u8,
-        /// Per-actor stat rows `[nid, turf, splats, deaths, …]` (JS L654;
-        /// `bossDmg/weakHits` are M2+ and dropped in M1).
+        /// Per-actor stat rows `[nid, turf, splats, deaths, bossDmg,
+        /// weakHits]` (JS L654 — always 6 wide; `_result` L659 tolerates
+        /// short rows with 0 defaults).
         stats: Vec<ActorStatsRow>,
         /// Zone Control settlement (`mode:'zones'` + `zc/zp/zr/zo/zl`, JS
         /// L652-653); `None` = turf — JS drops the `undefined` `mode`/`bo`
@@ -791,6 +874,14 @@ pub enum HostMsg {
         /// to the pre-Task-36 shape.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         zones: Option<ZonesResult>,
+        /// Boss settlement `bo = result.boss` — `{name, win, time, hp, maxHp,
+        /// phase}` (bossMode.js L50), carried verbatim as [`JVal`] (JS
+        /// `_result` L661 rebuilds it without inspecting fields). `Some` ⇒
+        /// `mode:'boss'` on the wire (the two always travel together, JS
+        /// L652); sits between `mode` and the zones extras, matching the JS
+        /// object-literal order.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bo: Option<JVal>,
     },
     /// `{k:'end'}` — results shown, everyone returns to the lobby (sendEnd,
     /// netmatch.js L666).
@@ -816,6 +907,13 @@ pub struct ActorStatsRow {
     pub turf: i32,
     pub splats: u32,
     pub deaths: u32,
+    /// `Math.round(a.stats.bossDmg || 0)` (JS L654; Task 41). `0` on every
+    /// non-boss row — `_result` L659 defaults short rows to 0.
+    #[serde(default)]
+    pub boss_dmg: i32,
+    /// `a.stats.weakHits || 0` (JS L654; Task 41).
+    #[serde(default)]
+    pub weak_hits: u32,
 }
 
 /// The Zone Control extras on the host result wire (`sendResult` L652-653:
@@ -1091,7 +1189,53 @@ mod tests {
                         data: TrigData::Num(0.5),
                     }),
                 },
+                // Task 41: the boss records ride the same timeline.
+                TimedEvent {
+                    ts: 1.47,
+                    kind: TickEvent::BossMove(JVal::Obj(vec![
+                        ("id".into(), JVal::Str("slam".into())),
+                        ("t0".into(), JVal::Num(1.4)),
+                    ])),
+                },
+                TimedEvent {
+                    ts: 1.48,
+                    kind: TickEvent::BossCrabBurst {
+                        id: 4,
+                        x: 1.23,
+                        y: 0.0,
+                        z: -2.34,
+                        killed: true,
+                    },
+                },
             ],
+            b: Some(BossSnap {
+                bt: 12.345,
+                x: 1.5,
+                y: 0.0,
+                z: -2.5,
+                yaw: 0.7,
+                vx: 0.5,
+                vz: -0.5,
+                hp: 1234.5,
+                phase: 2,
+                f: 8,
+                mv: -1.0,
+                anim: 0,
+                turn: 0.12,
+                flash: 7,
+                weak: 3,
+                killer: -1,
+                crabs: vec![BossCrab {
+                    id: 4,
+                    x: 1.0,
+                    y: 0.0,
+                    z: -2.0,
+                    yaw: 1.5,
+                    hp: 23,
+                }],
+                max_hp: 14400,
+                move_rec: None,
+            }),
         };
         let json = serde_json::to_string(&tick).unwrap();
         assert_eq!(tick, serde_json::from_str::<Tick>(&json).unwrap());
@@ -1139,8 +1283,14 @@ mod tests {
                     turf: 120,
                     splats: 2,
                     deaths: 1,
+                    boss_dmg: 4500,
+                    weak_hits: 12,
                 }],
                 zones: None,
+                bo: Some(JVal::Obj(vec![(
+                    "name".into(),
+                    JVal::Str("HULLBREAKER".into()),
+                )])),
             },
             HostMsg::End,
             HostMsg::Ownership {

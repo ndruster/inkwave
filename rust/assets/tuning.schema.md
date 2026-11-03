@@ -1,19 +1,23 @@
-# tuning.json — 字段模式（schema `inkwave.tuning.v2`）
+# tuning.json — 字段模式（schema `inkwave.tuning.v3`）
 
-由 `rust/tools/extract/extract-tuning.mjs` 从上游 `src/config.js` 提取，**不要手改**。
+由 `rust/tools/extract/extract-tuning.mjs` 从上游 `src/config.js` 提取（v3 起另含 `src/boss/*.js`
+的 boss 数据表，切源+eval 方式，不经 ESM import），**不要手改**。
 数值单位与 JS 一致：距离=米，时间=秒，速度=m/s，加速度=m/s²，角度=弧度（武器散布/弧判定/扇形/跃角字段为度），
 HP/墨量为点（PLAYER.hp=100，PLAYER.inkMax=100）。坐标系 Y-up；Alpha 出生于 -Z，Bravo 出生于 +Z。
 确定性输出：同一上游 commit 重跑逐字节一致（TR-3.4）。
 v1→v2（Task 28 / FR-M3-1）：新增 `weaponOrder` `weapons` `weaponRange` `subOrder` `subs`
 `specialOrder` `specials` `zones`，`difficulty` 由仅 easy 扩为三档；`spritzer` 别名已于
 Task 29 移除（消费端改读 `weapons.shooter`）。
+v2→v3（Task 41 / TR-41.1）：新增顶层 `boss` 节（HULLBREAKER 全数据表：BOSS/BOSS_MODE/MOVES/
+PACE/HZ/HIT/brain/nav，提取自 `src/boss/{boss,bossMode,bossHazards,bossModel,bossBrain,bossNav}.js`）；
+其余各节数值不变。
 权威数值以本 JSON 为准（本文档只描述字段与语义，逐值锚定见 `inkwave_sim` 单测）。
 
 ## 顶层
 
 | 字段 | 含义 |
 | --- | --- |
-| `schema` | 模式标识 `inkwave.tuning.v2`，Rust 侧由单测 `schema_and_provenance` 精确断言 |
+| `schema` | 模式标识 `inkwave.tuning.v3`，Rust 侧由单测 `schema_and_provenance` 精确断言 |
 | `source.commit` / `source.path` | 数据出处（git commit 与 JS 文件），用于上游同步审查 |
 | `player` | `PLAYER`（config.js L21-90）：角色物理/手感全部常量，见下 |
 | `weaponOrder` | `WEAPON_ORDER`（L303）：12 武器出场顺序 |
@@ -27,6 +31,7 @@ Task 29 移除（消费端改读 `weapons.shooter`）。
 | `match` | `MATCH`（L472-482）：涂地比赛参数 |
 | `teamPalettes` | `TEAM_PALETTES`（L8-14）：5 套队伍墨色（hex），a=Alpha，b=Bravo |
 | `difficulty` | `DIFFICULTY`（L503-508）：easy/normal/hard 三档 bot 参数，见下 |
+| `boss` | HULLBREAKER boss 全数据表（Task 41，v3 新增）：`src/boss/*.js` 切源 eval，见下 |
 
 ## player（src/config.js `PLAYER`）
 
@@ -210,3 +215,82 @@ JSON 键为蛇形（`barrage_sticky` 等），Rust 侧显式 rename。
 | easy | Chill | 0.55 | 0.11 | 0.55 | 16 | 9 | 7 |
 | normal | Fresh | 0.32 | 0.06 | 0.8 | 21 | 13 | 10 |
 | hard | Fierce | 0.17 | 0.03 | 0.95 | 26 | 18 | 14 |
+
+## boss（Task 41 新增，src/boss/*.js 切源 eval）
+
+提取方式：boss 模块的 ESM import 会拉 THREE/浏览器全局，故不 import；由
+`extract-tuning.mjs` 切出各 `const` 字面量块后独立 eval，并以 `assertContains`
+钉住块内上下文行（上游漂移即失败）。子节：`boss` `mode` `squadUnits` `moves`
+`pace` `minTele` `hz` `reachStep` `reachN` `brain` `nav` `hit`。
+
+### boss.boss（`BOSS`，src/boss/boss.js L15-25）
+
+| 字段 | 值 | 含义 |
+| --- | --- | --- |
+| `name` | "HULLBREAKER" | L16 |
+| `hpPerUnit` | 18000 | L17；boss 总 HP = ×`squadUnits` ×`hpDiff` |
+| `hpDiff` | easy .75 / normal 1 / hard 1.3 | L18 |
+| `dmgDiff` | easy .7 / normal 1 / hard 1.2 | L19；其攻击伤害倍率 |
+| `paceDiff` | easy 1.25 / normal 1 / hard .85 | L20；招式间隔倍率 |
+| `weak` / `stunned` | 2.5 / 1.25 | L21；弱点 / 眩晕时受伤倍率 |
+| `weapon` | roller .3, slam .6, bomb/sticky/seeker/burst/shaker/waddle/torpedo .75 | L22；各武器对 boss 伤害倍率（键名以实际 JS 为准） |
+| `phases` | [.66, .33] | L23；进入 2/3 阶段的 HP 份额阈值 |
+| `introAt` / `introLen` / `roarLen` | 1.8 / 3.4 / 1.9 | L24 |
+
+### boss.mode（`BOSS_MODE`，src/boss/bossMode.js L7-13）
+
+`duration=240`（L8）、`intro=7.2`（L9）、`finishWin=5.2`（L10）、`finishLose=3.2`（L11）、`squad=8`（L12）。
+
+### boss.squadUnits（`squadUnits()`，src/boss/bossMode.js L15）
+
+对单个 actor 求值得到的 HP 权重：`human=1.0`、`bot=0.6`（`a.isBot && !a.isLocal ? 0.6 : 1`）。
+
+### boss.moves（`MOVES`，src/boss/bossHazards.js L17-24）
+
+六招的 1 阶段秒数 `{tele, act, rec}`（按 `pace[phase]`×`paceDiff` 缩放，telegraph 不低于 `minTele`）：
+
+| 招式 | tele | act | rec | 行 |
+| --- | --- | --- | --- | --- |
+| slam | 1.15 | 1.9 | 1.0 | L18 |
+| barrage | 0.85 | 0 | 0.8 | L19 |
+| sweep | 1.15 | 2.1 | 0.9 | L20 |
+| charge | 1.15 | 0 | 0.9 | L21 |
+| crablets | 0.9 | 0.8 | 0.6 | L22 |
+| frenzy | 1.2 | 3.0 | 1.7 | L23 |
+
+### boss.pace / minTele / reachStep / reachN（src/boss/bossHazards.js L25-36）
+
+`pace=[1,1,.88,.78]`（L25，按阶段时间缩放）；`minTele=0.7`（L26）；
+`reachStep=0.6`（L35，JS 常量名 `SAFE_PAD`：站上出生垫 +此距离即脱离所有地面危险区）；
+`reachN=96`（L36，环/危险区贴地裁剪的方位数）。
+
+### boss.hz（`HZ`，src/boss/bossHazards.js L27-34）
+
+| 组 | 字段=值 |
+| --- | --- |
+| 拍击+环（L28） | `slamR=3.3` `slamDmg=48` `ringSpeed=9.5` `ringR0=2.4` `ringMax=19` `ringW=.55` `ringH=.5` `ringDmg=32` |
+| 桶弹（L29） | `barrelR=2.4` `barrelDmg=52` `barrelFlight=1.3` `barrelGap=.26` |
+| 光束（L30） | `beamLen=17` `beamW=.95` `beamDps=170` |
+| 冲锋（L31） | `chargeSpeed=[0,13,14.5,16]` `chargeRamp=.35` `chargeDmg=55` `chargeMin=6` `stun=[0,4.2,3.7,3.3]` |
+| 狂怒（L32） | `frenzyR=8.8` `frenzyDps=52` |
+| 小蟹（L33） | `crabR=2.1` `crabDmg=40` `crabHp=30` `crabLife=12` `crabSpeed=[0,4.4,4.4,5.2]` |
+
+相位索引数组均为 `[0, p1, p2, p3]`（0 占位，阶段 1..3 有效）。
+
+### boss.brain（src/boss/bossBrain.js L12-15，未导出，切源）
+
+`speed=[0,2.9,3.3,3.8]`（m/s，L12）、`turn=[0,1.25,1.45,1.75]`（rad/s，L13）、
+`cool=[0,1.05,.8,.6]`（招式间隔 s，L14）、`coolRnd=[0,.8,.6,.45]`（L15）。
+
+### boss.nav（src/boss/bossNav.js L10-15）
+
+模型空间（脚底 y=0、朝 +z）间隙圆 `{z, r}`：
+`wallBody=[{z:2.3,r:2.5},{z:-1.8,r:2.6}]`（L10，爪/腿/壳缘 vs 墙）、
+`floorBody=[{z:2.2,r:1.45},{z:0,r:1.5},{z:-2.3,r:1.45}]`（L11，躯干须在地面之上）、
+`padr=[3.5,1.0]`（L15，JS 常量名 `PAD_MARGIN`：身体远离出生垫屏障的边距，[队垫, 其余]）。
+
+### boss.hit（`HIT`，src/boss/bossModel.js L14-18，未导出，切源）
+
+10 个判定球 `{socket, r, weak}`，顺序即 JS 数组序：
+shellF 1.8 / shellR 1.8 / body 1.05 / clawL 0.85 / clawR 0.55（weak=false，L16）；
+eyeL 0.4 / eyeR 0.4 / belly 0.8 / crackL 0.7 / crackR 0.7（weak=true，L17）。

@@ -1,7 +1,8 @@
 //! Gameplay tuning constants, extracted from upstream `src/config.js` into
-//! `assets/tuning.json` (schema `inkwave.tuning.v2`) by the Task 3 pipeline,
+//! `assets/tuning.json` (schema `inkwave.tuning.v3`) by the Task 3 pipeline,
 //! extended to the full M3 content set by Task 28 (12 weapons / 15 subs /
-//! 19 specials / zones / three difficulties).
+//! 19 specials / zones / three difficulties) and with the HULLBREAKER boss
+//! data tables by Task 41 (slice+eval of `src/boss/*.js`, schema v3).
 //!
 //! Units: metres / seconds / m·s⁻¹ / m·s⁻²; HP and ink are points. Weapon
 //! spread / arc / fan / leap-angle fields are degrees; every other angle is
@@ -42,6 +43,9 @@ pub struct Tuning {
     #[serde(rename = "teamPalettes")]
     pub team_palettes: Vec<TeamPalette>,
     pub difficulty: DifficultySet,
+    /// HULLBREAKER boss data tables (Task 41, schema v3): `BOSS`, `BOSS_MODE`,
+    /// `MOVES` / `PACE` / `HZ` / … , `HIT`, brain + nav arrays.
+    pub boss: Boss,
 }
 
 /// Provenance of an extracted artifact.
@@ -1377,6 +1381,199 @@ impl DifficultySet {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Task 41 (tuning v3): the HULLBREAKER boss data tables. Extracted from
+// src/boss/{boss,bossMode,bossHazards,bossModel,bossBrain,bossNav}.js via the
+// slice+eval path in extract-tuning.mjs; line anchors in the tests below.
+// ---------------------------------------------------------------------------
+
+/// Top-level `boss` section (schema v3).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Boss {
+    /// `BOSS` — the entity table (boss.js L15-25).
+    pub boss: BossStats,
+    /// `BOSS_MODE` — match rules (bossMode.js L7-13).
+    pub mode: BossModeRules,
+    /// `squadUnits()` (bossMode.js L15) evaluated for one human / one bot.
+    pub squad_units: BossSquadUnits,
+    /// `MOVES` — telegraph / act / recovery seconds per move (bossHazards.js L17-24).
+    pub moves: BossMoveSet,
+    /// `PACE` — per-phase time scale (bossHazards.js L25).
+    pub pace: [f32; 4],
+    /// `MIN_TELE` — telegraph floor (bossHazards.js L26).
+    pub min_tele: f32,
+    /// `HZ` — hazard geometry / damage (bossHazards.js L27-34).
+    pub hz: BossHazardTuning,
+    /// `SAFE_PAD` (bossHazards.js L35) — the design spec's `reachStep`.
+    pub reach_step: f32,
+    /// `REACH_N` — floor-clipped extent headings (bossHazards.js L36).
+    pub reach_n: u32,
+    /// Phase-indexed brain arrays (bossBrain.js L12-15).
+    pub brain: BossBrainTuning,
+    /// Footprints + pad margins (bossNav.js L10-15).
+    pub nav: BossNavTuning,
+    /// `HIT` — the 10 hit-test spheres (bossModel.js L14-18).
+    pub hit: [BossHitSocket; 10],
+}
+
+/// `BOSS` (boss.js L15-25): HP scaling, difficulty multipliers, weapon
+/// multipliers against the boss, phase thresholds and intro timings.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BossStats {
+    pub name: String,
+    /// HP per squad unit (× `squadUnits` × `hpDiff`).
+    pub hp_per_unit: u32,
+    pub hp_diff: BossDiffMul,
+    pub dmg_diff: BossDiffMul,
+    pub pace_diff: BossDiffMul,
+    /// Weak-point damage multiplier.
+    pub weak: f32,
+    /// Damage multiplier while the boss is stunned.
+    pub stunned: f32,
+    pub weapon: BossWeaponMul,
+    /// HP-fraction thresholds for entering phases 2 / 3.
+    pub phases: [f32; 2],
+    pub intro_at: f32,
+    pub intro_len: f32,
+    pub roar_len: f32,
+}
+
+/// `{ easy, normal, hard }` multiplier triple (BOSS.hpDiff / dmgDiff / paceDiff).
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct BossDiffMul {
+    pub easy: f32,
+    pub normal: f32,
+    pub hard: f32,
+}
+
+/// `BOSS.weapon` (boss.js L22) — area-weapon damage multipliers against the
+/// boss (all f32 multipliers, not integer ids).
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct BossWeaponMul {
+    pub roller: f32,
+    pub slam: f32,
+    pub bomb: f32,
+    pub sticky: f32,
+    pub seeker: f32,
+    pub burst: f32,
+    pub shaker: f32,
+    pub waddle: f32,
+    pub torpedo: f32,
+}
+
+/// `BOSS_MODE` (bossMode.js L7-13) — Boss Battle match rules.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BossModeRules {
+    pub duration: u32,
+    pub intro: f32,
+    pub finish_win: f32,
+    pub finish_lose: f32,
+    pub squad: u32,
+}
+
+/// HP weight per actor kind, from `squadUnits()` (bossMode.js L15).
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct BossSquadUnits {
+    pub human: f32,
+    pub bot: f32,
+}
+
+/// `MOVES` (bossHazards.js L17-24) — the six moves, keyed by id.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BossMoveSet {
+    pub slam: BossMoveTimes,
+    pub barrage: BossMoveTimes,
+    pub sweep: BossMoveTimes,
+    pub charge: BossMoveTimes,
+    pub crablets: BossMoveTimes,
+    pub frenzy: BossMoveTimes,
+}
+
+/// One move's `{ tele, act, rec }` seconds (per-phase durations scaled by
+/// `PACE` / `BOSS.paceDiff`).
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub struct BossMoveTimes {
+    pub tele: f32,
+    pub act: f32,
+    pub rec: f32,
+}
+
+/// `HZ` (bossHazards.js L27-34) — hazard geometry / damage; phase-indexed
+/// arrays (`chargeSpeed`, `stun`, `crabSpeed`) are `[0, p1, p2, p3]`.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BossHazardTuning {
+    pub slam_r: f32,
+    pub slam_dmg: f32,
+    pub ring_speed: f32,
+    pub ring_r0: f32,
+    pub ring_max: f32,
+    pub ring_w: f32,
+    pub ring_h: f32,
+    pub ring_dmg: f32,
+    pub barrel_r: f32,
+    pub barrel_dmg: f32,
+    pub barrel_flight: f32,
+    pub barrel_gap: f32,
+    pub beam_len: f32,
+    pub beam_w: f32,
+    pub beam_dps: f32,
+    pub charge_speed: [f32; 4],
+    pub charge_ramp: f32,
+    pub charge_dmg: f32,
+    pub charge_min: f32,
+    pub stun: [f32; 4],
+    pub frenzy_r: f32,
+    pub frenzy_dps: f32,
+    pub crab_r: f32,
+    pub crab_dmg: f32,
+    pub crab_hp: u32,
+    pub crab_life: f32,
+    pub crab_speed: [f32; 4],
+}
+
+/// Phase-indexed brain tables (bossBrain.js L12-15), `[0, p1, p2, p3]`.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BossBrainTuning {
+    /// Walk speed (m/s) by phase.
+    pub speed: [f32; 4],
+    /// Turn rate (rad/s) by phase.
+    pub turn: [f32; 4],
+    /// Gap between moves (s) by phase (+ up to `cool_rnd`).
+    pub cool: [f32; 4],
+    pub cool_rnd: [f32; 4],
+}
+
+/// `WALL_BODY` / `FLOOR_BODY` / `PAD_MARGIN` (bossNav.js L10-15). The design
+/// spec's `padr` is the JS `PAD_MARGIN` pair.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BossNavTuning {
+    pub wall_body: [NavFootprint; 2],
+    pub floor_body: [NavFootprint; 3],
+    pub padr: [f32; 2],
+}
+
+/// One model-space clearance circle `{ z, r }` (feet at y 0, facing +z).
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub struct NavFootprint {
+    pub z: f32,
+    pub r: f32,
+}
+
+/// One `HIT` entry (bossModel.js L14-18): socket name, sphere radius, weak flag.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BossHitSocket {
+    pub socket: String,
+    pub r: f32,
+    pub weak: bool,
+}
+
 /// Parse a tuning document from JSON.
 pub fn tuning_from_str(s: &str) -> Result<Tuning, serde_json::Error> {
     serde_json::from_str(s)
@@ -1465,8 +1662,8 @@ mod tests {
     #[test]
     fn schema_and_provenance() {
         let t = tuning();
-        assert_eq!(t.schema, "inkwave.tuning.v2");
-        assert_eq!(t.source.path, "src/config.js");
+        assert_eq!(t.schema, "inkwave.tuning.v3");
+        assert_eq!(t.source.path, "src/config.js + src/boss/*.js");
         assert_eq!(t.source.commit.len(), 40, "commit must be a full sha");
     }
 
@@ -2413,5 +2610,190 @@ mod tests {
         assert_eq!(h.awareness, 26.0);
         assert_eq!(h.aim_omega, 18.0);
         assert_eq!(h.aim_turn, 14.0);
+    }
+
+    // TR-41.1: the Task 41 boss section, locked value-by-value to src/boss/*.js.
+
+    #[test]
+    fn boss_stats_values() {
+        let b = &tuning().boss.boss;
+        assert_eq!(b.name, "HULLBREAKER"); // JS src/boss/boss.js L16
+        assert_eq!(b.hp_per_unit, 18000); // JS src/boss/boss.js L17
+        assert_eq!(b.hp_diff.easy, 0.75); // JS src/boss/boss.js L18
+        assert_eq!(b.hp_diff.normal, 1.0);
+        assert_eq!(b.hp_diff.hard, 1.3);
+        assert_eq!(b.dmg_diff.easy, 0.7); // JS src/boss/boss.js L19
+        assert_eq!(b.dmg_diff.normal, 1.0);
+        assert_eq!(b.dmg_diff.hard, 1.2);
+        assert_eq!(b.pace_diff.easy, 1.25); // JS src/boss/boss.js L20
+        assert_eq!(b.pace_diff.normal, 1.0);
+        assert_eq!(b.pace_diff.hard, 0.85);
+        assert_eq!(b.weak, 2.5); // JS src/boss/boss.js L21
+        assert_eq!(b.stunned, 1.25);
+        // JS src/boss/boss.js L22 — the actual weapon multiplier keys.
+        let w = &b.weapon;
+        assert_eq!(w.roller, 0.3);
+        assert_eq!(w.slam, 0.6);
+        assert_eq!(w.bomb, 0.75);
+        assert_eq!(w.sticky, 0.75);
+        assert_eq!(w.seeker, 0.75);
+        assert_eq!(w.burst, 0.75);
+        assert_eq!(w.shaker, 0.75);
+        assert_eq!(w.waddle, 0.75);
+        assert_eq!(w.torpedo, 0.75);
+        assert_eq!(b.phases, [0.66, 0.33]); // JS src/boss/boss.js L23
+        assert_eq!(b.intro_at, 1.8); // JS src/boss/boss.js L24
+        assert_eq!(b.intro_len, 3.4);
+        assert_eq!(b.roar_len, 1.9);
+    }
+
+    #[test]
+    fn boss_mode_and_squad_units() {
+        let m = tuning().boss.mode;
+        assert_eq!(m.duration, 240); // JS src/boss/bossMode.js L8
+        assert_eq!(m.intro, 7.2); // JS src/boss/bossMode.js L9
+        assert_eq!(m.finish_win, 5.2); // JS src/boss/bossMode.js L10
+        assert_eq!(m.finish_lose, 3.2); // JS src/boss/bossMode.js L11
+        assert_eq!(m.squad, 8); // JS src/boss/bossMode.js L12
+        let u = tuning().boss.squad_units;
+        assert_eq!(u.human, 1.0); // JS src/boss/bossMode.js L15 (`? 0.6 : 1`)
+        assert_eq!(u.bot, 0.6);
+    }
+
+    #[test]
+    fn boss_moves_values() {
+        let mv = &tuning().boss.moves;
+        assert_eq!(
+            mv.slam,
+            BossMoveTimes {
+                tele: 1.15,
+                act: 1.9,
+                rec: 1.0
+            }
+        ); // JS src/boss/bossHazards.js L18
+        assert_eq!(
+            mv.barrage,
+            BossMoveTimes {
+                tele: 0.85,
+                act: 0.0,
+                rec: 0.8
+            }
+        ); // JS src/boss/bossHazards.js L19
+        assert_eq!(
+            mv.sweep,
+            BossMoveTimes {
+                tele: 1.15,
+                act: 2.1,
+                rec: 0.9
+            }
+        ); // JS src/boss/bossHazards.js L20
+        assert_eq!(
+            mv.charge,
+            BossMoveTimes {
+                tele: 1.15,
+                act: 0.0,
+                rec: 0.9
+            }
+        ); // JS src/boss/bossHazards.js L21
+        assert_eq!(
+            mv.crablets,
+            BossMoveTimes {
+                tele: 0.9,
+                act: 0.8,
+                rec: 0.6
+            }
+        ); // JS src/boss/bossHazards.js L22
+        assert_eq!(
+            mv.frenzy,
+            BossMoveTimes {
+                tele: 1.2,
+                act: 3.0,
+                rec: 1.7
+            }
+        ); // JS src/boss/bossHazards.js L23
+    }
+
+    #[test]
+    fn boss_pace_min_tele_reach() {
+        let b = &tuning().boss;
+        assert_eq!(b.pace, [1.0, 1.0, 0.88, 0.78]); // JS src/boss/bossHazards.js L25
+        assert_eq!(b.min_tele, 0.7); // JS src/boss/bossHazards.js L26
+        assert_eq!(b.reach_step, 0.6); // JS src/boss/bossHazards.js L35 (SAFE_PAD)
+        assert_eq!(b.reach_n, 96); // JS src/boss/bossHazards.js L36
+    }
+
+    #[test]
+    fn boss_hz_values() {
+        let h = &tuning().boss.hz;
+        assert_eq!(h.slam_r, 3.3); // JS src/boss/bossHazards.js L28
+        assert_eq!(h.slam_dmg, 48.0);
+        assert_eq!(h.ring_speed, 9.5);
+        assert_eq!(h.ring_r0, 2.4);
+        assert_eq!(h.ring_max, 19.0);
+        assert_eq!(h.ring_w, 0.55);
+        assert_eq!(h.ring_h, 0.5);
+        assert_eq!(h.ring_dmg, 32.0);
+        assert_eq!(h.barrel_r, 2.4); // JS src/boss/bossHazards.js L29
+        assert_eq!(h.barrel_dmg, 52.0);
+        assert_eq!(h.barrel_flight, 1.3);
+        assert_eq!(h.barrel_gap, 0.26);
+        assert_eq!(h.beam_len, 17.0); // JS src/boss/bossHazards.js L30
+        assert_eq!(h.beam_w, 0.95);
+        assert_eq!(h.beam_dps, 170.0);
+        assert_eq!(h.charge_speed, [0.0, 13.0, 14.5, 16.0]); // JS src/boss/bossHazards.js L31
+        assert_eq!(h.charge_ramp, 0.35);
+        assert_eq!(h.charge_dmg, 55.0);
+        assert_eq!(h.charge_min, 6.0);
+        assert_eq!(h.stun, [0.0, 4.2, 3.7, 3.3]); // JS src/boss/bossHazards.js L31
+        assert_eq!(h.frenzy_r, 8.8); // JS src/boss/bossHazards.js L32
+        assert_eq!(h.frenzy_dps, 52.0);
+        assert_eq!(h.crab_r, 2.1); // JS src/boss/bossHazards.js L33
+        assert_eq!(h.crab_dmg, 40.0);
+        assert_eq!(h.crab_hp, 30);
+        assert_eq!(h.crab_life, 12.0);
+        assert_eq!(h.crab_speed, [0.0, 4.4, 4.4, 5.2]);
+    }
+
+    #[test]
+    fn boss_brain_values() {
+        let br = &tuning().boss.brain;
+        assert_eq!(br.speed, [0.0, 2.9, 3.3, 3.8]); // JS src/boss/bossBrain.js L12
+        assert_eq!(br.turn, [0.0, 1.25, 1.45, 1.75]); // JS src/boss/bossBrain.js L13
+        assert_eq!(br.cool, [0.0, 1.05, 0.8, 0.6]); // JS src/boss/bossBrain.js L14
+        assert_eq!(br.cool_rnd, [0.0, 0.8, 0.6, 0.45]); // JS src/boss/bossBrain.js L15
+    }
+
+    #[test]
+    fn boss_nav_values() {
+        let n = &tuning().boss.nav;
+        assert_eq!(n.wall_body[0], NavFootprint { z: 2.3, r: 2.5 }); // JS src/boss/bossNav.js L10
+        assert_eq!(n.wall_body[1], NavFootprint { z: -1.8, r: 2.6 });
+        assert_eq!(n.floor_body[0], NavFootprint { z: 2.2, r: 1.45 }); // JS src/boss/bossNav.js L11
+        assert_eq!(n.floor_body[1], NavFootprint { z: 0.0, r: 1.5 });
+        assert_eq!(n.floor_body[2], NavFootprint { z: -2.3, r: 1.45 });
+        assert_eq!(n.padr, [3.5, 1.0]); // JS src/boss/bossNav.js L15 (PAD_MARGIN)
+    }
+
+    #[test]
+    fn boss_hit_table_values() {
+        let hit = &tuning().boss.hit;
+        assert_eq!(hit.len(), 10); // JS src/boss/bossModel.js L14-18
+        let expected: [(&str, f32, bool); 10] = [
+            ("shellF", 1.8, false), // JS src/boss/bossModel.js L16
+            ("shellR", 1.8, false),
+            ("body", 1.05, false),
+            ("clawL", 0.85, false),
+            ("clawR", 0.55, false),
+            ("eyeL", 0.4, true), // JS src/boss/bossModel.js L17
+            ("eyeR", 0.4, true),
+            ("belly", 0.8, true),
+            ("crackL", 0.7, true),
+            ("crackR", 0.7, true), // JS src/boss/bossModel.js L17
+        ];
+        for (i, (socket, r, weak)) in expected.iter().enumerate() {
+            assert_eq!(&hit[i].socket, socket, "hit[{i}].socket");
+            assert_eq!(hit[i].r, *r, "hit[{i}].r");
+            assert_eq!(hit[i].weak, *weak, "hit[{i}].weak");
+        }
     }
 }

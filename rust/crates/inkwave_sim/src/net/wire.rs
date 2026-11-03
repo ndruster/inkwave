@@ -32,6 +32,9 @@
 //! - [`encode_direct`] / [`decode_direct`], [`encode_host`] / [`decode_host`],
 //!   [`encode_control`] / [`decode_control`] — the point-to-point, host-broadcast
 //!   and relay frames.
+//! - [`encode_boss_snap`] / [`decode_boss_snap`] — the `Boss.pack` /
+//!   `Boss.unpack` snapshot array (Task 41, boss.js L422-434), riding the
+//!   host tick as `B`.
 //! - [`envelope_broadcast`] / [`envelope_send_to`] / [`parse_envelope`] — the
 //!   `b|` / `s|to|` / `m|from|` transport wrappers.
 //!
@@ -45,9 +48,9 @@ use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::{
-    ActorSample, BombRecord, ControlFrame, DirectMsg, EventRecord, ForwardEvent, HostMsg,
-    KitRecord, KitVal, ProjectileRecord, SplatRecord, Tick, TickEvent, TimedEvent, TrigData,
-    TriggerRecord, ZoneRecord,
+    ActorSample, BombRecord, BossCrab, BossSnap, ControlFrame, DirectMsg, EventRecord,
+    ForwardEvent, HostMsg, KitRecord, KitVal, ProjectileRecord, SplatRecord, Tick, TickEvent,
+    TimedEvent, TrigData, TriggerRecord, ZoneRecord,
 };
 
 // ---------------------------------------------------------------------------
@@ -413,9 +416,13 @@ pub fn encode_clock(phase: &str, time: f32) -> String {
     arr([js_str(phase), num(r2(dec(time)))])
 }
 
-/// Encode a [`Tick`] to the `{k:'t',ts,a,[e],[c]}` object. Key order follows
-/// `_sendTick`: `e` is attached before the host's `c` (L194-200), so a host tick
-/// with events is `{k,ts,a,e,c}`.
+/// Encode a [`Tick`] to the `{k:'t',ts,a,[e],[B],[c]}` object. Key order
+/// follows `_sendTick`: `e` is attached before the host's `B` / `c`
+/// (L194-200), so a host tick with events and a boss is `{k,ts,a,e,B,c}`.
+/// `B` is written **only** when `t.b` is `Some` — a non-boss tick stays
+/// byte-identical to the pre-Task-41 PROTO v1 shape. The `full` flag of
+/// `Boss.pack` is taken from the snapshot itself: a decoded delta carries no
+/// `move_rec`, so re-encoding never re-attaches `s[18]` (boss.js L429).
 #[must_use]
 pub fn encode_tick(t: &Tick, clock: Option<(&str, f32)>) -> String {
     let a = arr(t.actors.iter().map(|(nid, s)| pack_actor(*nid, s)));
@@ -423,6 +430,9 @@ pub fn encode_tick(t: &Tick, clock: Option<(&str, f32)>) -> String {
         vec![("k", js_str("t")), ("ts", num(r3(dec(t.ts)))), ("a", a)];
     if !t.events.is_empty() {
         pairs.push(("e", arr(t.events.iter().map(encode_timed_event))));
+    }
+    if let Some(b) = &t.b {
+        pairs.push(("B", encode_boss_snap(b, b.move_rec.is_some()).to_wire()));
     }
     if let Some((p, time)) = clock {
         pairs.push(("c", encode_clock(p, time)));
@@ -458,7 +468,127 @@ pub fn decode_tick(v: &JVal) -> (Tick, Option<(String, f32)>) {
         let t = arr.get(1)?.as_f64()? as f32;
         Some((phase, t))
     });
-    (Tick { ts, actors, events }, clock)
+    let b = v.field("B").and_then(decode_boss_snap);
+    (
+        Tick {
+            ts,
+            actors,
+            events,
+            b,
+        },
+        clock,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Boss snapshot (Boss.pack / Boss.unpack, boss.js L422-434) — Task 41
+// ---------------------------------------------------------------------------
+
+/// `Boss.pack(full)` (boss.js L422-431) as a [`JVal`] array — the
+/// heterogeneous snapshot the host rides on `msg.B` (netmatch.js L196, every
+/// 10th tick `full`). Index layout (see [`BossSnap`]):
+/// `[r3 bt, r2 x, r2 y, r2 z, r3 yaw, r2 vx, r2 vz, round(hp*10)/10, phase,
+/// f, mv, anim, r2 turn, flashN, weakN, killer, crabs, round(maxHp), move?]`.
+/// `hp` keeps **one decimal** and `maxHp` is an **integer** — the two
+/// roundings differ and the emitted tokens must match (L427-428). `move`
+/// (index 18) is appended only when `full && snap.move_rec.is_some()` (L429).
+#[must_use]
+pub fn encode_boss_snap(s: &BossSnap, full: bool) -> JVal {
+    let mut items = vec![
+        JVal::Num(r3(dec(s.bt))),
+        JVal::Num(r2(dec(s.x))),
+        JVal::Num(r2(dec(s.y))),
+        JVal::Num(r2(dec(s.z))),
+        JVal::Num(r3(dec(s.yaw))),
+        JVal::Num(r2(dec(s.vx))),
+        JVal::Num(r2(dec(s.vz))),
+        // Math.round(this.hp * 10) / 10 (L427) — one decimal.
+        JVal::Num(js_round(dec(s.hp) * 10.0) / 10.0),
+        JVal::Num(f64::from(s.phase)),
+        JVal::Num(f64::from(s.f)),
+        // this.move ? this.move.t0 : -1 (L427) — the stored `mv` carries the
+        // sentinel; `-1` prints as `-1` through `num`.
+        JVal::Num(dec(s.mv)),
+        JVal::Num(f64::from(s.anim)),
+        JVal::Num(r2(dec(s.turn))),
+        JVal::Num(f64::from(s.flash)),
+        JVal::Num(f64::from(s.weak)),
+        JVal::Num(f64::from(s.killer)),
+        // [c.id, r2 x, r2 y, r2 z, r2 yaw, Math.round(c.hp)] per live crab (L426).
+        JVal::Arr(
+            s.crabs
+                .iter()
+                .map(|c| {
+                    JVal::Arr(vec![
+                        JVal::Num(f64::from(c.id)),
+                        JVal::Num(r2(dec(c.x))),
+                        JVal::Num(r2(dec(c.y))),
+                        JVal::Num(r2(dec(c.z))),
+                        JVal::Num(r2(dec(c.yaw))),
+                        JVal::Num(f64::from(c.hp)),
+                    ])
+                })
+                .collect(),
+        ),
+        JVal::Num(f64::from(s.max_hp)),
+    ];
+    if full {
+        items.extend(s.move_rec.clone());
+    }
+    JVal::Arr(items)
+}
+
+/// `Boss.unpack(s, ts)` (boss.js L432-434) — the guest-side snapshot read.
+/// `None` when the value is not an array of at least the 18 pack slots; a
+/// missing or `null` `s[18]` is `move_rec: None` (JS `s[18] || null`).
+#[must_use]
+pub fn decode_boss_snap(v: &JVal) -> Option<BossSnap> {
+    let s = v.as_array()?;
+    if s.len() < 18 {
+        return None;
+    }
+    let g = |i: usize| s.get(i).and_then(JVal::as_f64).unwrap_or(0.0) as f32;
+    let crabs = s
+        .get(16)
+        .and_then(JVal::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|r| {
+                    let a = r.as_array()?;
+                    let c = |i: usize| a.get(i).and_then(JVal::as_f64).unwrap_or(0.0) as f32;
+                    Some(BossCrab {
+                        id: c(0) as u32,
+                        x: c(1),
+                        y: c(2),
+                        z: c(3),
+                        yaw: c(4),
+                        hp: c(5) as u32,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(BossSnap {
+        bt: g(0),
+        x: g(1),
+        y: g(2),
+        z: g(3),
+        yaw: g(4),
+        vx: g(5),
+        vz: g(6),
+        hp: g(7),
+        phase: g(8) as u32,
+        f: g(9) as u32,
+        mv: g(10),
+        anim: g(11) as u32,
+        turn: g(12),
+        flash: g(13) as u32,
+        weak: g(14) as u32,
+        killer: g(15) as i32,
+        crabs,
+        max_hp: g(17) as u32,
+        move_rec: s.get(18).cloned().filter(|m| !matches!(m, JVal::Null)),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -567,6 +697,29 @@ pub fn encode_record(e: &TickEvent) -> String {
         }
         // ['z', e] (L148) — e carried verbatim.
         TickEvent::Zone(z) => arr([js_str("z"), z.payload.to_wire()]),
+        // ['bm', rec] — recBoss (bossBrain.js L294); the move record object
+        // passes through VERBATIM (netmatch.js L494 reads e[2] as-is), so the
+        // JVal clone preserves `{id, t0, s, d, p}` field order on the wire.
+        TickEvent::BossMove(rec) => arr([js_str("bm"), rec.to_wire()]),
+        // ['bc', id, x, y, z, killed?1:0] — boss.js L386.
+        TickEvent::BossCrabBurst {
+            id,
+            x,
+            y,
+            z,
+            killed,
+        } => arr([
+            js_str("bc"),
+            num(f64::from(*id)),
+            num(r2(dec(*x))),
+            num(r2(dec(*y))),
+            num(r2(dec(*z))),
+            if *killed {
+                "1".to_string()
+            } else {
+                "0".to_string()
+            },
+        ]),
     }
 }
 
@@ -674,6 +827,19 @@ pub fn decode_record(a: &[JVal]) -> Option<TickEvent> {
         "z" => Some(TickEvent::Zone(ZoneRecord {
             payload: a.get(1).cloned().unwrap_or(JVal::Null),
         })),
+        // Task 41 (TR-41.2): boss records. Wrong-arity shapes decode to
+        // `None` — the tick envelope itself survives, keeping the Task 40
+        // tolerance contract. A right-arity `bc` with a non-numeric slot
+        // coerces that slot to 0 via `g` (the JS packer always writes
+        // numbers, so this only guards against corrupt relays).
+        "bm" if a.len() == 2 => Some(TickEvent::BossMove(a[1].clone())),
+        "bc" if a.len() == 6 => Some(TickEvent::BossCrabBurst {
+            id: g(1) as u32,
+            x: g(2),
+            y: g(3),
+            z: g(4),
+            killed: g(5) != 0.0,
+        }),
         _ => None,
     }
 }
@@ -848,16 +1014,21 @@ pub fn encode_host(m: &HostMsg) -> String {
             winner,
             stats,
             zones,
+            bo,
         } => {
             let cov = arr([num(dec(coverage[0])), num(dec(coverage[1]))]);
+            // st rows are always 6-wide on the wire (JS L654 writes
+            // `Math.round(a.stats.bossDmg || 0), a.stats.weakHits || 0` for
+            // every mode); non-boss rows carry 0/0 — byte-identical to the
+            // pre-Task-41 shape.
             let st = arr(stats.iter().map(|r| {
                 arr([
                     num(f64::from(r.nid)),
                     num(f64::from(r.turf)),
                     num(f64::from(r.splats)),
                     num(f64::from(r.deaths)),
-                    "0".to_string(), // bossDmg (M2+ ⇒ 0)
-                    "0".to_string(), // weakHits (M2+ ⇒ 0)
+                    num(f64::from(r.boss_dmg)),
+                    num(f64::from(r.weak_hits)),
                 ])
             }));
             let mut pairs = vec![
@@ -865,8 +1036,17 @@ pub fn encode_host(m: &HostMsg) -> String {
                 ("cov", cov),
                 ("win", num(f64::from(*winner))),
             ];
-            if let Some(z) = zones {
+            // JS object-literal order: `{k, cov, win, mode, bo, …zones, st}`
+            // (L652). `mode` is 'zones' or 'boss'; turf drops both keys.
+            if zones.is_some() {
                 pairs.push(("mode", js_str("zones")));
+            } else if bo.is_some() {
+                pairs.push(("mode", js_str("boss")));
+            }
+            if let Some(b) = bo {
+                pairs.push(("bo", b.to_wire()));
+            }
+            if let Some(z) = zones {
                 pairs.push((
                     "zc",
                     arr([num(z.counts[0] as f64), num(z.counts[1] as f64)]),
@@ -935,14 +1115,20 @@ pub fn decode_host(v: &JVal) -> Option<HostMsg> {
                                 turf: a.get(1)?.as_f64()? as i32,
                                 splats: a.get(2)?.as_f64()? as u32,
                                 deaths: a.get(3)?.as_f64()? as u32,
+                                // `_result` L659 destructures the 6-wide row
+                                // and only lifts bossDmg/weakHits when
+                                // defined — short (4-wide) rows default to 0.
+                                boss_dmg: a.get(4).and_then(JVal::as_f64).unwrap_or(0.0) as i32,
+                                weak_hits: a.get(5).and_then(JVal::as_f64).unwrap_or(0.0) as u32,
                             })
                         })
                         .collect()
                 })
                 .unwrap_or_default();
             // `mode:'zones'` carries the settlement extras (sendResult
-            // L652-653); boss (`mode:'boss'`) stays out of scope, and turf
-            // has no `mode` key at all.
+            // L652-653); `mode:'boss'` carries `bo` (Task 41); turf has no
+            // `mode` key at all.
+            let bo = v.field("bo").cloned();
             let zones = match v.field("mode").and_then(JVal::as_str) {
                 Some("zones") => {
                     let counts = v
@@ -1002,6 +1188,7 @@ pub fn decode_host(v: &JVal) -> Option<HostMsg> {
                 winner: v.field("win").and_then(JVal::as_f64).unwrap_or(0.0) as u8,
                 stats,
                 zones,
+                bo,
             })
         }
         "end" => Some(HostMsg::End),
@@ -1441,10 +1628,12 @@ mod tests {
 
     #[test]
     fn boss_and_unknown_record_tags_decode_to_none_without_panic() {
-        // M3 Non-Goals decode tolerance: boss messages `['bm']`/`['bc']`
-        // (netmatch.js L494/L496) and any other unknown tag must decode to
-        // `None` via `decode_record`'s `_ => None` arm (L677) without
-        // panicking — Rust ignores what it does not implement.
+        // Decode tolerance (Task 40 contract, extended by Task 41): MALFORMED
+        // boss tags — `['bm']` with extra slots (a valid `bm` is exactly
+        // `['bm', rec]`, bossBrain.js L294) or a non-numeric / short `bc`
+        // (valid: `['bc', id, x, y, z, killed]`, boss.js L386) — and any other
+        // unknown tag must decode to `None` via the `_ => None` arm without
+        // panicking — Rust ignores what it cannot implement.
         for s in [r#"["bm",1,2,3]"#, r#"["bc","x",0]"#, r#"["nosuchtag",1,2]"#] {
             let a = parse_json(s).unwrap();
             assert!(
@@ -1452,6 +1641,181 @@ mod tests {
                 "tolerance failed for {s}"
             );
         }
+    }
+
+    #[test]
+    fn boss_records_produce_and_round_trip() {
+        // Task 41 (TR-41.2): the valid `bm` / `bc` shapes now encode and
+        // decode; the gold fixtures (`fixtures.events.bm` / `.bc`, produced by
+        // the sliced JS sources) round-trip byte-identically through the
+        // generic `event_records_round_trip_to_golden_wire` sweep — this test
+        // pins the hand-built side.
+        let bm = TickEvent::BossMove(JVal::Obj(vec![
+            ("id".into(), JVal::Str("slam".into())),
+            ("t0".into(), JVal::Num(123.457)),
+        ]));
+        let w = encode_record(&bm);
+        assert_eq!(w, r#"["bm",{"id":"slam","t0":123.457}]"#); // JS src/boss/bossBrain.js L294
+        assert_eq!(
+            decode_record(parse_json(&w).unwrap().as_array().unwrap()).unwrap(),
+            bm
+        );
+        let bc = TickEvent::BossCrabBurst {
+            id: 4,
+            x: 1.23,
+            y: 0.05,
+            z: -2.35,
+            killed: true,
+        };
+        let w = encode_record(&bc);
+        assert_eq!(w, r#"["bc",4,1.23,0.05,-2.35,1]"#); // JS src/boss/boss.js L386
+        assert_eq!(
+            decode_record(parse_json(&w).unwrap().as_array().unwrap()).unwrap(),
+            bc
+        );
+        // `killed ? 1 : 0` prints as `0` (JS truthiness, netmatch.js L496 `!!e[6]`).
+        let w0 = encode_record(&TickEvent::BossCrabBurst {
+            id: 7,
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            killed: false,
+        });
+        assert_eq!(w0, r#"["bc",7,0,0,0,0]"#);
+    }
+
+    #[test]
+    fn boss_snap_round_trips_to_golden_wire() {
+        // The gold `B` snapshots come from the real sliced `Boss.pack` /
+        // `Boss.unpack` (boss.js L422-434) run on a fixed fake state in
+        // gen.mjs; the Rust codec must re-encode byte-identically and agree
+        // with JS `unpack` field-by-field.
+        for (name, full) in [("full", true), ("delta", false)] {
+            let case = &fixtures()["fixtures"]["boss_snap"][name];
+            let s = case["wire_str"].as_str().unwrap();
+            let v = parse_json(s).unwrap();
+            let snap = decode_boss_snap(&v).unwrap_or_else(|| panic!("boss_snap {name}"));
+            assert_eq!(
+                encode_boss_snap(&snap, full).to_wire(),
+                s,
+                "boss_snap {name} re-encode"
+            );
+            let u = &case["unpacked"];
+            let f = |k: &str| u[k].as_f64().unwrap() as f32;
+            assert_eq!(snap.bt, f("bt"), "{name}.bt"); // JS src/boss/boss.js L427
+            assert_eq!(snap.x, f("x")); // JS src/boss/boss.js L427
+            assert_eq!(snap.y, f("y"));
+            assert_eq!(snap.z, f("z"));
+            assert_eq!(snap.yaw, f("yaw"));
+            assert_eq!(snap.vx, f("vx"));
+            assert_eq!(snap.vz, f("vz"));
+            assert_eq!(snap.hp, f("hp"), "{name}.hp one-decimal"); // JS L427
+            assert_eq!(snap.phase, f("phase") as u32);
+            assert_eq!(snap.f, f("f") as u32); // JS L424 (invuln|visible = 12)
+            assert_eq!(snap.mv, f("mv")); // JS L427 (move.t0 / -1)
+            assert_eq!(snap.anim, f("anim") as u32); // JS L428
+            assert_eq!(snap.turn, f("turn"));
+            assert_eq!(snap.flash, f("fl") as u32);
+            assert_eq!(snap.weak, f("wk") as u32);
+            assert_eq!(snap.killer, f("killer") as i32); // JS L428
+            assert_eq!(snap.max_hp, f("maxHp") as u32); // JS L428 integer
+            let crabs = u["crabs"].as_array().unwrap();
+            assert_eq!(snap.crabs.len(), crabs.len(), "{name}.crabs"); // JS L426
+            for (row, c) in crabs.iter().zip(&snap.crabs) {
+                assert_eq!(c.id, row[0].as_f64().unwrap() as u32);
+                assert_eq!(c.x, row[1].as_f64().unwrap() as f32);
+                assert_eq!(c.y, row[2].as_f64().unwrap() as f32);
+                assert_eq!(c.z, row[3].as_f64().unwrap() as f32);
+                assert_eq!(c.yaw, row[4].as_f64().unwrap() as f32);
+                assert_eq!(c.hp, row[5].as_f64().unwrap() as u32);
+            }
+            // The move record rides index 18 on the FULL snapshot only
+            // (boss.js L429, netmatch.js L196 `boss.pack(bossN % 10 === 0)`).
+            assert_eq!(snap.move_rec.is_some(), full, "{name}.move");
+        }
+        // The fake state's live crab hp 23.7 → Math.round → 24 (dead crab 5
+        // skipped): pin the exact gold tokens so the fixture cannot silently
+        // change shape.
+        let full = fixtures()["fixtures"]["boss_snap"]["full"]["wire_str"]
+            .as_str()
+            .unwrap();
+        assert!(full.contains("[[4,1.23,0.05,-2.35,1.57,24]]")); // JS src/boss/boss.js L426
+        assert!(!full.contains("[5,"), "dead crab 5 leaked into the pack");
+    }
+
+    #[test]
+    fn tick_boss_key_rides_between_e_and_c() {
+        // `_sendTick` attaches `e` (L194), then `B` (L196), then `c`
+        // (L197-200) — the gold boss tick must round-trip with that key order.
+        let s = wire_of(&["fixtures", "tick", "boss", "wire_str"]);
+        let v = parse_json(s).unwrap();
+        let (tick, clock) = decode_tick(&v);
+        assert!(tick.b.is_some(), "B failed to decode");
+        let re = encode_tick(&tick, clock.as_ref().map(|(p, t)| (p.as_str(), *t)));
+        assert_eq!(re, s, "boss tick re-encode");
+        let i_e = s.find("\"e\"").unwrap();
+        let i_b = s.find("\"B\"").unwrap();
+        let i_c = s.find("\"c\":").unwrap();
+        assert!(i_e < i_b && i_b < i_c, "key order k,ts,a,e,B,c broken");
+        // The `bc` record inside `e` decoded typed.
+        let TickEvent::BossCrabBurst { id, killed, .. } = &tick.events[0].kind else {
+            panic!("expected BossCrabBurst, got {:?}", tick.events[0].kind);
+        };
+        assert_eq!(*id, 4); // JS src/boss/boss.js L386
+        assert!(killed);
+    }
+
+    #[test]
+    fn non_boss_ticks_never_carry_b() {
+        // PROTO v1 compat: `Tick.b == None` ⇒ no `B` key at all — the three
+        // pre-Task-41 gold ticks stay byte-identical AND contain no `"B"`.
+        for name in ["guest", "host", "with_events"] {
+            let s = wire_of(&["fixtures", "tick", name, "wire_str"]);
+            assert!(!s.contains("\"B\""), "{name} grew a B key");
+            let v = parse_json(s).unwrap();
+            let (tick, clock) = decode_tick(&v);
+            assert!(tick.b.is_none(), "{name} decoded a phantom B");
+            let re = encode_tick(&tick, clock.as_ref().map(|(p, t)| (p.as_str(), *t)));
+            assert_eq!(re, s, "{name} re-encode");
+        }
+    }
+
+    #[test]
+    fn res_boss_round_trips_and_short_stats_default_zero() {
+        // Boss-shaped `res`: `{k, cov, win, mode:'boss', bo, st}` (netmatch.js
+        // L652-654) — decode→encode byte-identical, `bo` kept verbatim, stats
+        // rows carry real bossDmg/weakHits.
+        let s = wire_of(&["fixtures", "msgs", "res_boss"]);
+        let v = parse_json(s).unwrap();
+        let m = decode_host(&v).unwrap_or_else(|| panic!("host res_boss"));
+        let HostMsg::Result {
+            winner,
+            stats,
+            zones,
+            bo,
+            ..
+        } = &m
+        else {
+            panic!("expected Result")
+        };
+        assert_eq!(*winner, 1);
+        assert!(zones.is_none());
+        assert!(bo.is_some(), "bo failed to decode"); // JS src/boss/bossMode.js L50
+        assert_eq!(stats[0].boss_dmg, 4500); // JS src/net/netmatch.js L654
+        assert_eq!(stats[0].weak_hits, 12);
+        assert_eq!(stats[1].boss_dmg, 2300);
+        assert_eq!(stats[1].weak_hits, 7);
+        assert_eq!(encode_host(&m), s, "res_boss re-encode");
+        // `_result` L659 tolerates short (4-wide) rows — bossDmg/weakHits
+        // default to 0, and the 0/0 rows print exactly as the turf fixture's
+        // explicit 0/0 (non-boss bytes stable).
+        let short = parse_json(r#"{"k":"res","cov":[0,0],"win":0,"st":[[1,2,3,4]]}"#).unwrap();
+        let Some(HostMsg::Result { stats, bo, .. }) = decode_host(&short) else {
+            panic!("short res")
+        };
+        assert_eq!(stats[0].boss_dmg, 0);
+        assert_eq!(stats[0].weak_hits, 0);
+        assert!(bo.is_none());
     }
 
     #[test]

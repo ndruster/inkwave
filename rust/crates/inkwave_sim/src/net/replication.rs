@@ -1390,6 +1390,12 @@ impl Replication {
                             m.end_zones(winner, &reason);
                         }
                     }
+                    // Task 41 batch 2: the boss codec decodes `bm`/`bc`, but
+                    // the Rust sim does not run a boss (Boss Battle sim is a
+                    // later batch) — the records are acknowledged and dropped,
+                    // mirroring JS's `this.match?.boss?.…` no-op when no boss
+                    // sim exists (netmatch.js L494/L496).
+                    TickEvent::BossMove(_) | TickEvent::BossCrabBurst { .. } => {}
                 }
             }
         }
@@ -1490,6 +1496,9 @@ impl Replication {
             ts,
             actors,
             events: std::mem::take(&mut self.out),
+            // The Rust host does not run a boss sim yet (Task 41 batch 2 is
+            // codec + fixtures); non-boss ticks never grow the `B` key.
+            b: None,
         };
         tr.broadcast(&encode_tick(&tick, clock));
     }
@@ -1609,6 +1618,7 @@ impl Replication {
                         winner,
                         stats,
                         zones,
+                        ..
                     }) = decode_host(&v)
                 {
                     self.host_result(m, coverage, winner, &stats, zones.as_ref());
@@ -1775,6 +1785,11 @@ impl Replication {
                 turf: wire::round_int(a.turf) as i32,
                 splats: a.splats,
                 deaths: a.deaths,
+                // No boss sim in the Rust host yet (Task 41 batch 2 is codec
+                // + fixtures): JS L654 writes `bossDmg || 0` / `weakHits || 0`
+                // for turf rows, so 0/0 reproduces the pre-Task-41 bytes.
+                boss_dmg: 0,
+                weak_hits: 0,
             })
             .collect();
         let msg = HostMsg::Result {
@@ -1788,6 +1803,7 @@ impl Replication {
                 overtime: z.overtime,
                 log: z.log.clone(),
             }),
+            bo: None,
         };
         tr.broadcast(&encode_host(&msg));
     }
@@ -2676,6 +2692,7 @@ mod tests {
                     ts: 1.0,
                     actors: vec![],
                     events: vec![],
+                    b: None,
                 },
                 Some(("playing", 100.1)),
             ),
@@ -2691,6 +2708,7 @@ mod tests {
                     ts: 2.0,
                     actors: vec![],
                     events: vec![],
+                    b: None,
                 },
                 Some(("playing", 102.0)),
             ),
@@ -3625,6 +3643,7 @@ mod tests {
                     sub_kind: None,
                 }),
             }],
+            b: None,
         };
         rg.on_message(
             h,
@@ -3669,6 +3688,7 @@ mod tests {
                     sub_kind: None,
                 }),
             }],
+            b: None,
         };
         rg.on_message(h, &encode_tick(&live, None), &mut mg, t);
 
@@ -4082,6 +4102,7 @@ mod tests {
                     vel: [0.0, 0.0, 0.0],
                 }),
             }],
+            b: None,
         };
         rg.on_message(h, &encode_tick(&tick, None), &mut mg, t);
 
@@ -4150,6 +4171,7 @@ mod tests {
                     sub_kind: None,
                 }),
             }],
+            b: None,
         };
         let echo = |evs: Vec<SimEvent>| -> bool {
             evs.iter().any(|e| match e {
@@ -4586,6 +4608,7 @@ mod tests {
                     sub_kind: None,
                 }),
             }],
+            b: None,
         };
         let echo = |evs: Vec<SimEvent>| -> bool {
             evs.iter().any(|e| match e {

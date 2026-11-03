@@ -435,8 +435,156 @@ for (const [name, a] of Object.entries(actorCases)) {
   fixtures.zone_seq = seq.map((r) => JSON.stringify(r));
 }
 
+// --- Task 41 batch 2: the boss wire codec ----------------------------------
+// Same slice+eval discipline. `Boss.pack` / `Boss.unpack` close over boss.js's
+// own r2/r3 (L496-497) and `this.*` state; we re-host them in a throwaway
+// class (so the `static unpack` syntax survives) and run them against a FIXED
+// fake boss state — no Math.random, no browser globals — to produce the gold
+// `B` snapshots (full with `s[18]`, delta without).
+{
+  const bossJsSrc = readFileSync(join(repoRoot, 'src', 'boss', 'boss.js'), 'utf8');
+  const bossBrainSrc = readFileSync(join(repoRoot, 'src', 'boss', 'bossBrain.js'), 'utf8');
+  const bossModeSrc = readFileSync(join(repoRoot, 'src', 'boss', 'bossMode.js'), 'utf8');
+  // Includes the end marker (a class body needs the method's closing brace).
+  const sliceBlock = (src, file, name, start, end) => {
+    const i = src.indexOf(start);
+    if (i < 0) throw new Error(`${file}: sliceBlock(${name}): start marker not found: ${start}`);
+    const j = src.indexOf(end, i);
+    if (j < 0) throw new Error(`${file}: sliceBlock(${name}): end marker not found after start: ${end}`);
+    return src.slice(i, j + end.length);
+  };
+  const srcBossR2 = sliceBlock(bossJsSrc, 'boss.js', 'r2', 'const r2 =', '\n');
+  const srcBossR3 = sliceBlock(bossJsSrc, 'boss.js', 'r3', 'const r3 =', '\n');
+  const srcPack = sliceBlock(bossJsSrc, 'boss.js', 'pack', 'pack(full) {', '\n  }');
+  const srcUnpack = sliceBlock(bossJsSrc, 'boss.js', 'unpack', 'static unpack(s, ts) {', '\n  }');
+  assertContains(srcBossR2, 'Math.round(x * 100) / 100', 'boss.js r2');
+  assertContains(srcBossR3, 'Math.round(x * 1000) / 1000', 'boss.js r3');
+  assertContains(srcPack, 'Math.round(this.hp * 10) / 10', 'boss.js pack');
+  assertContains(srcPack, 'c.id, r2(c.x), r2(c.y), r2(c.z), r2(c.yaw), Math.round(c.hp)', 'boss.js pack');
+  assertContains(srcPack, 'if (full && this.move) s.push(this.move);', 'boss.js pack');
+  assertContains(srcUnpack, 'mv: s[10], anim: s[11]', 'boss.js unpack');
+  assertContains(srcUnpack, 'maxHp: s[17], move: s[18] || null', 'boss.js unpack');
+  // The sliced r2/r3 are `const` declarations — evaluate each line in its own
+  // scope to get the function values, then hand them to the re-hosted class
+  // (pack/unpack close over exactly these, boss.js L496-497).
+  const bossR2 = new Function(`${srcBossR2}\nreturn r2;`)();
+  const bossR3 = new Function(`${srcBossR3}\nreturn r3;`)();
+  const BossCodec = new Function(
+    'r2', 'r3', `return class { ${srcPack}\n${srcUnpack}\n};`,
+  )(bossR2, bossR3);
+
+  // The move record `{id, t0, s, d, p}` (bossBrain.js L291) — the seed is
+  // FIXED here (JS `(this.rnd() * 1e9) >>> 0`); slam's `p` is
+  // `{x, y, z, rings}` (bossBrain.js L237-239). `['bm', rec]` is the
+  // host-timeline record (bossBrain.js L294; guest read netmatch.js L494).
+  assertContains(
+    bossBrainSrc,
+    'const rec0 = { id: P.id, t0: r3(b.bt), s: (this.rnd() * 1e9) >>> 0, d: [r3(tele), r3(act), r3(rec)], p };',
+    'bossBrain.js rec0',
+  );
+  assertContains(bossBrainSrc, "G.netm?.recBoss(['bm', rec0]);", 'bossBrain.js recBoss bm');
+  assertContains(
+    bossBrainSrc,
+    'p = { x: r3(x), y: r3(b.nav.floorAt(x, z)), z: r3(z), rings: ph >= 3 ? [0, 0.6] : ph >= 2 ? [0, 0.9] : [0] };',
+    'bossBrain.js slam p',
+  );
+  const bmRec = {
+    id: 'slam',
+    t0: bossR3(123.4567),
+    s: 987654321,
+    d: [bossR3(1.15), bossR3(1.2), bossR3(1.0)],
+    p: { x: bossR3(5.4321), y: bossR3(0.05), z: bossR3(-2.1234), rings: [0, 0.9] },
+  };
+
+  // `['bc', id, x, y, z, killed?1:0]` — crabPop (boss.js L386; guest read
+  // netmatch.js L496).
+  assertContains(
+    bossJsSrc,
+    "G.netm?.recBoss(['bc', c.id, r2(c.x), r2(c.y), r2(c.z), killed ? 1 : 0]);",
+    'boss.js crabPop bc',
+  );
+  const bcRec = ['bc', 4, bossR2(1.2345678), bossR2(0.05), bossR2(-2.3456789), 1];
+
+  // A FIXED fake boss state — every field pack/unpack touches. `crab 5` is
+  // dead: `pack` skips dead crabs (boss.js L426), so only crab 4 rides.
+  const fakeBoss = {
+    bt: 123.4567,
+    pos: { x: 1.2345678, y: 0.5, z: -3.456789 },
+    yaw: 0.7123456,
+    vel: { x: 0.5, z: -1.5 },
+    hp: 12345.678,
+    maxHp: 14400,
+    phase: 2,
+    stunned: false,
+    dead: false,
+    invuln: true,
+    visible: true,
+    move: bmRec,
+    anim: 2,
+    turn: 0.123456,
+    flashN: 7,
+    weakN: 3,
+    killer: -1,
+    crabs: new Map([
+      [4, { id: 4, x: 1.2345678, y: 0.05, z: -2.3456789, yaw: 1.5708, hp: 23.7, dead: false }],
+      [5, { id: 5, x: -9.8765432, y: 0.0, z: 8.7654321, yaw: -0.5, hp: 12.4, dead: true }],
+    ]),
+  };
+  const bossFullWire = BossCodec.prototype.pack.call(fakeBoss, true);
+  const bossDeltaWire = BossCodec.prototype.pack.call(fakeBoss, false);
+  const bossFullUnpack = BossCodec.unpack(bossFullWire, 123.5);
+  const bossDeltaUnpack = BossCodec.unpack(bossDeltaWire, 123.5);
+
+  // The host tick `{k, ts, a, e, B, c}` — key order follows `_sendTick`
+  // (netmatch.js L190-203: `e` assigned at L194, `B` at L196, `c` at L197-200).
+  assertContains(
+    netmatchSrc,
+    'if (this.isHost && boss && boss.sim) { this.bossN = (this.bossN || 0) + 1; msg.B = boss.pack(this.bossN % 10 === 0); }',
+    'netmatch.js B attach',
+  );
+  const tickBoss = {
+    k: 't',
+    ts: bossR3(123.5),
+    a: [packActor(actorCases.kid_idle)],
+    e: [[bossR3(123.48), ...bcRec]],
+    B: bossFullWire,
+    c: ['playing', bossR2(123.4)],
+  };
+
+  // Boss-shaped `res` — `{k, cov, win, mode:'boss', bo, st}` (netmatch.js
+  // L652-654); `bo` is `result.boss` (bossMode.js L50), st rows 6-wide with
+  // real bossDmg/weakHits.
+  assertContains(
+    bossModeSrc,
+    'boss: { name: BOSS.name, win, time: Math.round((win && this.killT >= 0 ? this.killT : m.duration - m.time) * 10) / 10, hp: Math.round(b.hp), maxHp: b.maxHp, phase: b.phase },',
+    'bossMode.js result boss',
+  );
+  const resBoss = {
+    k: 'res',
+    cov: [bossR2(0), bossR2(0)],
+    win: 1,
+    mode: 'boss',
+    bo: { name: 'HULLBREAKER', win: 1, time: Math.round(213.456 * 10) / 10, hp: 9999, maxHp: 14400, phase: 3 },
+    st: [[0, 120, 2, 1, 4500, 12], [1, 0, 0, 1, 2300, 7]],
+  };
+
+  fixtures.boss_snap = {
+    full: { wire: bossFullWire, wire_str: JSON.stringify(bossFullWire), unpacked: bossFullUnpack },
+    delta: { wire: bossDeltaWire, wire_str: JSON.stringify(bossDeltaWire), unpacked: bossDeltaUnpack },
+  };
+  fixtures.events.bm = { wire: ['bm', bmRec], wire_str: JSON.stringify(['bm', bmRec]) };
+  fixtures.events.bc = { wire: bcRec, wire_str: JSON.stringify(bcRec) };
+  fixtures.tick.boss = {
+    wire_str: JSON.stringify(tickBoss),
+    ts: bossR3(123.5),
+    actorNames: ['kid_idle'],
+    clock: ['playing', bossR2(123.4)],
+  };
+  fixtures.msgs.res_boss = JSON.stringify(resBoss);
+}
+
 const out = join(repoRoot, 'rust', 'assets', 'net-fixtures.json');
-writeFileSync(out, JSON.stringify({ generated_from: 'src/net/netmatch.js (sliced packers)', fixtures }, null, 2) + '\n');
+writeFileSync(out, JSON.stringify({ generated_from: 'src/net/netmatch.js + src/boss/*.js (sliced packers)', fixtures }, null, 2) + '\n');
 console.log('wrote', out);
 console.log('actor cases:', Object.keys(fixtures.actors).join(', '));
 console.log('zone_seq records:', fixtures.zone_seq.length);
