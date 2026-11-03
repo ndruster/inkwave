@@ -1,10 +1,13 @@
-# INKWAVE — Rust/Bevy 移植（M1）
+# INKWAVE — Rust/Bevy 移植（M1–M3）
 
 INKWAVE（Splatoon-like 涂地对战）从 three.js 移植到 Rust + Bevy 0.19 的工作区。
 本目录 `rust/` 与上游 JS 树（`../src`、`../server`、`../tools`）并存：
 **JS 树永远零改动**，Rust 侧通过提取管线读取 JS 数据、通过 `tools/sync-upstream.sh` 跟踪上游提交。
 
 M1 垂直切片：Tidewater 地图 + Spritzer 武器 + 涂地计分 + 4v4 easy bot + 墨汁渲染 + 菜单/HUD/结算 + 占位音效。
+M2 联网栈：PROTO v1 与上游 JS 客户端逐字节兼容，大厅 + Rust↔Rust / JS↔Rust 完整局（第 3 节）。
+M3 内容：12 主武器 / 15 副 / 19 特殊全量、Zone Control 模式、saltpan/crossmarket 新图、bot 三档、
+大厅 loadout 选择与跨端开黑（第 4 节）。
 模块对照见 [PORT_MAP.md](./PORT_MAP.md)，上游同步流程见 [SYNC_LEDGER.md](./SYNC_LEDGER.md)。
 
 ## 1. 环境准备
@@ -113,7 +116,7 @@ node rust/tools/verify/wasm-smoke.mjs http://localhost:8002/index.html 60 9222
 M1 其余渲染为固定简化档（无 GTAO/bloom/SMAA/tilt-shift，材质为 pattern 最小子集）；
 后处理与画质档位属于 M2+，见 PORT_MAP。
 
-## 3. 联网运行（M2）
+## 3. 联网运行（M2/M3）
 
 联网协议为 PROTO v1，wire 格式与上游 JS 客户端（`src/net/`）**逐字节兼容**
 （金标准 fixture `rust/assets/net-fixtures.json`），`server/` relay **零改动**：
@@ -157,11 +160,17 @@ http://localhost:8080/?relay=ws://127.0.0.1:8787&netjoin=<CODE>&netready&autopil
 **test-only query 接缝**（`crates/inkwave/src/nettest.rs`，等价于 JS 侧 `__G.net` /
 `?skipTitle&autopilot` 先例），向浏览器 console 打 `[nettest] boot/code/lobby/err/probe`
 证据行供冒烟脚本断言；正常游玩不使用这些参数，走鼠标/键盘大厅 UI。
+M3 起另有 loadout/模式四参数（`netweapon/netsub/netspecial/netmode`，见下文「跨端开黑」）。
 
 ### 联网冒烟（CDP headless，仓库根执行）
 
 ```bash
-node rust/tools/verify/net-smoke.mjs --scenario all   # A: wasm↔wasm 全流程；B: JS↔Rust 跨端握手
+node rust/tools/verify/net-smoke.mjs --scenario all   # A: wasm↔wasm 全流程；B: JS↔Rust 跨端握手（无条件跑）；
+                                                      # C: turf 跨端完整局；D: zones 跨端完整局（M3）
+node rust/tools/verify/net-smoke.mjs --scenario A     # 单跑 A（--scenario A|C|D|all；B 始终随跑）
+node rust/tools/verify/net-smoke.mjs --scenario C     # 单跑 C（loadout 跨端 turf 完整局）
+node rust/tools/verify/net-smoke.mjs --scenario D     # 单跑 D（zones：JS 300 s 固定钟 + 加时，
+                                                      # 终局等待预算内置 540 s；--secs 只控制 A/B 中段观察窗）
 ```
 
 脚本自动拉起 shim 与静态服务器，以 `[nettest]` 证据行断言握手与远端 actor 移动；
@@ -172,23 +181,106 @@ node rust/tools/verify/net-smoke.mjs --scenario all   # A: wasm↔wasm 全流程
 
 JS 客户端（`tools/serve.py`，只读）与 Rust 客户端可同房：wire 格式经金标准 fixture
 （`rust/assets/net-fixtures.json`）逐字节一致。沙箱实据：JS 大厅实收 Rust 客人
-（`REVIEW_CHECKLIST.md` §3，房间 `3UZ9X`）。
+（M2 `REVIEW_CHECKLIST.md` §3，房间 `3UZ9X`）。
 
-## 4. 数据提取
+### 跨端开黑（M3）
+
+大厅 loadout 选择已落地：原生/wasm 大厅为 click-cycle 四行（WEAPON 12 / SUB 15+NONE /
+SPECIAL 19+NONE / MODE turf⇄zones host-only），roster `{weapon,sub,special,style}` 实值
+透传（style 仍透传不解释）。Rust wasm 测试缝四个 loadout 参数（`crates/inkwave/src/nettest.rs`
+`parse_query` 实形）：
+
+```text
+?netweapon=<id>        主武器，id 见第 4 节 weaponOrder 清单；非法 id 由 sim 丢弃保留原值
+                       （≡ JS session.js L201 WEAPONS[x] 守卫，缝不二次校验）
+?netsub=<id|none>      副武器，id 见 subOrder；字面 none = 显式卸下（对齐 cycle UI 的 NONE 停靠位）
+?netspecial=<id|none>  特殊武器，id 见 specialOrder；同 none 规则
+?netmode=turf|zones    host-only 模式开关；其他值该参数作废
+```
+
+latch 后打 `[nettest] loadout w=<id> sub=<id|-> sp=<id|-> mode=<turf|zones>`（读 session
+**生效值**，非法 id 显示旧武器）；局中 `[nettest] probe` 行带 `sub=`/`sp=` 部署计数；
+终局打 `[nettest] result w=<0|1> cov=<a>/<b>`（zones 局追加
+`zone=<c0>/<c1> reason=<id|-> pen=<p0>/<p1> ot=<0|1>`）。JS 客户端侧同口径走
+`__G.net`（`tools/net-test.mjs` L75/L80 形态，只读）：`setMe({weapon,sub,special,ready})`
+与 `setSettings({mode})`。
+
+net-smoke scenario C（turf：JS host `charger/mine/crab` ↔ Rust guest `brolly/bomb/stamp`）
+与 D（zones）断言跨端完整局：双端 roster 互认、终局 coverage 差 <0.5%、winner 一致、
+Rust probe `sub>=1 && sp>=1`、无 err 线（create/join 重试吸收的连接失败不计）、
+D 另逐项对比 zone 终局 `counts/penalty/reason/overtime`。
+**沙箱三次实跑均 DEGRADED**（环境性：SwiftShader PBR 崩溃 + 内存压力，非代码回归，
+spec D-T39-1；`[nettest] boot/loadout` 行已证 knobs 端到端解析）——跨端完整局断言的
+首次真实执行登记于 `.trae/specs/rust-bevy-port-m3/REVIEW_CHECKLIST.md`（用户机器复核）；
+进程内等价闭环由 harness `tr39_loadout_end_to_end`（FakeRelay 双 client + guest 端
+sub/special 部署断言）兜底。
+
+## 4. 武器与 Zone Control（M3）
+
+12 主武器 / 15 副 / 19 特殊全部移植并 wired（Tasks 29–35），Zone Control 模式（Task 36/37），
+saltpan + crossmarket 新图（Task 37），bot 三档（Task 38），大厅 loadout（Task 39，跨端开黑见第 3 节）。
+数值全部走 `assets/tuning.json`（提取自 `src/config.js`，禁手抄）；武器 id 即其顶层
+`weaponOrder`/`subOrder`/`specialOrder`（下列清单读自该文件）：
+
+- **12 主武器**（`weaponOrder`，id == kind 字符串）：`shooter`（Spritzer）、`twins`、`brolly`、
+  `blaster`、`spinner`、`charger`、`bow`、`roller`、`brush`、`blade`、`mitts`、`bucket`。
+  retired 武器（`dualies`/`slosher`/`splatling`）不入产物（TR-28.2）。
+- **15 副**（`subOrder`）：`bomb`、`sticky`、`burst`、`shaker`、`seeker`、`waddle`、`torpedo`、
+  `tracer`、`boomerang`、`scan`、`curtain`、`sprinkler`、`mine`、`beacon`、`mist`。
+- **19 特殊**（`specialOrder`，13 个 kind，`barrage`×5 共享主体）：`slam`、`storm`、`barrage`、
+  `barrage_sticky`、`barrage_burst`、`barrage_seeker`、`barrage_mist`、`bubbler`、`sonar`、
+  `strike`、`zooka`、`wail`、`kraken`、`blower`、`jetpack`、`stamp`、`booyah`、`zipcaster`、`crab`。
+
+### Zone Control 玩法口径
+
+规则实现在 `inkwave_sim::match::zones`（zones.js 全量平移）。**数值以 `assets/tuning.json`
+的 `zones` 节为准**（17 字段，提取自 config.js L485-501），此处仅锚值示例：`duration=300`
+（每局秒数，加时停钟）、`count=100`（中心区倒计时目标）、`rateCenter/rateHome/rateAway`
+=1/0.5/2（按占方归属的扣速档）、`contest`/`control`/`warn`=0.4/0.8/0.3（争夺/占领/警戒
+阈值）、`penaltyK=0.75`（penalty 公式系数）、`rotateMin/rotateMax`=30/60（side 区轮换
+窗口）、`finalCentre=30`（终局中心锁定）、`overtimeGrace/overtimeMax`=10/300（加时）、
+`sampleHz=5`（zone 涂地采样频率）。玩法：占住 active zone 推进倒计时，对方夺回转中立并按
+公式扣 penalty；时间到进入加时，四出口（comeback/retake/neutralised/cap）或 sudden death；
+终局结算 `counts/penalty/reason/overtime`（zones 结算形态，HUD 镜像 JS 文案）。zone 多边形
+经提取管线合并入 `assets/maps/*.json` 的 `zones` 键（tidewater/saltpan/crossmarket 三图）；
+side 区按 `onlyIn/notIn` 旗标随模式过滤（Task 37）。
+
+### 无头测试与测量
+
+```bash
+cd rust
+cargo test -p inkwave_sim                    # sim 固定种子单测：逐武器/副/特殊/zones 规则逐值断言，
+                                             # 含 TR-5.4 handling 测量（口径 ≡ tools/measure-handling.mjs）
+cargo test -p net-harness --test e2e_match   # 集成完整局：zones 三客户端（tr36）、saltpan/crossmarket
+                                             # turf + zones（tr37）、loadout 端到端（tr39）、档位 ladder（tr38）
+cargo test --workspace                       # 全量门禁（M3 收尾 553 passed）
+cargo run --release -p inkwave -- --headless --frames 600   # 无 GPU 冒烟
+```
+
+bot 三档（`easy`/`normal`/`hard`，`tuning.json` 顶层 `difficulty` 节）大厅可选；bot 使用全部
+12 主武器/15 副/19 特殊并在 zones 局执行 zone tactic（Task 38；ladder 单调性报告
+`tools/verify/logs/task38-ladder-*.log`）。
+
+## 5. 数据提取
 
 Rust 侧所有关卡/数值 JSON 由 node 管线从上游 JS 求值生成，**禁止手抄数值**：
 
 ```bash
 cd rust
-bash tools/extract/run-all.sh     # 重新生成 assets/tuning.json + assets/maps/tidewater.json
+bash tools/extract/run-all.sh     # 重新生成 tuning.json + tidewater/saltpan/crossmarket 三图（Task 40 起全量覆盖）
+node tools/extract/extract-layout.mjs saltpan      # 单图按 stage 提取（Task 37 泛化）
 ```
 
-- `extract-tuning.mjs`：`src/config.js`（PLAYER/WEAPONS/MATCH…）→ `assets/tuning.json`
-- `extract-layout.mjs`：`src/world/stages/tidewater/layout.js`（mapkit DSL 在 node 侧求值）→ `assets/maps/tidewater.json`
-- 产物确定性：同一上游提交重复运行不产生 diff（TR-3.4 已验证）；改完跑 `cargo test -p inkwave_sim` 回归。
+- `extract-tuning.mjs`：`src/config.js`（PLAYER/WEAPONS 12/SUBS 15/SPECIALS 19/ZONES/DIFFICULTY…，
+  schema v2）→ `assets/tuning.json`
+- `extract-layout.mjs [stage]`：`src/world/stages/<stage>/layout.js`（mapkit DSL 在 node 侧求值）
+  → `assets/maps/<stage>.json`；stage 缺省 `tidewater`，zones 多边形（`zones-data.js`）合并进 `zones` 键
+- 产物确定性：同一 HEAD 连跑两次逐字节一致（TR-3.4/TR-28.1/TR-37.1 已验证）；唯一可变量是
+  `source.commit` provenance 戳行（随 HEAD 移动，D-T37-3 口径），内容字段稳定。改完跑
+  `cargo test -p inkwave_sim` 回归。
 - 交叉验证：`bash tools/verify/run-crosscheck.sh`（JS 与 Rust 碰撞查询逐点对照）。
 
-## 5. 上游同步
+## 6. 上游同步
 
 JS 树是 https://github.com/jaydendavisnc/inkwave 的零改动 fork（remote 名 `upstream`）。
 Rust 无法 `git merge` JS，工作流为：
@@ -201,19 +293,24 @@ bash tools/sync-upstream.sh update-baseline   # 全部处理完才推进基线
 ```
 
 - 当前基线：见 `SYNC_LEDGER.md` 与 `.upstream-baseline`；
-- 调参/关卡数据改动优先重跑第 4 节提取管线（一般零手工代码）；
+- 调参/关卡数据改动优先重跑第 5 节提取管线（一般零手工代码）；
 - `server/` relay 协议保持兼容；协议变更须同步 `inkwave_sim::net` 类型与 NET 文档注释。
 
 ## 门禁速查
 
+与 M3 门禁脚本九段一致（fmt → clippy → test → wasm32 check → tree → trunk build → headless → JS 树）：
+
 ```bash
 cd rust
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
-cargo check --target wasm32-unknown-unknown -p inkwave_sim -p inkwave
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace               # M3 收尾：553 passed（> M2 基线 273）
+cargo check -p inkwave --target wasm32-unknown-unknown
 cargo tree -p inkwave_sim            # 应仅 serde/serde_json/glam（sim 零引擎依赖）
 trunk build --release
-node rust/tools/verify/net-smoke.mjs # 联网冒烟（仓库根执行；沙箱 DEGRADED 语义见第 3 节）
-cd .. && git status --porcelain -- src tools server docs   # 上游树须为空
+cargo run --release -p inkwave -- --headless --frames 600   # 无 GPU 冒烟
+cd .. && git status --short -- src server tools docs         # 上游树须为空
 ```
+
+联网冒烟另在仓库根执行：`node rust/tools/verify/net-smoke.mjs --scenario all`
+（沙箱 DEGRADED 语义见第 3 节）。

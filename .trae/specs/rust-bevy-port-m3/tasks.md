@@ -343,7 +343,7 @@
 - 修复复验：fmt/clippy/test 全绿（553 passed）；`node --check` + PROBE/RESULT 自检 exit 0；scenario A 重跑 DEGRADED（环境性，如实记录）。
 
 ## Task 40: M3 收尾——门禁、台账、文档与总评审
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 39
 - **Description**:
@@ -354,6 +354,16 @@
   - `rule` TR-40.2: 文档逐条命令实际执行验证。
   - `rule` TR-40.3: 独立审查无未闭环 Blocker/Major。
 - **Notes**: 完成后提交 M3 里程碑并 push origin/main（沿用既有提交流程与身份环境变量）。
+
+### Task 40 Completion Evidence（2026-11-03）
+- **TR-40.1 ✅**：九段门禁 `task40-gates-20261103T082932Z.log`——fmt/clippy(-D warnings)/test **554 passed**（>273 单调链 273→…→546→553→554）/wasm32 check/`cargo tree -p inkwave_sim` 仅 glam/serde/serde_json/headless 600 帧/JS 树零改动，全 exit 0。**TRUNK 段假绿捕获并复验**：脚本层 trunk 在 wasm-bindgen 被沙箱 OOM SIGKILL 时仍 exit 0——独立重试 8 次（退避+drop_caches+清残留进程），第 6 次真绿（无 SIGKILL），dist 以当前源码重建；复验段已追加入日志（`GATES_DONE_RERIFIED`）。教训：TRUNK_EXIT=0 须同时 grep `signal: 9`（M4 门禁模板应加此断言）。
+- **TR-40.2 ✅**：README 全部命令逐条实跑 exit 0——`cargo test --workspace`（554）、`cargo test -p inkwave_sim`（457+1 ignored）、`cargo test -p net-harness --test e2e_match`（11）、headless 600、`node --check net-smoke.mjs`、`extract-tuning.mjs` 连跑两次逐字节一致（唯一变量 `source.commit` 戳，D-T37-3 既有口径）、`run-all.sh`（扩展至 saltpan/crossmarket 后两连跑逐字节一致，产物已恢复提交态）、`sync-upstream.sh check`（网络不可达降级本地 refs，如实入台账）。
+- **TR-40.3 ✅**：独立总评审（只读）对 AC-M3-1..7/NFR-M3-1/纪律/定案漂移十项逐条实读对账——**APPROVE，0 Blocker/0 Major/3 P2 全闭环**：P2-1 `['bm']/['bc']` 解码容忍补显式测试 `boss_and_unknown_record_tags_decode_to_none_without_panic`（wire.rs，Task 35 Evidence 措辞自此有据）；P2-2 task38-ladder 日志去重至最新 1 份（D-T38-8 口径）；P2-3 task28 门禁日志无 GATES_DONE 尾标（标记自 task29 起引入，纯格式，记录不修）。
+- **台账/文档**：`SYNC_LEDGER.md` 新增 M3 基线核对 + M3 移植说明 8 行（跨端完整局如实标沙箱 DEGRADED）；`PORT_MAP.md` 状态图例补 M3 档、修正 config.js/weapons.js/subs·specials 行任务号、新增「M3 完成核对」小节；`rust/README.md` 219→317 行——新增「武器与 Zone Control（M3）」章节（12/15/19 清单运行时读 tuning.json `weaponOrder/subOrder/specialOrder`，禁手抄）、联网章节跨端开黑（scenario A-D 命令实形、`netweapon/netsub/netspecial/netmode` 缝参数、JS `__G.net.setMe/setSettings` 口径、DEGRADED 指引）、门禁速查对齐九段；根 README 实读为纯 JS 上游文档未动。`REVIEW_CHECKLIST.md` 追加 Task 40 登记（预置条目 #2-#6 维持用户机器复核 + 沙箱内存压力注记）。
+
+### Task 40 Review 附录（总评审：0 Blocker / 0 Major / 3 P2 → 全部闭环）
+- 总评审实核通过：AC-M3-1 抽查 charger/bow/mitts 三把 tuning↔config 逐值一致（含 bow 二元数组、mitts leap 端点）；AC-M3-2 金标准 fixture 18 测绿 + zone_seq 257 条；AC-M3-3 zones 三端 e2e ×2 + ladder/矩阵落点；AC-M3-4 无虚报（三份 dump 全 DEGRADED 如实、C/D 断言代码实存 coverage<0.005/winner/sub·sp/zones 四项）；AC-M3-5 新图产物+冒烟；AC-M3-6 ladder 单调+roster 50%；AC-M3-7 门禁 12 任务日志全覆盖+测试数链无回落；NFR-M3-1 依赖面；`origin/main..HEAD` JS 树零改动；D-T38-1/D-T39-5 定案 vs 实现无漂移。
+- P2 闭环见 Evidence TR-40.3；无遗留。
 
 ---
 

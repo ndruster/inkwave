@@ -760,3 +760,33 @@ SubSystem 平移（subs.js 693 行，非 kit 10 key + splat bomb 在 weapons.js 
 - **D-T39-6 matchbuild `a.sub` 接线**：roster `sub` 此前未接入 actor（TR-39.1③ 真实缺口）——按 JS actor.js L38 falsy 链 `r.sub → weapon default → Bomb` 补齐（`from_id_str` 未知/空串→None，与 JS `SUBS[sub]?` 一致）；special 侧 L40 既有路径复核一致。
 - **D-T39-7 nettest 1a/1b 重试**：create/join 对称重试（≤3 次 × 5s，Error 态经 settle 释放可重发，测试缝专用零 sim 行为改动）；net-smoke ⑤「无 err」只计最后一条 retry 行之后的 err 线（重试吸收的连接失败不计）。
 - **D-T39-8 评审修复**：APPROVE，0 P0/0 P1/6 P2 全闭环——P2-2 D 区 zone 终局四项对比实现；P2-3 err 过滤；P2-4 match_.rs 锚 L152-155→L151（weapons.js 实读）；P2-1/6 spec 措辞（cycle 序/MODE 静默吞/七键/非法 weapon 保留原值/probe 插位）；P2-5 复核清单（本条 D-T39-1）。
+
+## Task 40 实施设计 — M3 收尾：门禁、台账、文档与总评审（AC-M3-7）
+
+### §0 范围（tasks.md Task 40 原文）
+全量门禁矩阵（M2 Task 27 口径 = 九段模板）；SYNC_LEDGER/PORT_MAP 状态更新 + M3 完成核对小节；rust/README「武器与 Zone Control（M3）」章节 + 联网章节跨端开黑更新；REVIEW_CHECKLIST 追加 M3 复核条目（跨端真机开黑已由 Task 39 落、新图视觉、mitts leap 手感）；独立审查 agent 总评审 M3（Task 28-39）产出并闭环。完成后提交 M3 里程碑并 push origin/main（tasks.md Notes 明示，remote=git@github-ndruster:ndruster/inkwave）。
+
+### §1 台账与文档（批委派）
+- `rust/SYNC_LEDGER.md`：现停留在 M2——补 M3 行（武器 12/副 15/特殊 19、zones 模式、saltpan/crossmarket、bot 三档、loadout UI），逐行对照 PORT_MAP 与 tasks.md Completion Evidence，禁虚报（跨端完整局标「沙箱降级+复核清单」）。
+- `rust/PORT_MAP.md`：M3 已更新行复核（weapons/subs/specials/zones/maps/session 行），遗漏行补齐；「仓库其他部分」表若含 tools/verify 状态则同步。
+- `rust/README.md`：新增「武器与 Zone Control（M3）」章节（12+15+19 清单、zones 玩法口径、tuning 管线、无头测试命令）；§3 联网章节更新跨端开黑（net-smoke scenario A-D 命令、loadout 缝参数 `netweapon/netsub/netspecial/netmode`、REVIEW_CHECKLIST 指引）；§2/门禁速查数字更新（553 passed）。
+- 根 `README.md`：如含 M2 状态描述则同步一行（实读定夺）。
+
+### §2 TR-40.1 门禁矩阵
+九段模板（t40gates.sh）全绿 + 测试总数 553>273 + `cargo tree -p inkwave_sim` 仅 glam/serde/serde_json + trunk release + headless 600 帧 + JS 树/`server/` 零改动（`git diff --stat HEAD -- src server tools docs` 空）+ 日志入库。
+
+### §3 TR-40.2 文档命令实执验证
+README 新增/更新章节内每条命令逐条实跑（提取管线、无头测试、net-smoke 语法自检、harness 演示命令），输出摘录进 Evidence。
+
+### §4 TR-40.3 总评审
+独立只读 agent：AC-M3-1..7 逐条对账（证据=测试名/日志/dump），PORT_MAP/SYNC_LEDGER/README 声明与代码实况一致性抽查（防虚报），Blocker/Major 当场闭环、P2 修复或记录。
+
+### §5 收尾
+tasks.md Task 40 勾选 + Evidence + Review 附录；spec §8 定案 D-T40-x；M3 里程碑 commit（单行英文）+ push origin/main。
+
+### §8 定案（Task 40，收尾回填）
+- **D-T40-1 trunk 假绿断言**：门禁脚本层 `TRUNK_EXIT=0` 不足以判定 trunk 段成功——沙箱 OOM 下 wasm-bindgen 被 SIGKILL 而 trunk 仍 exit 0。Task 40 捕获并独立重试至真绿（第 6 次），复验段入日志 `GATES_DONE_RERIFIED`；M4 起门禁模板应加 `! grep 'signal: 9'` 断言。
+- **D-T40-2 沙箱内存边界**：本 workspace 沙箱 avail ~4.0GB、wasm-bindgen 峰值 ~3.9GB——trunk release 为贴边操作，间歇 OOM 属环境非代码；用户机器无此约束（REVIEW_CHECKLIST 已注记）。
+- **D-T40-3 run-all.sh 全量覆盖**：提取一键脚本扩至 tuning + tidewater/saltpan/crossmarket 四产物（两连跑逐字节一致实证，唯一变量 `source.commit` 戳）；README §5 同步。
+- **D-T40-4 总评审定案**：M3（Task 28-39）APPROVE 0B/0M/3P2 全闭环；P2-1 以新增 `['bm']/['bc']` 显式容忍测试收口（workspace 554）；P2-2 ladder 日志去重至 1 份；P2-3 task28 日志尾标缺失为格式沿革不修。
+- **D-T40-5 M3 完成口径**：AC-M3-1/2/3/5/6/7 沙箱全绿；AC-M3-4 按 Pass Condition 降级条款收口（headless 证据 + 用户机器复核清单）；kit/boss/视觉音频顺延项维持 Non-Goals 原状。

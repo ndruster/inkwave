@@ -1,7 +1,7 @@
 # JS → Rust 模块对照表（PORT MAP）
 
 上游 JavaScript 模块与 Rust 工作区模块的对应关系，供上游同步时快速定位。
-状态：`M1`（M1 移植）· `M2 done`（M2 移植）· `M2+`（后续里程碑）· `skip`（Rust 侧不适用）。
+状态：`M1`（M1 移植）· `M2 done`（M2 移植）· `M3 Task n`（M3 移植，见 M3 完成核对）· `M2+`（未移植，顺延 M4）· `skip`（Rust 侧不适用）。
 
 ## 技术栈基线
 
@@ -21,6 +21,10 @@ Task 9–15 已闭环，上表所有标 `M1` 的行均已落地：sim 侧（物�
 
 Task 17–26 已闭环：联网链路全栈落地——codec（逐字节金标准）、双端 transport（native tungstenite 线程 / wasm web-sys）、NetSession 状态机、权威切分与 host 职责、播放层（per-sender 时钟 + Hermite + correction）、事件时间线重放、极简大厅 UI、Rust↔Rust 端到端完整局、浏览器联网冒烟与 JS↔Rust 跨端握手。上表标 `M2 done` 的行均已落地；`server/` 与 JS 树零改动（门禁实核）。M2 未做的行（zones、sub/special/kit 武器、showcase 大厅、小地图、完整角色绑定、后处理链、boss 等）维持 `M2+`，顺延 M3+。需真实 GPU/桌面环境复核的联网条目登记于 `.trae/specs/rust-bevy-port-m2/REVIEW_CHECKLIST.md`。
 
+## M3 完成核对（Task 40）
+
+Task 28–39 已闭环：内容与模式侧全量落地——tuning 全量提取（Task 28，schema v2：WEAPONS 12/SUBS 15/SPECIALS 19/ZONES/DIFFICULTY，锚定单测锁值）；12 主武器全部 wired（Tasks 29–33，net tick 槽 `ch`/`lock`/`ks` 与 `['k']` ghost 语义对齐 JS packer）；15 副 + 设备网络语义 `'dh'`/`['b']`（Task 34）；19 特殊 + `sp`/`spx`/`spst` 实值化（Task 35）；Zone Control 模式（Task 36：规则/`['z']` 8 事件广播/session 放开 zones、boss 仍拒；Task 37：zones 多边形合并与 onlyIn/notIn 按模式过滤）；saltpan/crossmarket 新图（Task 37，提取器泛化为 stage CLI，三图 stable-json 逐字节）；bot normal/hard 档位 + 逐 kind 武器/副/特殊使用 + zone tactic（Task 38）；大厅 loadout UI 与跨端开黑接缝（Task 39；**跨端完整局 scenario C/D 沙箱 DEGRADED，首次真实执行登记于 `.trae/specs/rust-bevy-port-m3/REVIEW_CHECKLIST.md`**）。上表标 M3 的行均已落地；`server/` 与 JS 树零改动、`cargo tree -p inkwave_sim` 依赖面不变（门禁实核，workspace 553 passed，日志 `rust/tools/verify/logs/task39-gates-20261103T073400Z.log`）。M3 未做的行（showcase 大厅、小地图、完整角色绑定、后处理链、boss、props/murals 装饰、flood 呈现层、threat AI 等）顺延 M4，逐项范围见各行"移植备注"。
+
 ## 质量档位
 
 M1 渲染为**固定简化档**，唯一运行时可调项：
@@ -35,16 +39,16 @@ M1 渲染为**固定简化档**，唯一运行时可调项：
 
 | JS 模块 | Rust 目标 | 状态 | 移植备注 |
 |---|---|---|---|
-| `src/config.js`（PLAYER/WEAPONS/MATCH/SUBS/...） | `inkwave_sim::tuning` + `assets/tuning.json` | M1 | 仅提取 M1 所需字段；其余武器随里程碑扩充 |
+| `src/config.js`（PLAYER/WEAPONS/MATCH/SUBS/...） | `inkwave_sim::tuning` + `assets/tuning.json` | M1/M3 Task 28 | M1 仅提取所需字段；Task 28 全量提取 schema v2：WEAPONS 12（按 `WEAPON_ORDER` 投影，retired dualies/slosher/splatling 不入产物）/SUBS 15/SPECIALS 19/ZONES 17 字段/DIFFICULTY 三档/weaponRange 预计算表/TEAM_PALETTES，锚定单测逐值锁 config.js 行号 |
 | `src/game/physics.js` | `inkwave_sim::physics` | M1 | 地面探测/胶囊 sweep/推出 |
 | `src/game/actor.js` | `inkwave_sim::actor` | M1/Task 33 | 角色状态机；移动常量逐一对齐 PLAYER；Task 33 扩展 `Form::Cling/Hang` 贴墙态 + `KitArmor` 每帧快照（mitts guard 弧/leap 甲，JS `damageTaken` L883-903）；偏差声明：`busy()` 未接 squid dive（L282）/idle refill（L358）——`Actor::step` 无 runner 句柄，12 武器共性，留 follow-up |
 | `src/game/player.js` | `inkwave` crate 输入映射 + actor 驱动 | M1 | 键盘鼠标；手柄 M2+ |
-| `src/game/weapons.js`（WeaponRunner 分发 + Spritzer 分支） | `inkwave_sim::weapon` | M1/Tasks 29–32 | kind 枚举/分发骨架与弹丸泛化（Task 29）；twins/blaster/brolly 接线完成（Task 30，brolly 行为在 `kits/brolly.js`→`weapon/brolly.rs`，含伞挡弹/发射伞/合并一击）；charger hitscan+蓄力、spinner burst 流、bucket flick windup+抛洒弧 volley 接线完成（Task 31，含 `['ev']` charge/len、F.charging/F.flick、volley 穿透/belowFalloff）；roller 滚动带墨+flick 抛墨、brush 拖墨细线+侧扫泼溅接线完成，blade kit 行为在 `kits/blade.js`→`weapon/blade.rs`（Task 32，tap 新月/重击波/近战弧/ghost 波经 `SimEvent::Kit`→`TickEvent::Kit` 闭环）；bow/mitts kit 行为在 `kits/bow.js`→`weapon/bow.rs`、`kits/mitts.js`→`weapon/mitts.rs`（Task 33，12 把主武器全部 wired，net-harness Task 30 bot-kind shim 已移除） |
+| `src/game/weapons.js`（WeaponRunner 分发 + Spritzer 分支） | `inkwave_sim::weapon` | M1/Tasks 29–33 | kind 枚举/分发骨架与弹丸泛化（Task 29）；twins/blaster/brolly 接线完成（Task 30，brolly 行为在 `kits/brolly.js`→`weapon/brolly.rs`，含伞挡弹/发射伞/合并一击）；charger hitscan+蓄力、spinner burst 流、bucket flick windup+抛洒弧 volley 接线完成（Task 31，含 `['ev']` charge/len、F.charging/F.flick、volley 穿透/belowFalloff）；roller 滚动带墨+flick 抛墨、brush 拖墨细线+侧扫泼溅接线完成，blade kit 行为在 `kits/blade.js`→`weapon/blade.rs`（Task 32，tap 新月/重击波/近战弧/ghost 波经 `SimEvent::Kit`→`TickEvent::Kit` 闭环）；bow/mitts kit 行为在 `kits/bow.js`→`weapon/bow.rs`、`kits/mitts.js`→`weapon/mitts.rs`（Task 33，12 把主武器全部 wired，net-harness Task 30 bot-kind shim 已移除） |
 | `src/game/match.js` | `inkwave_sim::match` | M1/M3 Task 36 | intro/active/end；涂地计分；Task 36 落 `mode`（Turf/Zones）分支：zones 时长/时钟停加时/`timeUp` host 判定/`endZones`/`_zoneTurf`/zones 结算形态；boss 分支仍 M2+ |
 | `src/game/zones.js` | `inkwave_sim::match::zones` | M3 Task 36 | Zone Control 规则全量平移（zoneCells/insidePoly/flood 联动/占领-争夺-中立/penalty 公式/轮换/终局中心锁定/加时四出口/`state()`）；`['z']` 8 事件录制+重放（host 权威/guest 预测计数）；session 放开 zones 模式（boss 仍拒）；tidewater zones 经 `extract-layout.mjs` 合并 `ZONE_DEFS` 入 `assets/maps/tidewater.json`；flood 呈现层（atlas 带绘/ripple/ZoneMarks）顺延 M4 |
 | `src/game/bots.js` | `inkwave_sim::bot`（+`bot::zones` ZonePlan） | M1/M3 Task 38 | Task 38 全量：档位接线（`DifficultySet::get` ≡ L276 `DIFFICULTY[d]||normal`，cfg.difficulty 经 `bot_difficulty` 入脑）；12 kind 逐 kind fight/paint/refill/tail（lead/pref/strafe 门/MELEE 冲脸/twins planted/开火分发/charge keep/游泳/dodge/sweep/scan reach/pitch 梯/spinner-charger 节奏）；家族表 MELEE/CHARGES/LONG/PAINTERS/THROWN 含 8 条 kits 运行时补丁（blade/mitts∈MELEE、bow∈CHARGES/LONG、waddle/torpedo/shaker/boomerang∈THROWN）；`_fightSub`/`_paintSub`（L950-983）+ SUB_KITS 五件 bot 钩子 + bombCd 两帧释放链；`_wantSpecial`/`_specialCtl`（L831-948，cheer/stamp 否决/九 kind 驱动）；ZonePlan（L68-268）+ zone 手臂（`_zoneSync/_zoneEngage/_zoneHoldGround/_pickZoneGoal/_zoneAim/_zoneSpecial/_zoneBombAim`、strike 热点 retarget）。顺延：threat AI（L1288+/L1883-2050）与 boss 段、`_zoneJump`（无 superJump）、climb 边（M1 偏差）、`_shieldFight`/`_canopyCtl`、mitts leap/wall-cling、blade 深战术、stamp threat-steer（L460-470） |
 | `src/game/nav.js` | `inkwave_sim::nav` | M1 | 顶面连通航点图的简化实现 |
-| `src/game/specials.js` / `subs.js` / `kits/*` | `inkwave_sim::sub`（+`sub::{shaker,waddle,torpedo,tracer,boomerang}`）/ `inkwave_sim::special`（+`special::*`）/ `weapon::kit` | M2/Task 34 · M3 Task 35 | 15 副 + 19 特殊 + kit 武器（`subs.js` 已随 Task 34 落 `sub.rs`（SubSystem 核心 + 10 非 kit 设备 + `'dh'`/`['b']`/`['k','subs']` 网络语义）与 `sub/*.rs` 五 kit sub；`kits/brolly.js` 已随 Task 30 落 `weapon/brolly.rs`，`kits/blade.js` 已随 Task 32 落 `weapon/blade.rs`，`kits/bow.js`/`kits/mitts.js` 已随 Task 33 落 `weapon/bow.rs`/`weapon/mitts.rs`；`specials.js` 已随 Task 35 落 `special.rs` + `special/*.rs`（19 特殊全 wired：充能 gauge 与消耗、`sp`/`spx`/`spst` tick 槽实值化、`['ev']` special:use/slam 事件、ghost/replication 对账、`special/world.rs` 世界侧交互）；Task 38 另落 `MAIN_KITS[k].bot` 钩子（brolly/blade/bow/mitts 的 fight/paint/paintPitch/stayIn/targetBias → `bot.rs`；mitts tactics 浅段，深段裁剪见 PORT_MAP bots.js 行）与 `SUB_KITS[k].bot` 五件 |
+| `src/game/specials.js` / `subs.js` / `kits/*` | `inkwave_sim::sub`（+`sub::{shaker,waddle,torpedo,tracer,boomerang}`）/ `inkwave_sim::special`（+`special::*`）/ `weapon::kit` | M3 Tasks 34–35 | 15 副 + 19 特殊 + kit 武器（`subs.js` 已随 Task 34 落 `sub.rs`（SubSystem 核心 + 10 非 kit 设备 + `'dh'`/`['b']`/`['k','subs']` 网络语义）与 `sub/*.rs` 五 kit sub；`kits/brolly.js` 已随 Task 30 落 `weapon/brolly.rs`，`kits/blade.js` 已随 Task 32 落 `weapon/blade.rs`，`kits/bow.js`/`kits/mitts.js` 已随 Task 33 落 `weapon/bow.rs`/`weapon/mitts.rs`；`specials.js` 已随 Task 35 落 `special.rs` + `special/*.rs`（19 特殊全 wired：充能 gauge 与消耗、`sp`/`spx`/`spst` tick 槽实值化、`['ev']` special:use/slam 事件、ghost/replication 对账、`special/world.rs` 世界侧交互）；Task 38 另落 `MAIN_KITS[k].bot` 钩子（brolly/blade/bow/mitts 的 fight/paint/paintPitch/stayIn/targetBias → `bot.rs`；mitts tactics 浅段，深段裁剪见 PORT_MAP bots.js 行）与 `SUB_KITS[k].bot` 五件 |
 | `src/game/cameraRig.js` | `inkwave::camera` | M1 | 简化第三人称；tilt-shift diorama M2+ |
 | `src/game/minimap.js` | `inkwave::ui::minimap` | M2+ | M1 HUD 只显百分比 |
 | `src/game/character.js`（4062 行，弹簧姿态系统） | `inkwave::render::character` | M1（占位） | M1 体块占位；完整过程化绑定 M2+ |
@@ -99,8 +103,8 @@ M1 渲染为**固定简化档**，唯一运行时可调项：
 | `tools/serve.py` | `trunk serve`（wasm）/ 直接运行（native） | skip |
 | `tools/botlab/*` | `inkwave --headless` autopilot + JSON 输出 | M1（等价最小版） |
 | `tools/measure-handling.mjs` | sim 无头测量（TR-5.4 对照口径） | M1 |
-| `tools/net-test.mjs` / `tools/smoke.sh` | Rust 等价物 `rust/tools/verify/net-smoke.mjs` / `wasm-smoke.mjs` | M2 done（JS 基线工具只读未动） |
+| `tools/net-test.mjs` / `tools/smoke.sh` | Rust 等价物 `rust/tools/verify/net-smoke.mjs` / `wasm-smoke.mjs` | M2 done · M3 Task 39（net-smoke 扩 scenario C/D 跨端完整局；JS 基线工具只读未动） |
 | `build/*`、`tools/build-dist.py`、`tools/release-pages.sh` | cargo/trunk/未来发布脚本替代 | skip/M2+ |
-| （Rust 新增）`rust/tools/net-fixtures/gen.mjs` | 金标准捕获：node 侧 import 真实 `src/net/` packer → `rust/assets/net-fixtures.json` | M2 done（Task 17） |
+| （Rust 新增）`rust/tools/net-fixtures/gen.mjs` | 金标准捕获：node 侧 import 真实 `src/net/` packer → `rust/assets/net-fixtures.json` | M2 done（Task 17）· M3 Task 36（+ `zone_seq` 257 条逐字节稳定） |
 | （Rust 新增）`rust/tools/relay-shim/` | 仅测试用原生 relay（复刻 `server/` 房间语义：fan-out/选举/lock/ping/sweep；**非部署替代**） | M2 done（Task 19） |
-| （Rust 新增）`rust/tools/net-harness/` | 网络集成测试 harness（FakeRelay + 虚拟时钟；`tests/acceptance.rs`、`tests/e2e_match.rs` 完整局） | M2 done（Task 19/25） |
+| （Rust 新增）`rust/tools/net-harness/` | 网络集成测试 harness（FakeRelay + 虚拟时钟；`tests/acceptance.rs`、`tests/e2e_match.rs` 完整局） | M2 done（Task 19/25）· M3 Tasks 36–39（zones/新图/loadout/ladder e2e scenario） |

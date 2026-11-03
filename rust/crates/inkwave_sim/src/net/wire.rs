@@ -1440,6 +1440,21 @@ mod tests {
     }
 
     #[test]
+    fn boss_and_unknown_record_tags_decode_to_none_without_panic() {
+        // M3 Non-Goals decode tolerance: boss messages `['bm']`/`['bc']`
+        // (netmatch.js L494/L496) and any other unknown tag must decode to
+        // `None` via `decode_record`'s `_ => None` arm (L677) without
+        // panicking — Rust ignores what it does not implement.
+        for s in [r#"["bm",1,2,3]"#, r#"["bc","x",0]"#, r#"["nosuchtag",1,2]"#] {
+            let a = parse_json(s).unwrap();
+            assert!(
+                decode_record(a.as_array().unwrap()).is_none(),
+                "tolerance failed for {s}"
+            );
+        }
+    }
+
+    #[test]
     fn timed_event_prefixes_the_timestamp() {
         // `_rec` puts r3(now()) first; encode_timed_event must splice it in.
         let te = TimedEvent {
