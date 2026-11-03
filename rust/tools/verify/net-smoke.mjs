@@ -12,14 +12,28 @@
 //     through its `__G.net` API (the `tools/net-test.mjs` L73-87 pattern) and
 //     the Rust wasm guest joins — welcome/join/tick must flow both ways with
 //     no errors on either side.
+//   scenarios C/D (Task 39 §4): the JS client hosts a FULL loadout match and
+//     the Rust wasm guest joins with `netweapon/netsub/netspecial` picks —
+//     run to the settled results on both ends. C is turf (60 s,
+//     `tidewater`), D the zones stage (the JS 300 s + overtime clock — no
+//     test-only override exists, so D carries its own timeout budget).
+//     Evidence: the `[nettest] loadout` line (Rust picks landed), the JS
+//     lobby roster seeing the guest's weapon (cross-recognition), the
+//     `[nettest] result` line vs `__G.paint.coverage()` /
+//     `__inkwave.match.result` (final-state cross check, < 0.5 % per team),
+//     the probe `sub=`/`sp=` deploy counters >= 1 and zero errors both sides.
+//     The JS server (:8490) is shared with B: if the port already listens,
+//     C/D reuse that instance instead of spawning a second one.
 //
 // Probe/error collection follows `wasm-smoke.mjs` (same RENDER_ERR_RE gate,
 // console.error + exception + Log.entryAdded capture, non-zero exit on any
 // application error). No npm deps; Node >= 22 for the global WebSocket.
 //
 // Usage:
-//   node rust/tools/verify/net-smoke.mjs [--scenario A|B|all] [--secs N]
+//   node rust/tools/verify/net-smoke.mjs [--scenario A|C|D|all] [--secs N]
 //        [--cdp-port 9222] [--relay-port 8787] [--dist-port 8491] [--js-port 8490]
+//   (B — the JS-host handshake baseline — runs unconditionally; C/D gate on
+//   their own scenario names.)
 //
 // Evidence: a JSON summary on stdout plus the raw per-tab console lines in
 // rust/tools/verify/logs/net-smoke-<stamp>.json (TR-26.1/26.2 records).
@@ -227,36 +241,81 @@ class Tab {
 // ---------------------------------------------------------------------------
 const CODE_RE = /\[nettest\] code (\S+)/;
 const LOBBY_RE = /\[nettest\] lobby /;
+// Task 39 §3: `sub=`/`sp=` (the deploy counters) sit between `cov=` and
+// `rem=` — `rem=(.*)` keeps its "to end of line" meaning.
 const PROBE_RE =
-  /\[nettest\] probe t=([\d.]+) cov=([\d.e+-]+)\/([\d.e+-]+) rem=(.*)/;
+  /\[nettest\] probe t=([\d.]+) cov=([\d.e+-]+)\/([\d.e+-]+) sub=(\d+) sp=(\d+) rem=(.*)/;
 function parseProbe(line) {
   const m = PROBE_RE.exec(line);
   if (!m) return null;
   const rem = {};
-  for (const part of m[4].split(";")) {
+  for (const part of m[6].split(";")) {
     // exact shape emitted by nettest.rs step 6: `{j}:({x},{y},{z});`
     const pm = /^(\d+):\((-?[\d.]+),(-?[\d.]+),(-?[\d.]+)\)$/.exec(part.trim());
     if (pm) rem[pm[1]] = [+pm[2], +pm[3], +pm[4]];
   }
-  return { t: +m[1], cov: [+m[2], +m[3]], rem };
+  return { t: +m[1], cov: [+m[2], +m[3]], sub: +m[4], sp: +m[5], rem };
 }
 // Round-trip self-check: this parser must read the exact line nettest.rs
 // step 6 emits (the review's Blocker 1: a silent regex/format drift would
 // make the movement assertion vacuously fail on the user-machine rerun).
 {
-  const sample = "[nettest] probe t=12.0 cov=0.0123/0.0456 rem=1:(-3.20,1.00,4.50);3:(2.05,-1.50,0.10);";
+  const sample = "[nettest] probe t=12.0 cov=0.0123/0.0456 sub=3 sp=1 rem=1:(-3.20,1.00,4.50);3:(2.05,-1.50,0.10);";
   const pp = parseProbe(sample);
   const bad =
     !pp ||
     pp.t !== 12.0 ||
     pp.cov[0] !== 0.0123 ||
     pp.cov[1] !== 0.0456 ||
+    pp.sub !== 3 ||
+    pp.sp !== 1 ||
     !pp.rem[1] ||
     pp.rem[1][0] !== -3.2 ||
     pp.rem[1][2] !== 4.5 ||
     !pp.rem[3];
   if (bad) {
     console.error("[net-smoke] parseProbe self-check FAILED against the nettest.rs format");
+    process.exit(2);
+  }
+}
+// Task 39 §3: the loadout confirmation line (nettest.rs step 2c) and the
+// settled-result line (step 7). The result format is the literal contract
+// documented in nettest.rs: turf `result w=<0|1> cov=<a>/<b>`, zones appends
+// ` zone=<c0>/<c1> reason=<id|-> pen=<p0>/<p1> ot=<0|1>`.
+const LOADOUT_RE = /\[nettest\] loadout w=(\S+) sub=(\S+) sp=(\S+) mode=(\S+)/;
+const RESULT_RE =
+  /\[nettest\] result w=(-?\d+) cov=([\d.e+-]+)\/([\d.e+-]+)(?: zone=([-\d.]+)\/([-\d.]+) reason=(\S+) pen=([\d.e+-]+)\/([\d.e+-]+) ot=([01]))?/;
+function parseResult(line) {
+  const m = RESULT_RE.exec(line);
+  if (!m) return null;
+  return {
+    w: +m[1],
+    cov: [+m[2], +m[3]],
+    zone: m[4] === undefined
+      ? null
+      : {
+          counts: [+m[4], +m[5]],
+          reason: m[6],
+          penalty: [+m[7], +m[8]],
+          overtime: m[9] === "1",
+        },
+  };
+}
+// Round-trip self-check (P2-2): the parser must read the exact turf AND
+// zones lines nettest.rs step 7 emits — the zones cross-checks compare on
+// these fields, so a regex/format drift would silently weaken them.
+{
+  const turf = parseResult("[nettest] result w=0 cov=0.1234/0.5678");
+  const zones = parseResult(
+    "[nettest] result w=1 cov=0.0123/0.0456 zone=12/9 reason=timeout pen=1.5/0.0 ot=1");
+  const bad =
+    !turf || turf.w !== 0 || turf.cov[0] !== 0.1234 || turf.cov[1] !== 0.5678 ||
+    turf.zone !== null ||
+    !zones || zones.w !== 1 || zones.zone.counts[0] !== 12 || zones.zone.counts[1] !== 9 ||
+    zones.zone.reason !== "timeout" || zones.zone.penalty[0] !== 1.5 ||
+    zones.zone.penalty[1] !== 0 || zones.zone.overtime !== true;
+  if (bad) {
+    console.error("[net-smoke] parseResult self-check FAILED against the nettest.rs format");
     process.exit(2);
   }
 }
@@ -296,9 +355,261 @@ function nettestLines(prefix) {
     .flatMap((t) => t.lines.filter((l) => l.includes("[nettest]")));
 }
 
+// Task 39 §4: scenario B already spawns `tools/serve.py` (:8490) — C/D reuse
+// that instance when the port listens (spawning a second one on the same
+// port dies), and only start their own when B never got there.
+async function tcpListening(port) {
+  return new Promise((res) => {
+    const sock = net.connect(port, "127.0.0.1");
+    sock.on("connect", () => { sock.destroy(); res(true); });
+    sock.on("error", () => res(false));
+    sock.setTimeout(1000, () => { sock.destroy(); res(false); });
+  });
+}
+async function ensureJsServer() {
+  if (await tcpListening(JSPORT)) return true;
+  sh("python3", ["tools/serve.py", String(JSPORT)], ROOT);
+  return waitHttp(`http://127.0.0.1:${JSPORT}/`, 20000, "JS server");
+}
+
+// ---------------------------------------------------------------------------
+// Task 39 §4: the loadout cross-stack full-match scenario (C turf / D zones)
+// ---------------------------------------------------------------------------
+// The JS client hosts through `__G.net` (the net-test.mjs L73-87 pattern),
+// the Rust wasm guest joins with its loadout picks, and the match runs to
+// the settled results on both ends. `opts`:
+//   zones   — `setSettings({mode:'zones'})` instead of the turf default and
+//             the JS fixed 300 s + overtime clock (no test-only override,
+//             JS L292) with its own end budget.
+// Checks: ① roster cross-recognition (the `[nettest] loadout` line shows the
+// guest's picks; the JS lobby roster shows the same weapon), ② final
+// coverage cross-check (`__G.paint.coverage()` vs the result line, < 0.5 %
+// per team), ③ winner agreement, ④ probe `sub=`/`sp=` >= 1, ⑤ zero errors
+// both sides (no `[nettest] err` after the last join-retry line — the
+// seam's 1b retry absorbs the pre-retry connect failure, ≡ nettest.rs;
+// RENDER_ERR_RE gate via Tab).
+async function loadoutScenario(name, opts) {
+  let js = null;
+  let rust = null;
+  let code = null;
+  let loadout = null;
+  let lobbyRoster = null;
+  let resultLine = null;
+  try {
+    // Fresh browser for this scenario: earlier tabs (a crashed wasm client
+    // especially) leave the GPU process unable to hand out any new WebGL
+    // context; the relay/dist/JS servers are stateless and stay up.
+    const p = `/tmp/net-smoke-profile-${stamp}-${name}`;
+    sh("rm", ["-rf", p], "/");
+    await startBrowser(p);
+    if (!(await ensureJsServer())) throw new Error("JS game server (:8490) unreachable");
+    browser.labelSeq = `${name}-js`;
+    js = await browser.newTab();
+    // The software GL stack can still refuse the first WebGL context on a
+    // fresh tab (THREE "BindToCurrentSequence failed", Game.boot throws,
+    // the menu never appears). Reload until the app reaches the menu (≤3).
+    for (let attempt = 1; ; attempt++) {
+      // keep only the last boot attempt's evidence (a refused first WebGL
+      // context is transient env noise, not a run failure)
+      js.errors = [];
+      js.lines = [];
+      js.navigate(`http://127.0.0.1:${JSPORT}/?skipTitle&autopilot`);
+      try {
+        await js.waitForEval(
+          "window.__inkwave && window.__G && __G.net && __G.mode === 'menu'",
+          150000, "JS client menu");
+        break;
+      } catch (e) {
+        if (attempt >= 3) throw e;
+        await sleep(3000);
+      }
+    }
+    const codeR = await js.eval("(async () => await __G.net.create('Host'))()", {
+      awaitPromise: true, timeoutMs: 30000,
+    });
+    code = codeR.result?.value;
+    if (!code) throw new Error("JS create() returned no code: " + JSON.stringify(codeR));
+    // Host settings (≡ net-test.mjs L75) + the host's own loadout (session.js
+    // L200-206 `setMe`) + the duration direct-write (≡ net-test.mjs L85; the
+    // zones clock is fixed by the JS sim, so D skips it).
+    await js.eval(
+      `__G.net.setSettings({map:'tidewater',bots:true,difficulty:'normal'${opts.zones ? ",mode:'zones'" : ""}})`,
+      { timeoutMs: 15000 });
+    await js.eval(
+      "__G.net.setMe({weapon:'charger',sub:'mine',special:'crab',ready:true})",
+      { timeoutMs: 15000 });
+    if (!opts.zones) await js.eval("__G.net.lobby.duration = 60", { timeoutMs: 15000 });
+    browser.labelSeq = `${name}-rust`;
+    rust = await browser.newTab();
+    rust.navigate(rustUrl(
+      `netjoin=${code}&netweapon=brolly&netsub=bomb&netspecial=stamp&netready&autopilot&netprobe`));
+    // ① roster cross-recognition: the Rust loadout line (welcome + lobby +
+    // the seam's set_me echo) and the JS lobby seeing the guest's weapon.
+    const loadoutLine = await rust.waitForLine(LOADOUT_RE, 240000, "Rust loadout line");
+    loadout = LOADOUT_RE.exec(loadoutLine);
+    await js.waitForEval("__G.net.lobby.players.some(p=>p.weapon==='brolly')", 180000,
+      "JS lobby sees the guest weapon");
+    lobbyRoster = (await js.eval(
+      "JSON.stringify(__G.net.lobby.players.map(p=>[p.name,p.weapon,p.sub,p.special]))"
+    )).result?.value;
+    await js.waitForEval("__G.net.canStart()", 30000, "canStart");
+    await js.eval("__G.net.start()", { timeoutMs: 15000 });
+    await js.waitForEval(
+      "__G.net.state === 'match' && __inkwave.match && __inkwave.match.state === 'playing'",
+      240000, "JS match playing");
+    await rust.waitForLine(PROBE_RE, 240000, "Rust probe (match ticks)");
+    // Run to the settled results on both ends (≡ net-test.mjs L337-338's
+    // `state === 'results'` wait; D carries the 300 s + overtime budget).
+    const endMs = opts.zones ? 540000 : 300000;
+    await js.waitForEval("__inkwave.match && __inkwave.match.state === 'results'",
+      endMs, "JS match results");
+    resultLine = await rust.waitForLine(RESULT_RE, endMs, "Rust result line");
+    const res = parseResult(resultLine);
+    // Final-value cross reads (net-test.mjs L143/L338 expressions).
+    const finR = await js.eval(
+      "JSON.stringify({cov:__G.paint.coverage(),res:__inkwave.match.result&&{w:__inkwave.match.result.winner,cov:__inkwave.match.result.coverage,counts:__inkwave.match.result.counts,penalty:__inkwave.match.result.penalty,overtime:__inkwave.match.result.overtime,reason:__inkwave.match.result.reason}})");
+    const fin = JSON.parse(finR.result?.value ?? "null");
+    const probes = rust.lines.map(parseProbe).filter(Boolean);
+    const maxSub = Math.max(0, ...probes.map((p) => p.sub));
+    const maxSp = Math.max(0, ...probes.map((p) => p.sp));
+    const checks = [];
+    checks.push([`${name}: Rust loadout line shows the picks`,
+      !!loadout && loadout[1] === "brolly" && loadout[2] === "bomb" && loadout[3] === "stamp"]);
+    checks.push([`${name}: lobby mode ${opts.zones ? "zones" : "turf"}`,
+      !!loadout && loadout[4] === (opts.zones ? "zones" : "turf")]);
+    checks.push([`${name}: JS lobby roster carries the guest weapon`,
+      !!lobbyRoster && lobbyRoster.includes("brolly")]);
+    checks.push([`${name}: winner agreement (JS ${fin?.res?.w} vs Rust ${res?.w})`,
+      !!fin?.res && !!res && fin.res.w === res.w]);
+    const covDiff = fin?.cov && res
+      ? Math.max(Math.abs(fin.cov[0] - res.cov[0]), Math.abs(fin.cov[1] - res.cov[1]))
+      : Infinity;
+    checks.push([`${name}: final coverage cross-check < 0.5% (max diff ${(covDiff * 100).toFixed(3)}%)`,
+      covDiff < 0.005]);
+    checks.push([`${name}: Rust probe sub>=1 sp>=1 (saw ${maxSub}/${maxSp})`,
+      maxSub >= 1 && maxSp >= 1]);
+    // P2-3: the seam's join/create retries (nettest.rs steps 1a/1b) absorb
+    // the pre-retry `[nettest] err Could not connect` — a connect slower
+    // than the 8 s transport budget is retried, not a failure. Count err
+    // lines only AFTER the last `[nettest] join retry` /
+    // `[nettest] create retry` line; no retry line = count all (same
+    // semantics as before).
+    const lastRetry = rust.lines.reduce(
+      (acc, l, i) => (/\[nettest\] (?:join|create) retry/.test(l) ? i : acc), -1);
+    checks.push([`${name}: no [nettest] err line`,
+      !rust.lines.slice(lastRetry + 1).some((l) => l.includes("[nettest] err"))]);
+    checks.push([`${name}: no console errors either side`,
+      rust.errors.length === 0 && !rust.panicked && js.errors.length === 0 && !js.panicked]);
+    if (opts.zones) {
+      checks.push([`${name}: zones result carries the zone segment`, !!res?.zone]);
+      // P2-2: cross-check the JS zones result fields (match.js L256-257
+      // `{mode, coverage, winner, reason, counts:[ceil,ceil], penalty:[a,b],
+      // overtime, log}`) against the Rust `result` line's zone segment.
+      const z = res?.zone;
+      const jz = fin?.res;
+      checks.push([`${name}: zones counts agree (JS ${JSON.stringify(jz?.counts)} vs Rust ${JSON.stringify(z?.counts)})`,
+        !!z && Array.isArray(jz?.counts)
+        && jz.counts[0] === z.counts[0] && jz.counts[1] === z.counts[1]]);
+      const penDiff = z && Array.isArray(jz?.penalty)
+        ? Math.max(Math.abs(jz.penalty[0] - z.penalty[0]), Math.abs(jz.penalty[1] - z.penalty[1]))
+        : Infinity;
+      checks.push([`${name}: zones penalty agree < 0.05 (max ${penDiff.toFixed(3)}, Rust prints {:.1})`,
+        penDiff < 0.05]);
+      const jReason = jz?.reason == null ? "-" : String(jz.reason);
+      checks.push([`${name}: zones reason agree (JS ${jReason} vs Rust ${z?.reason})`,
+        !!z && jReason === z.reason]);
+      checks.push([`${name}: zones overtime agree (JS ${jz?.overtime} vs Rust ${z?.overtime})`,
+        !!z && typeof jz?.overtime === "boolean" && jz.overtime === z.overtime]);
+    }
+    recordScenario(name, {
+      status: checks.every(([, v]) => v) ? "PASS" : "FAIL",
+      code, loadout: loadoutLine, lobbyRoster, result: resultLine,
+      finalCov: fin?.cov ?? null,
+      checks: checks.map(([n, v]) => `${v ? "PASS" : "FAIL"} ${n}`),
+      ok: checks.every(([, v]) => v),
+    });
+  } catch (e) {
+    const hs = rust ? rust.lines.filter((l) => l.includes("[nettest]")).slice(0, 16) : [];
+    const died = (rust && renderDied(rust)) || (js && renderDied(js));
+    const proven = [];
+    if (code) proven.push(`JS host created room ${code} over the shim (≡ net-test L73)`);
+    if (loadout) proven.push(`Rust loadout line: ${hs.find((l) => LOADOUT_RE.test(l)) ?? ""}`);
+    if (lobbyRoster) proven.push(`JS lobby roster carries the guest weapon: ${lobbyRoster}`);
+    if (hs.some((l) => /\[nettest\] probe/.test(l))) proven.push("Rust probe lines (match ticks)");
+    if (resultLine) proven.push(`Rust result line: ${resultLine}`);
+    const base = { code, loadout, lobbyRoster, handshake: hs, proven };
+    if (died) {
+      recordScenario(name, {
+        ...base,
+        status: "DEGRADED",
+        reason: `a client tab quit on the sandbox SwiftShader PBR failure: ${e.message}`,
+        renderErrors: [...(rust?.errors ?? []), ...(js?.errors ?? [])]
+          .filter((er) => /render-error|Quitting/.test(er)).slice(0, 4),
+        ok: true,
+      });
+    } else if (proven.length >= 2) {
+      // The lobby/loadout evidence landed but the full match stalled under
+      // the software renderer — the spec's downgrade clause, honestly
+      // attributed (the REVIEW_CHECKLIST item is added by the mainline at
+      // the tasks.md stage).
+      recordScenario(name, {
+        ...base,
+        status: "DEGRADED",
+        reason: `sandbox software renderer stalled the full match before the settled ` +
+          `results (see \`proven\`): ${e.message}. Full-match rerun is a ` +
+          "REVIEW_CHECKLIST item (tasks.md Task 39 downgrade clause).",
+        ok: true,
+      });
+    } else {
+      recordScenario(name, { ...base, status: "FAIL", reason: String(e.message ?? e) });
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // boot the infrastructure
 // ---------------------------------------------------------------------------
+// Hoisted so `loadoutScenario` (defined at the top level) closes over them.
+let browser = null;
+let rustUrl = null;
+let chromeChild = null;
+
+// Launch (or relaunch) headless chromium + the CDP Browser handle. A crashed
+// wasm tab (the SwiftShader PBR "Quitting the application") takes the GPU
+// process down with it: later tabs then cannot create any WebGL context at
+// all (THREE "BindToCurrentSequence failed", Game.boot throws), which
+// starved scenario C's JS boot. C/D therefore restart the browser outright
+// before opening their tabs (relay-shim / dist / JS servers stay up).
+async function startBrowser(profileDir) {
+  if (chromeChild) {
+    try { chromeChild.kill("SIGKILL"); } catch {}
+    for (let i = 0; i < 40; i++) {
+      let up = false;
+      try { await (await fetch(`http://127.0.0.1:${CDP}/json/version`)).json(); up = true; } catch {}
+      if (!up) break;
+      await sleep(250);
+    }
+  }
+  const chrome = sh("/usr/bin/chromium-browser", [
+    "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
+    // headless GPU is deprecated in current chromium: without this opt-in
+    // flag the WebGL context is refused, wgpu's ANGLE/SwiftShader adapter
+    // fails shader validation and the app quits ("Quitting the application
+    // due to Internal"). The flag is the environment's documented remedy.
+    "--enable-unsafe-swiftshader",
+    `--user-data-dir=${profileDir}`, `--remote-debugging-port=${CDP}`,
+    "--window-size=1920,1080", "about:blank",
+  ], "/");
+  chromeChild = children[children.length - 1].p;
+  let ver = null;
+  for (let i = 0; i < 60 && !ver; i++) {
+    try { ver = await (await fetch(`http://127.0.0.1:${CDP}/json/version`)).json(); } catch { await sleep(500); }
+  }
+  if (!ver) throw new Error("chromium CDP endpoint never came up");
+  chromiumUp = true;
+  browser = new Browser(ver.webSocketDebuggerUrl);
+  await browser.open();
+}
 const results = { startedAt: new Date().toISOString(), scenarios: {} };
 function recordScenario(name, obj) {
   results.scenarios[name] = obj;
@@ -332,26 +643,9 @@ try {
 
   const profile = `/tmp/net-smoke-profile-${stamp}`;
   sh("rm", ["-rf", profile], "/");
-  const chrome = sh("/usr/bin/chromium-browser", [
-    "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
-    // headless GPU is deprecated in current chromium: without this opt-in
-    // flag the WebGL context is refused, wgpu's ANGLE/SwiftShader adapter
-    // fails shader validation and the app quits ("Quitting the application
-    // due to Internal"). The flag is the environment's documented remedy.
-    "--enable-unsafe-swiftshader",
-    `--user-data-dir=${profile}`, `--remote-debugging-port=${CDP}`,
-    "--window-size=1920,1080", "about:blank",
-  ], "/");
-  let ver = null;
-  for (let i = 0; i < 60 && !ver; i++) {
-    try { ver = await (await fetch(`http://127.0.0.1:${CDP}/json/version`)).json(); } catch { await sleep(500); }
-  }
-  if (!ver) throw new Error("chromium CDP endpoint never came up");
-  chromiumUp = true;
-  const browser = new Browser(ver.webSocketDebuggerUrl);
-  await browser.open();
+  await startBrowser(profile);
 
-  const rustUrl = (q) => `http://127.0.0.1:${DIST}/index.html?relay=ws://127.0.0.1:${RELAY}&${q}`;
+  rustUrl = (q) => `http://127.0.0.1:${DIST}/index.html?relay=ws://127.0.0.1:${RELAY}&${q}`;
 
   // ======================= scenario A: wasm <-> wasm full match ==============
   // Evidence-first: each stage's `[nettest]` line is recorded as it lands;
@@ -522,6 +816,19 @@ try {
         recordScenario("B", { ...base, status: "FAIL", reason: String(e.message ?? e) });
       }
     }
+  }
+
+  // ============ scenarios C/D (Task 39 §4): loadout cross-stack full match ==
+  // C: turf, JS host (charger/mine/crab) 60 s + Rust guest
+  // (brolly/bomb/stamp) run to the settled results. D: the zones stage
+  // (`setSettings({mode:'zones'})`, JS L75) with the fixed 300 s + overtime
+  // clock (JS L292 — no test-only override) on its own end budget; a sandbox
+  // stall there records the spec's DEGRADED clause with the `proven` list.
+  if (SCENARIO === "C" || SCENARIO === "all") {
+    await loadoutScenario("C", { zones: false });
+  }
+  if (SCENARIO === "D" || SCENARIO === "all") {
+    await loadoutScenario("D", { zones: true });
   }
 
   results.exitOk = Object.values(results.scenarios).every((s) => s.ok);

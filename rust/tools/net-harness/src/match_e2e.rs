@@ -135,6 +135,16 @@ pub struct MatchOpts {
     /// [`build_side`]). Off by default so every pre-Task-38 scenario's
     /// numbers stay untouched.
     pub ladder: bool,
+    /// Task 39 §5-TR-39.1③: per-client loadout injections
+    /// `(weapon, sub, special)`, applied in the lobby phase through the same
+    /// `set_me` path the UI drives (a `None` sub/special slot = leave the
+    /// default). Empty (default) = no injection.
+    pub loadouts: Vec<(String, Option<String>, Option<String>)>,
+    /// Task 39: with `loadouts` set, one-shot press `sub` + `special` for
+    /// every client's local human at the 4 s mark (ink / gauge force-filled
+    /// first so the press lands — checks the wiring deploys, not the
+    /// balance; the behaviour itself is owned by the Task 31-33 tests).
+    pub press_loadout: bool,
 }
 
 impl Default for MatchOpts {
@@ -150,6 +160,8 @@ impl Default for MatchOpts {
             drop: None,
             stats: false,
             ladder: false,
+            loadouts: Vec::new(),
+            press_loadout: false,
         }
     }
 }
@@ -191,6 +203,21 @@ pub struct ClientView {
     pub adopted_host: bool,
 }
 
+/// Task 39 §5-TR-39.1③: the loadout wiring evidence for one client, read
+/// from its local match at settlement — the equipped weapon kind (`Match::
+/// kinds`, JS `WEAPONS`), the equipped sub / special ids (JS actor.js L38 /
+/// L40) and the deploy counters the nettest probe line reports (`sub_fired +
+/// bombs_thrown`, Σ `specials_used`).
+#[derive(Debug, Clone)]
+pub struct ClientLoadout {
+    pub client: usize,
+    pub kind: String,
+    pub sub: String,
+    pub special: String,
+    pub sub_fired: u32,
+    pub specials_used: u32,
+}
+
 /// The outcome of one `run_match`, assertable and printable (the CLI prints
 /// it; the tests assert on the same values — the `Report` convention).
 #[derive(Debug)]
@@ -205,6 +232,8 @@ pub struct MatchReport {
     pub dropped_actor_moved: Option<bool>,
     /// TR-38.1 ladder metrics (`Some` only when `opts.ladder`).
     pub ladder: Option<LadderStats>,
+    /// Task 39: loadout wiring evidence (`Some` only when `opts.loadouts`).
+    pub loadout: Option<Vec<ClientLoadout>>,
 }
 
 /// The TR-38.1 difficulty-ladder metrics for one rung, summed over the
@@ -368,6 +397,14 @@ impl MatchReport {
         }
         if let Some(l) = &self.ladder {
             println!("  {}", l.row("ladder"));
+        }
+        if let Some(ls) = &self.loadout {
+            for l in ls {
+                println!(
+                    "  c{} loadout · kind {} sub {} special {} · sub_fired {} specials_used {}",
+                    l.client, l.kind, l.sub, l.special, l.sub_fired, l.specials_used
+                );
+            }
         }
         if let Some(s) = &self.stats {
             s.print();
@@ -734,6 +771,32 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
         n,
         "every client reached the lobby"
     );
+    // Task 39 §5-TR-39.1③: loadout injection through the same `set_me`
+    // path the lobby UI drives (session.js L200-206) — before ready / start
+    // so the cfg roster carries the picks (≡ nettest seam step 2c).
+    if !opts.loadouts.is_empty() {
+        for (i, (w, sub, sp)) in opts.loadouts.iter().enumerate().take(n) {
+            sess[i].set_me(MeChange {
+                weapon: Some(w.clone()),
+                sub: sub.clone().map(Some),
+                special: sp.clone().map(Some),
+                ..Default::default()
+            });
+        }
+        // Let the host apply the guests' `me` messages and push back.
+        for _ in 0..50 {
+            let _ = drain(&mut sess, 10.0);
+            if sess.iter().enumerate().all(|(i, s)| {
+                s.lobby()
+                    .players
+                    .iter()
+                    .find(|p| p.you)
+                    .is_some_and(|p| p.weapon == opts.loadouts[i].0)
+            }) {
+                break;
+            }
+        }
+    }
     for s in sess.iter_mut().skip(1) {
         s.set_me(MeChange {
             ready: Some(true),
@@ -910,6 +973,9 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
     // (mutates `owners`, replication.rs L1158-1174) instead of `remove_at`,
     // so no left-shift can happen (review A5).
     let mut drop_track: Option<(usize, usize, (f32, f32, f32))> = None;
+    // Task 39: the one-shot loadout press lands 1 s into `Active` (the
+    // intro is over, the runner is live).
+    let press_frame = ((f64::from(INTRO_TIME) + 1.0) * 60.0) as usize;
     while frame < max_frames && !host_settled {
         // The drop-out fires once the match clock has run `at_s` seconds.
         if let Some(d) = opts.drop
@@ -943,6 +1009,21 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
                 &tuning.weapon_range,
                 &mut inputs[i],
             );
+            // Task 39 §5-TR-39.1③: one-shot sub press → release → special
+            // press over three frames for this client's local human (ink /
+            // gauge force-filled every frame so both presses land — a same-
+            // frame special start early-returns the actor update, so the
+            // sub's press/release edges get their own two frames. Wiring
+            // check only; the behaviour is Task 31-33's).
+            if opts.press_loadout && (0..3).contains(&(frame as i64 - press_frame as i64)) {
+                let li = local_idx[i];
+                if let Some(a) = m[i].actors.get_mut(li) {
+                    a.ink = tp.ink_max;
+                    a.special = a.special_cost;
+                }
+                inputs[i][li].sub = frame == press_frame;
+                inputs[i][li].special = frame == press_frame + 2;
+            }
             m[i].step_masked(
                 FIXED_DT,
                 &inputs[i],
@@ -1133,6 +1214,42 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
         }
     }
 
+    // Task 39 §5-TR-39.1③: the loadout wiring evidence, read from each
+    // client's local match (every side builds from the same start cfg, so
+    // the equipped slots are identical on host and guest; the deploy
+    // counters are each client's own authoritative runs).
+    let loadout: Option<Vec<ClientLoadout>> = if opts.loadouts.is_empty() {
+        None
+    } else {
+        Some(
+            (0..n)
+                .map(|i| {
+                    let li = local_idx[i];
+                    ClientLoadout {
+                        client: i,
+                        kind: m[i]
+                            .kinds
+                            .get(li)
+                            .map(|k| format!("{k:?}"))
+                            .unwrap_or_default(),
+                        sub: m[i]
+                            .actors
+                            .get(li)
+                            .map(|a| format!("{:?}", a.sub))
+                            .unwrap_or_default(),
+                        special: m[i]
+                            .actors
+                            .get(li)
+                            .and_then(|a| a.special_id.clone())
+                            .unwrap_or_default(),
+                        sub_fired: m[i].sub_fired + m[i].projectiles.bombs_thrown,
+                        specials_used: m[i].actors.iter().map(|a| a.specials_used).sum(),
+                    }
+                })
+                .collect(),
+        )
+    };
+
     // The settlement snapshot (≡ net-test.mjs L142-150 `views`).
     let mut views: Vec<ClientView> = Vec::new();
     for i in 0..n {
@@ -1299,6 +1416,7 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
         frames: frame,
         dropped_actor_moved,
         ladder,
+        loadout,
     }
 }
 

@@ -48,28 +48,78 @@ pub fn fnv1a(s: &str) -> u64 {
 /// carries the gauge `sp`, so the cost must live on the actor), stamped here
 /// at build time from the embedded tuning. Unknown / retired weapon ids fall
 /// back to the Spritzer, mirroring [`WeaponKind::from_kind_str`]'s rule in
-/// [`build_net_match`].
-fn weapon_special(weapon: &str) -> (&'static str, f32) {
+/// [`build_net_match`]. Task 39 §5-TR-39.1③: the third slot is the weapon's
+/// default sub (`WEAPONS[id].sub`, config.js) — the JS `subId` fallback
+/// `SUBS[sub] ? sub : (this.weapon.sub || 'bomb')` (actor.js L38).
+fn weapon_special(weapon: &str) -> (&'static str, f32, &'static str) {
     // D-T35-2 pattern: a `OnceLock` over the embedded artifact keeps the
     // table `'static` without plumbing a `&WeaponSet` through the builder.
     static WS: std::sync::OnceLock<crate::tuning::WeaponSet> = std::sync::OnceLock::new();
     let w = WS.get_or_init(|| crate::embedded_tuning().weapons);
-    let (id, cost) = match weapon {
-        "twins" => (w.twins.special.as_str(), w.twins.special_cost),
-        "brolly" => (w.brolly.special.as_str(), w.brolly.special_cost),
-        "blaster" => (w.blaster.special.as_str(), w.blaster.special_cost),
-        "spinner" => (w.spinner.special.as_str(), w.spinner.special_cost),
-        "charger" => (w.charger.special.as_str(), w.charger.special_cost),
-        "bow" => (w.bow.special.as_str(), w.bow.special_cost),
-        "roller" => (w.roller.special.as_str(), w.roller.special_cost),
-        "brush" => (w.brush.special.as_str(), w.brush.special_cost),
-        "blade" => (w.blade.special.as_str(), w.blade.special_cost),
-        "mitts" => (w.mitts.special.as_str(), w.mitts.special_cost),
-        "bucket" => (w.bucket.special.as_str(), w.bucket.special_cost),
+    let (id, cost, sub) = match weapon {
+        "twins" => (
+            w.twins.special.as_str(),
+            w.twins.special_cost,
+            w.twins.sub.as_str(),
+        ),
+        "brolly" => (
+            w.brolly.special.as_str(),
+            w.brolly.special_cost,
+            w.brolly.sub.as_str(),
+        ),
+        "blaster" => (
+            w.blaster.special.as_str(),
+            w.blaster.special_cost,
+            w.blaster.sub.as_str(),
+        ),
+        "spinner" => (
+            w.spinner.special.as_str(),
+            w.spinner.special_cost,
+            w.spinner.sub.as_str(),
+        ),
+        "charger" => (
+            w.charger.special.as_str(),
+            w.charger.special_cost,
+            w.charger.sub.as_str(),
+        ),
+        "bow" => (
+            w.bow.special.as_str(),
+            w.bow.special_cost,
+            w.bow.sub.as_str(),
+        ),
+        "roller" => (
+            w.roller.special.as_str(),
+            w.roller.special_cost,
+            w.roller.sub.as_str(),
+        ),
+        "brush" => (
+            w.brush.special.as_str(),
+            w.brush.special_cost,
+            w.brush.sub.as_str(),
+        ),
+        "blade" => (
+            w.blade.special.as_str(),
+            w.blade.special_cost,
+            w.blade.sub.as_str(),
+        ),
+        "mitts" => (
+            w.mitts.special.as_str(),
+            w.mitts.special_cost,
+            w.mitts.sub.as_str(),
+        ),
+        "bucket" => (
+            w.bucket.special.as_str(),
+            w.bucket.special_cost,
+            w.bucket.sub.as_str(),
+        ),
         // `shooter` and every unknown id (the Spritzer fallback).
-        _ => (w.shooter.special.as_str(), w.shooter.special_cost),
+        _ => (
+            w.shooter.special.as_str(),
+            w.shooter.special_cost,
+            w.shooter.sub.as_str(),
+        ),
     };
-    (id, cost as f32)
+    (id, cost as f32, sub)
 }
 
 /// `ZONES` tuning for the net builder — D-T35-2 pattern: a `OnceLock` over
@@ -145,7 +195,7 @@ pub fn build_net_match(
             // JS actor.js L40: a roster `special` names the id when it is a
             // real `SPECIALS` key, else the weapon default; L129: the gauge
             // cost is the weapon's `specialCost`.
-            let (wsp, wcost) = weapon_special(&r.weapon);
+            let (wsp, wcost, wsub) = weapon_special(&r.weapon);
             let id = r
                 .special
                 .as_deref()
@@ -153,6 +203,16 @@ pub fn build_net_match(
                 .unwrap_or(wsp);
             a.set_special(id);
             a.special_cost = wcost;
+            // Task 39 §5-TR-39.1③: JS `this.subId = SUBS[sub] ? sub :
+            // (this.weapon.sub || 'bomb')` (actor.js L38) — a roster `sub`
+            // that is a real `SUBS` key equips as-is, else the weapon's
+            // default sub, else the bomb.
+            a.sub = r
+                .sub
+                .as_deref()
+                .and_then(crate::sub::SubKind::from_id_str)
+                .or_else(|| crate::sub::SubKind::from_id_str(wsub))
+                .unwrap_or(crate::sub::SubKind::Bomb);
             a
         })
         .collect();

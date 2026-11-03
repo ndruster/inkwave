@@ -2588,6 +2588,12 @@ pub struct ProjectileSim {
     /// Task 34: live splat bombs (JS `this.bombs`, weapons.js L1462).
     #[serde(default)]
     pub bombs: Vec<Bomb>,
+    /// Task 39 §3 (nettest probe counter): cumulative count of bomb throws —
+    /// the sole local production point [`Self::throw_bomb`] (JS `throwBomb`,
+    /// weapons.js L1449-1465, routed from the runner's sub release L151-152).
+    /// Pure data, zero behaviour impact.
+    #[serde(default)]
+    pub bombs_thrown: u32,
     events: Vec<SimEvent>,
     pub rng: Rng,
     /// Accumulated stepped time — the kit's clock (JS `G.time`, used by the
@@ -2629,6 +2635,7 @@ impl ProjectileSim {
         Self {
             list: Vec::new(),
             bombs: Vec::new(),
+            bombs_thrown: 0,
             events: Vec::new(),
             rng: Rng::new(seed),
             time: 0.0,
@@ -3642,6 +3649,7 @@ impl ProjectileSim {
     /// (module docs). The `recBomb` record (L1463) rides
     /// [`SimEvent::BombSpawn`].
     pub(crate) fn throw_bomb(&mut self, a: &Actor, sb: &SubSet) {
+        self.bombs_thrown += 1; // Task 39 §3 probe counter (JS weapons.js L151)
         let pos = vec3(a.pos.x, a.pos.y + 1.35, a.pos.z);
         let vel = throw_velocity(a, sb.bomb.throw_speed);
         self.bombs.push(Bomb {

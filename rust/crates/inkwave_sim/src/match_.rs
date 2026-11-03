@@ -344,6 +344,14 @@ pub struct Match {
     /// of [`Match::step_masked`].
     #[serde(default)]
     pub dh_out: Vec<DeviceHitOut>,
+    /// Task 39 §3 (nettest probe counter): cumulative count of the locally
+    /// deployed non-bomb subs — the deferred `SUBS.use(a, sub)` of the
+    /// `pending_sub` branch below (JS `weaponRunner.update` L151 →
+    /// `SUBS.use`, subs.js L71). Pure data, zero behaviour impact; the bomb
+    /// branch counts separately on [`crate::weapon::ProjectileSim::bombs_thrown`]
+    /// (weapons.js L151-152).
+    #[serde(default)]
+    pub sub_fired: u32,
     /// Specials singleton (JS `G.specials`, specials.js): the world-object
     /// list (missiles, bubbles, storm clouds, …) and the gid sequence. The
     /// per-actor actives live on [`Actor::special_active`]; this holds the
@@ -497,6 +505,7 @@ impl Match {
             subs: SubSystem::new(seed ^ 0x9e37_79b9),
             bomb_out: Vec::new(),
             dh_out: Vec::new(),
+            sub_fired: 0,
             specials: crate::special::SpecialSystem::new(),
             paint: PaintGrid::new(world.collision),
             projectiles: ProjectileSim::new(seed),
@@ -1218,6 +1227,7 @@ impl Match {
             // paid the ink and set `pending_sub` (weapons.js L150-155).
             if self.runners[i].pending_sub {
                 self.runners[i].pending_sub = false;
+                self.sub_fired += 1; // Task 39 §3 probe counter (JS subs.js L71)
                 let kit_level = self.runners[i].pending_kit_level;
                 let ps_time = self.projectiles.time;
                 self.subs.use_sub(

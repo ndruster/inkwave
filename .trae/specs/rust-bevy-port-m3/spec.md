@@ -700,3 +700,63 @@ SubSystem 平移（subs.js 693 行，非 kit 10 key + splat bomb 在 weapons.js 
 - **D-T38-6 RNG 惰性抽取**：`charge_release`/`bomb_cd` 首用抽取（JS ctor L290 预抽）——RNG 流偏移在既有声明内，保 M1 基线数值。
 - **D-T38-7 ZonePlan `spNext`**：relaxed `AtomicU32`（f32 bits）——JS 经共享 plan 可变引用，Rust 保 `BotCtx` 不可变 + Bevy Sync；单写者语义等价。
 - **D-T38-8 评审修复**：0 P0/1 P1/4 P2 全闭环——P1 ladder 注释因果表述（见 D-T38-1）；P2 zones.rs `_build` 区段 16 处 JS 锚系统性偏 5-6 行（已按实读 L71/L83-134/L136-163 修正）；P2 `el.max(1)`→JS `||1` 精确语义、far 回退改读原始 ring（JS L132 对象字面量求值序，真实地图不可达但逐字镜像）；P2 paint_sub doc 措辞；ladder log 去重留最新。
+
+## Task 39 实施设计 — 大厅 loadout UI + 跨端完整开黑验证（FR-M3-10/11、AC-M3-4）
+
+### §0 上游锚点（已实读，2026-11-03）
+- **JS `src/net/session.js`**：human roster push L279（`weapon: p.weapon, sub: subOf(p.sub), special: specialOf(p.special), style: p.style`）；bot 随机 sub/special 50% L285-287；cfg L292（zones 强制 `ZONES.duration`）；`lobbyState` L188（players 携带 weapon/sub/special/style/ready/ping）；hostSet 应用 L244（`s.mode` 仅收 turf/zones/boss）；guest 保留 L364；`setMe` L200-206（name/weapon/sub/special/style/ready/team 七键 patch；L201 非法 weapon → 键丢弃**保留原值**，L202-203 sub/special 恒发、`subOf`/`specialOf`（L18）未知 id → `null` 清空）。
+- **JS `tools/net-test.mjs`（只读）**：`__G.net.setSettings({map,time,bots,difficulty,mode})` L75；`__G.net.setMe({ready:true})` L80；test-only 直写 `__G.net.lobby.duration = d` L85；coverage 读出 L144（`__G.paint.coverage()` → `[a,b]` 分数）；result 读出 L338（`__inkwave.match.result` → `{winner, coverage}`）。
+- **Rust sim `net/session.rs`（已实值化，本任务零改动或最小改动）**：`RosterEntry` L330-342；`Profile::sanitize` L386-402（`weapon_ok`/`sub_of`/`special_of`，锚 L201-210）；`MeChange` L409-416；`SettingsPatch.mode`（zones 流测试 L2892-2937 已证）；`start()` roster 构建 L1387-1481 逐字镜像 JS L271-292。**结论：roster 字段实值化在 sim 层已完成；缺口全部在 app/UI 层。**
+- **Rust app `ui/online.rs`**：`SessionCmd` L226-247（无 loadout/mode 命令）；`run_cmd` L335-474；`LobbyView` L546-574（无 mode/自身 loadout 字段）；`project` L586-765。
+- **Rust app `ui/mod.rs`**：lobby 树 L835 起；compact 按钮 L413；difficulty 循环臂 L1426-1434（单按钮 click-cycle 模式，本任务 loadout 行沿用）；`OnlineAction` 路由 L1398-1441；label 刷新 L1449 起。
+- **Rust app `nettest.rs`**：`NetTestCfg` L49-57；`parse_query` L64-94（已知键坏值仅废该 knob L84-86 模式）；seam 步骤 1-6 L179-270；probe 行格式 L252-268；err 行 L172-177。
+- **`rust/tools/verify/net-smoke.mjs`**：scenario A L361-430（wasm↔wasm）、B L432-525（JS host↔Rust guest）；`rustUrl` L354；降级条款 L27-32/L284-292（DEGRADED/SKIPPED 如实记录、exit 0）。
+- **id 表**：`WEAPON_ORDER` 12（config.js L303）、`SUB_ORDER` 15（L407）、`SPECIAL_ORDER` 19（L469）——session.rs L97-146 已有同序表，UI 直接复用（禁手抄新表）。
+
+### §1 UI 层 loadout 命令（ui/online.rs，批一）
+- `SessionCmd` 新增四臂：`SetWeapon(String)`、`SetSub(Option<String>)`、`SetSpecial(Option<String>)`（JS `setMe` L200-206：lobby 内任何玩家自选）；`SetMode(String)`（JS hostSet L244：host-only + Lobby 态，Rust UI 仅开放 turf/zones，boss 不在 M3 范围）。
+- `run_cmd` 映射：loadout 三项 → `s.set_me(MeChange{…})`（校验在 sim 层 sanitize/set_me 既有路径，批一实读确认 `set_me` 对 weapon 的校验口径与 JS L200-206 一致，不一致以 JS 为准修 sim 并补锚）；`SetMode` → `s.set_settings(SettingsPatch{mode})`，守卫同 `SetDuration` L427-433。
+- `LobbyView` 扩展：`mode: String` + 本人行 `weapon/sub/special`（project 读 `lob.mode` 与 `me`）；`RosterRow` 不动（weapon 已进 sig）。
+- **偏差声明（→D-T39）**：FR-M3-10 措辞「列表滚动选择即可」，落地为 **click-cycle 选择器**（与既有 difficulty 循环按钮同构，不引入滚动容器/焦点管理复杂度）；12/15/19 全集可达、无图标美术，满足「选择即可」意图。
+
+### §2 Bevy lobby 树（ui/mod.rs，批一）
+- lobby 设置区增四行（compact 按钮模式，单按钮 click-cycle，非 ◀/▶ 双钮）：`WEAPON`（12 循环）、`SUB`（15 循环、末项后回 None）、`SPECIAL`（19 循环、同 None 停靠位）、`MODE`（host 可点，TURF⇄ZONES toggle；guest 点击在 `run_cmd` 守卫处**静默吞**——与既有 SetDuration/Bots/Difficulty host-only 按钮先例一致，不做视觉置灰，定案 D-T39-3）。
+- `OnlineAction` 新臂 + 点击路由 + `ui_online_labels_update` 标签刷新（等值守卫写）；sub/special cycle 序 = ORDER 表循环、**None 为末项之后的停靠位**（JS 无此 UI——lobby 自选走 loadout 屏，cycle 序为 Rust 侧呈现选择，记录为呈现偏差）。
+- 键盘：不新增快捷键（鼠标路径与 difficulty 一致）；nettest 缝（§3）提供 headless 等价入口。
+
+### §3 nettest.rs 缝扩展（批二）
+- `parse_query` 新键：`netweapon=<id>`、`netsub=<id>`、`netspecial=<id>`、`netmode=turf|zones`（未知键忽略、已知键坏值废该 knob，同 `netdur` L84-86 模式；id 合法性交 sim 校验，缝不重复校验）。
+- seam 步骤序改造（一次性 latch）：Lobby 落地后、`netready`/`netstart` **之前**依次应用 `SetWeapon/SetSub/SetSpecial`（本端自选）与 `SetMode`（仅 host）——保证 start cfg roster 携带选择；新增 `[nettest] loadout w=.. sub=.. sp=.. mode=..` 确认行（lobby 首次应用后打一次，脚本对账）。
+- probe 行在 `cov=` 与 `rem=` **之间**插入 ` sub=<n> sp=<n>`（rem= 保持行尾，既有 PROBE_RE `rem=(.*)` 语义不破——定案 D-T39-4；脚本 PROBE_RE/自检样本同步）。来源：批二实读 sim——优先用既有可数路径（`Match_`/SubSystem/SpecialSystem 的生成点或 stats 槽）；若无则 sim `Match_` 加 `sub_fired/special_fired` u32 计数器（本地产生路径 + host 权威路径各一处 ++，带 JS 锚），属 sim 纯数据零行为影响。
+- 终局行：match 进入 results ⇒ `[nettest] result w=<winner|-1> cov=<a>/<b>`（turf）；zones 形态按 Task 36 result 结构（count 剩余/penalty——批二实读 `match_/zones.rs` state/`res` 形态定字面格式）；一次性 latch。
+
+### §4 net-smoke.mjs scenario C/D（批二，只扩不改 A/B）
+- **scenario C（turf 跨端完整局）**：JS tab `?skipTitle&autopilot` → `__G.net.create('Host')` → `setSettings({map:'tidewater', bots:true, difficulty:'normal'})` → `setMe({weapon:'charger', sub:'mine', special:'crab', ready:true})`（host 也 setMe，JS L200-206 合法）→ 直写 `lobby.duration=60`（≡net-test L85）；Rust guest `netjoin=<CODE>&netweapon=brolly&netsub=bomb&netspecial=stamp&netready&autopilot&netprobe`；host `__G.net.start()`；跑到 results（60s+余量）。断言：① 双端 roster 互认（JS lobby players 含 Rust 玩家 weapon=brolly；Rust `[nettest] loadout` 行）② 终局 coverage 差 <0.5%（JS L144 口径 vs Rust result 行）③ winner 一致 ④ Rust probe `sub≥1 sp≥1`（autopilot 触发证据；JS 侧触发计数若 `__G` 无读出口径则如实记录为 Rust 侧单证 + REVIEW_CHECKLIST 项）⑤ 双端无 err（`[nettest] err` 0 计数 + console errors 0）。
+- **scenario D（zones 跨端局）**：JS host `setSettings({mode:'zones'})`（≡net-test L75）+ 同 C 的 loadout 选择；Rust guest 同 join；zones 时长固定 300s+加时（JS L292，无 test-only 覆盖路径——不新增）；沙箱 renderer stall 跑不完 ⇒ 按既有 DEGRADED 条款如实记录 + REVIEW_CHECKLIST 复核项；跑完则断言 zone 终局一致（双端 result 行 zone 形态逐字对比）+ 无 err。
+- 结构复用：Tab/Browser/probeAssert/renderDied/nettestLines 全部沿用；新 scenario 独立 try/catch 与记录，不影响 A/B 判定与 exit 语义。
+
+### §5 TR 对应
+- **TR-39.1**（loadout→roster→对局内武器生效全链路）：① `ui/online.rs` 单测（FakeRelay 双 session）：`run_cmd SetWeapon/SetSub/SetSpecial` → lobby player 字段实值；`SetMode` host-only 守卫 + guest 广播收敛（≡zones 流测试 L2892-2937 模式）；非法 id 语义（JS L201-203）：非法 weapon → 键丢弃**保留原值**（非回退 shooter；`dualies` 在 JS `WEAPONS` 15 键表合法但不在 12 项 `WEAPON_ORDER`，cycle 表外回表头）；非法 sub/special → `subOf`/`specialOf` 清空（锚 L18）。② start() 后 `cfg.roster` 逐字段断言（human 携带选择、bot 50% 随机既有测试不破）。③ harness e2e：`MatchOpts` 暴露 loadout（批二实读 match_e2e.rs 现状，若 roster 构造已可注入则不加字段）——短局断言 actor 武器 kind == 选择、sub 实体可生成、special 可启动（复用 Task 30-35 行为测试的固定种子路径，不重复行为断言，只断言接线）。
+- **TR-39.2**：scenario C/D 实跑日志落 `rust/tools/verify/logs/net-smoke-<stamp>.json`；不可达项列 REVIEW_CHECKLIST 并如实记录（AC-M3-4 Pass Condition）。
+- 回归：workspace 546 基线单调递增；A/B scenario 语义不破。
+
+### §6 分批
+- 批一：§1+§2（online.rs 命令/投影 + ui/mod.rs lobby 树 + online.rs 单测）+ §5-TR-39.1①②。
+- 批二：§3（nettest 缝 + sim 计数器若需）+ §4（net-smoke scenario C/D）+ §5-TR-39.1③。
+- 每批：委派 → 主上下文实读核验 → 门禁子集；批间同一 agent resume。
+
+### §7 风险与裁剪
+- 沙箱 SwiftShader stall 使 C/D 完整局不可达 → DEGRADED 条款 + REVIEW_CHECKLIST（Task 26 先例，AC-M3-4 Pass Condition 允许）。
+- JS 侧 sub/special 触发无外部读出口径 → 单证 + 复核清单（如实记录，不假造）。
+- zones 300s 全局长时间预算 → scenario D 独立 `--secs` 弹性；超时按 DEGRADED。
+- 裁剪：style 仍透传不解释（既有声明）；loadout UI 无图标美术（FR-M3-10 原文允许）；boss mode 不进 Rust UI。
+
+### §8 定案（Task 39，评审后回填）
+- **D-T39-1 沙箱跨端实跑降级（AC-M3-4 Pass Condition）**：scenario A 在 Task 26（2026-10-31）曾 PASS，本任务窗口重跑两次 + 韧性修复后一次均 DEGRADED——根因环境性：沙箱内存压力（trunk 构建 wasm-bindgen 被 OOM kill 实证）+ SwiftShader PBR 崩溃在首个 5s 重试窗口前杀死 wasm tab（`err Could not connect` → `Quitting the application`，dump `net-smoke-2026-11-03T07-25-45-059Z.json`）。C/D 从未在沙箱拿到 `[nettest] loadout`/`result` 行（boot 行证明 knobs 端到端解析）。跨端完整局断言的**首次真实执行**列用户机器复核清单（REVIEW_CHECKLIST）；进程内等价闭环由 harness `tr39_loadout_end_to_end`（FakeRelay 双 client + guest 端 `sub_fired>=1 && specials_used>=1` 断言）兜底。
+- **D-T39-2 setMe 校验语义定案**：非法 weapon → 键丢弃保留原值（JS session.js L201 `WEAPONS[x]` 守卫；`dualies` 为 15 键表合法 id）；非法 sub/special → `subOf`/`specialOf`（L18）清空。Rust sim `set_me` 逐行一致，**sim 层零改动**；roster 实值化缺口全在 app/UI 层（本批补齐）。
+- **D-T39-3 loadout UI 呈现定案**：FR-M3-10「列表滚动选择」落地为单按钮 click-cycle（与 difficulty 行同构）；SUB/SPECIAL 的 None 为末项之后停靠位；MODE guest 点击静默吞（既有 host-only 按钮先例，不做视觉置灰）。
+- **D-T39-4 probe 行格式定案**：`sub=<n> sp=<n>` 插于 `cov=` 与 `rem=` 之间（保 `rem=(.*)` 解析语义），PROBE_RE/往返自检样本同步；计数=sub_fired+bombs_thrown（JS weapons.js L151 分流两处唯一生产点）、sp=Σ `specials_used`（guest 本地预测自计，remote actor 被 mask）。
+- **D-T39-5 result 行字面契约**：turf `[nettest] result w=<0|1> cov=<a>/<b>`；zones 追加 ` zone=<c0>/<c1> reason=<id|-> pen=<p0>/<p1> ot=<0|1>`（counts 已 ceil、penalty `{:.1}`——对齐 JS match.js L256-257 result 形；net-smoke D 逐项对比 counts/penalty(<0.05)/reason/overtime）。
+- **D-T39-6 matchbuild `a.sub` 接线**：roster `sub` 此前未接入 actor（TR-39.1③ 真实缺口）——按 JS actor.js L38 falsy 链 `r.sub → weapon default → Bomb` 补齐（`from_id_str` 未知/空串→None，与 JS `SUBS[sub]?` 一致）；special 侧 L40 既有路径复核一致。
+- **D-T39-7 nettest 1a/1b 重试**：create/join 对称重试（≤3 次 × 5s，Error 态经 settle 释放可重发，测试缝专用零 sim 行为改动）；net-smoke ⑤「无 err」只计最后一条 retry 行之后的 err 线（重试吸收的连接失败不计）。
+- **D-T39-8 评审修复**：APPROVE，0 P0/0 P1/6 P2 全闭环——P2-2 D 区 zone 终局四项对比实现；P2-3 err 过滤；P2-4 match_.rs 锚 L152-155→L151（weapons.js 实读）；P2-1/6 spec 措辞（cycle 序/MODE 静默吞/七键/非法 weapon 保留原值/probe 插位）；P2-5 复核清单（本条 D-T39-1）。

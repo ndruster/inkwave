@@ -165,6 +165,65 @@ fn tr37_crossmarket_zones_three_clients() {
     assert!(rep.ok(), "the crossmarket zones match settles consistently");
 }
 
+/// Task 39 §5-TR-39.1③: the loadout → lobby roster → in-match weapon wiring
+/// end to end. Two humans pick `charger + mine + crab` and
+/// `brolly + bomb + stamp` through the session `set_me` path (the same call
+/// the lobby UI / nettest seam drives), the start cfg roster carries the
+/// picks into `build_net_match`, and the one-shot press 1 s into `Active`
+/// (ink / gauge force-filled) proves the equipped sub / special actually
+/// deploy. Wiring assertions only — the weapon behaviour itself is owned by
+/// the Task 30-35 sim tests.
+#[test]
+fn tr39_loadout_end_to_end() {
+    let mut opts = MatchOpts::plain(2, 3939);
+    opts.duration = 8.0;
+    opts.loadouts = vec![
+        (
+            "charger".to_string(),
+            Some("mine".to_string()),
+            Some("crab".to_string()),
+        ),
+        (
+            "brolly".to_string(),
+            Some("bomb".to_string()),
+            Some("stamp".to_string()),
+        ),
+    ];
+    opts.press_loadout = true;
+    let rep = run_match(&opts);
+    rep.print();
+    assert!(rep.ok(), "the loadout scenario settles consistently");
+
+    let ls = rep.loadout.as_ref().expect("evidence collected");
+    assert_eq!(ls.len(), 2);
+    // client 0 (host): charger / mine / crab equipped on its local actor
+    assert_eq!(ls[0].kind, "Charger", "roster weapon → `Match::kinds`");
+    assert_eq!(ls[0].sub, "Mine", "roster sub → `Actor.sub` (actor.js L38)");
+    assert_eq!(
+        ls[0].special, "crab",
+        "roster special → `Actor.special_id` (actor.js L40)"
+    );
+    // client 1 (guest): brolly / bomb / stamp — the guest builds its side
+    // from the same start cfg over the wire
+    assert_eq!(ls[1].kind, "Brolly");
+    assert_eq!(ls[1].sub, "Bomb");
+    assert_eq!(ls[1].special, "stamp");
+
+    // the one-shot press deploys on both ends: the sub counters ride the
+    // same path the nettest probe line reports (`sub_fired + bombs_thrown`),
+    // the specials the existing `stats.specials` (actor.js L840).
+    assert!(
+        ls[0].sub_fired >= 1 && ls[1].sub_fired >= 1,
+        "the equipped subs deployed: {:?}",
+        ls.iter().map(|l| l.sub_fired).collect::<Vec<_>>()
+    );
+    assert!(
+        ls[0].specials_used >= 1 && ls[1].specials_used >= 1,
+        "the equipped specials started: {:?}",
+        ls.iter().map(|l| l.specials_used).collect::<Vec<_>>()
+    );
+}
+
 /// TR-25.3 guest drop: a guest's socket dies mid-match; its actor is adopted
 /// as a bot on the host and keeps playing to settlement.
 #[test]

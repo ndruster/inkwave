@@ -29,7 +29,7 @@ use crate::ink_render::DemoSim;
 use crate::input::PlayerControls;
 use crate::net::OnlineSession;
 use crate::net::match_link::NetEvents;
-use inkwave_sim::net::session::{SessionEvent, SessionState};
+use inkwave_sim::net::session::{SPECIAL_IDS, SUB_IDS, SessionEvent, SessionState, WEAPON_ORDER};
 
 pub mod online;
 
@@ -148,6 +148,20 @@ pub enum OnlineAction {
     Bots,
     /// `hostSet({difficulty})` cycle (L2850).
     Difficulty,
+    /// Task 39: `setMe({weapon})` (session.js L200-206) — cycle the local
+    /// player's weapon over `WEAPON_ORDER`. JS has no lobby loadout UI (the
+    /// loadout screen drives the same call); the Lobby-state / `me`-row
+    /// guards live in `online::run_cmd`.
+    WeaponCycle,
+    /// Task 39: `setMe({sub})` (session.js L202) — cycle over `SUB_IDS` with
+    /// a NONE stop after the last entry.
+    SubCycle,
+    /// Task 39: `setMe({special})` (session.js L203) — cycle over
+    /// `SPECIAL_IDS` with a NONE stop.
+    SpecialCycle,
+    /// Task 39: host `hostSet({mode})` toggle (session.js L244, turf ⇄
+    /// zones; `boss` is out of M3 scope). Host-only guard in `run_cmd`.
+    ModeToggle,
     /// `askLeave` two-step (L3026, deviation ⑦).
     Leave,
 }
@@ -429,6 +443,37 @@ fn small_button(commands: &mut Commands, parent: Entity, text: &str, action: Act
         ))
         .id();
     commands.spawn((label(text, 15.0, Color::WHITE), ChildOf(btn)));
+}
+
+/// Compact button with a [`LabelRole`] on the label so `online_ui_update` can
+/// rewrite its text (Task 39 lobby loadout / mode row).
+fn small_button_dyn(
+    commands: &mut Commands,
+    parent: Entity,
+    text: &str,
+    action: Action,
+    role: &'static str,
+) {
+    let btn = commands
+        .spawn((
+            Button,
+            UiAction(action),
+            Node {
+                width: Val::Px(150.0),
+                height: Val::Px(36.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(BTN_BG),
+            ChildOf(parent),
+        ))
+        .id();
+    commands.spawn((
+        label(text, 15.0, Color::WHITE),
+        LabelRole(role),
+        ChildOf(btn),
+    ));
 }
 
 /// Build all four screen trees (only one is displayed at a time).
@@ -941,6 +986,38 @@ pub fn build_ui(mut commands: Commands) {
         "SKILL",
         Action::Online(OnlineAction::Difficulty),
     );
+    // Task 39: own loadout cycle + host mode toggle (JS has no lobby
+    // loadout/mode UI — these buttons drive the same `setMe` / `hostSet`
+    // session calls the loadout screen and host controls make).
+    let load_row = commands.spawn((row(8.0), ChildOf(lob_col))).id();
+    small_button_dyn(
+        &mut commands,
+        load_row,
+        "WPN",
+        Action::Online(OnlineAction::WeaponCycle),
+        "lob_weapon",
+    );
+    small_button_dyn(
+        &mut commands,
+        load_row,
+        "SUB",
+        Action::Online(OnlineAction::SubCycle),
+        "lob_sub",
+    );
+    small_button_dyn(
+        &mut commands,
+        load_row,
+        "SPC",
+        Action::Online(OnlineAction::SpecialCycle),
+        "lob_special",
+    );
+    small_button_dyn(
+        &mut commands,
+        load_row,
+        "MODE",
+        Action::Online(OnlineAction::ModeToggle),
+        "lob_mode",
+    );
     commands.spawn((
         (
             LabelRole("lob_settings"),
@@ -1378,6 +1455,33 @@ fn key_to_code_char(k: KeyCode) -> Option<char> {
     })
 }
 
+/// Cycle over a mandatory id table (Task 39 weapon button): an id outside the
+/// table (e.g. `dualies` — valid in JS `WEAPONS`, not in the 12-entry
+/// `WEAPON_ORDER` bots are dealt from) jumps to the table head; a known id
+/// moves to the next entry, wrapping.
+#[must_use]
+fn next_in_cycle(current: &str, table: &[&str]) -> String {
+    match table.iter().position(|x| *x == current) {
+        Some(i) => table[(i + 1) % table.len()].to_string(),
+        None => table[0].to_string(),
+    }
+}
+
+/// Cycle an optional slot (sub / special) over its table with a NONE stop:
+/// `None` picks the head; the last entry — or an id outside the table, which
+/// JS `subOf`/`specialOf` (session.js L18) would already have nulled — goes
+/// back to `None` (clears the slot).
+#[must_use]
+fn next_option_cycle(current: Option<&str>, table: &[&str]) -> Option<String> {
+    match current {
+        None => Some(table[0].to_string()),
+        Some(c) => match table.iter().position(|x| *x == c) {
+            Some(i) if i + 1 < table.len() => Some(table[i + 1].to_string()),
+            _ => None,
+        },
+    }
+}
+
 /// Route one online button to the session / screen flags (the JS click
 /// handlers in `_scr_online` / `_scr_lobby`; the screen-local `st` lives in
 /// [`online::OnlineFlags`]).
@@ -1432,6 +1536,58 @@ fn handle_online_action(st: &mut UiState, oa: OnlineAction, os: &mut OnlineSessi
                 &mut os.sess,
                 &mut os.flags,
                 SessionCmd::SetDifficulty(next.to_string()),
+            );
+        }
+        OnlineAction::WeaponCycle => {
+            // Task 39: `setMe({weapon})` over `WEAPON_ORDER`; the current
+            // value comes from the local roster row (`you`, `_pushLobby`
+            // L192). Lobby-state / `me`-row guards live in `run_cmd`.
+            let cur = os
+                .sess
+                .lobby()
+                .players
+                .iter()
+                .find(|p| p.you)
+                .map(|p| p.weapon.as_str())
+                .unwrap_or("shooter");
+            let next = next_in_cycle(cur, WEAPON_ORDER);
+            run_cmd(&mut os.sess, &mut os.flags, SessionCmd::SetWeapon(next));
+        }
+        OnlineAction::SubCycle => {
+            let cur = os
+                .sess
+                .lobby()
+                .players
+                .iter()
+                .find(|p| p.you)
+                .and_then(|p| p.sub.as_deref());
+            let next = next_option_cycle(cur, SUB_IDS);
+            run_cmd(&mut os.sess, &mut os.flags, SessionCmd::SetSub(next));
+        }
+        OnlineAction::SpecialCycle => {
+            let cur = os
+                .sess
+                .lobby()
+                .players
+                .iter()
+                .find(|p| p.you)
+                .and_then(|p| p.special.as_deref());
+            let next = next_option_cycle(cur, SPECIAL_IDS);
+            run_cmd(&mut os.sess, &mut os.flags, SessionCmd::SetSpecial(next));
+        }
+        OnlineAction::ModeToggle => {
+            // `hostSet({mode})` (session.js L244): turf ⇄ zones; anything
+            // else (incl. a stray `boss`) normalises to zones. Host-only
+            // guard in `run_cmd`.
+            let next = if os.sess.lobby().mode == "zones" {
+                "turf"
+            } else {
+                "zones"
+            };
+            run_cmd(
+                &mut os.sess,
+                &mut os.flags,
+                SessionCmd::SetMode(next.to_string()),
             );
         }
         OnlineAction::Leave => {
@@ -1514,6 +1670,24 @@ pub fn online_ui_update(
                 ),
                 None,
             ),
+            // Task 39: the loadout / mode buttons read back the projected
+            // own-row values (uppercase ids, NONE for an empty slot).
+            "lob_weapon" => (format!("WPN {}", lob.weapon.to_uppercase()), None),
+            "lob_sub" => (
+                format!(
+                    "SUB {}",
+                    lob.sub.as_deref().unwrap_or("NONE").to_uppercase()
+                ),
+                None,
+            ),
+            "lob_special" => (
+                format!(
+                    "SPC {}",
+                    lob.special.as_deref().unwrap_or("NONE").to_uppercase()
+                ),
+                None,
+            ),
+            "lob_mode" => (format!("MODE {}", lob.mode.to_uppercase()), None),
             // `launchLobby` overlay (L2362) while `starting`; else the
             // one-shot toast from `run_cmd`.
             "lob_banner" => (
@@ -2085,6 +2259,37 @@ mod tests {
             "expired dropped"
         );
         assert_eq!(label_text(&mut app, "feed0").as_deref(), Some(""));
+    }
+
+    #[test]
+    fn tr39_cycle_helpers() {
+        // Weapon: known id → next entry with wrap; an id outside the 12-entry
+        // `WEAPON_ORDER` (e.g. `dualies`, valid in JS `WEAPONS` but never
+        // dealt there) jumps back to the table head.
+        assert_eq!(next_in_cycle("shooter", WEAPON_ORDER), "twins");
+        assert_eq!(next_in_cycle("bucket", WEAPON_ORDER), "shooter");
+        assert_eq!(next_in_cycle("dualies", WEAPON_ORDER), "shooter");
+        // Optional slots: NONE → head, head → next, last entry → NONE, and an
+        // off-table id (JS `subOf` would have nulled it) → NONE.
+        assert_eq!(next_option_cycle(None, SUB_IDS).as_deref(), Some("bomb"));
+        assert_eq!(
+            next_option_cycle(Some("bomb"), SUB_IDS).as_deref(),
+            Some("sticky")
+        );
+        assert_eq!(
+            next_option_cycle(SUB_IDS.last().copied(), SUB_IDS),
+            None,
+            "the NONE stop sits after the last entry"
+        );
+        assert_eq!(next_option_cycle(Some("nope"), SUB_IDS), None);
+        assert_eq!(
+            next_option_cycle(None, SPECIAL_IDS).as_deref(),
+            Some("slam")
+        );
+        assert_eq!(
+            next_option_cycle(SPECIAL_IDS.last().copied(), SPECIAL_IDS),
+            None
+        );
     }
 
     fn label_text(app: &mut App, role: &str) -> Option<String> {

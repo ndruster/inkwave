@@ -319,7 +319,7 @@
 - 修复复验：fmt/clippy/test 重跑全绿（546 passed），九段门禁矩阵全绿。
 
 ## Task 39: 大厅 loadout UI + 跨端完整开黑验证
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 36、Task 37、Task 38
 - **Description**:
@@ -329,6 +329,18 @@
   - `rule` TR-39.1: loadout 选择 → roster 字段 → 对局内武器生效全链路集成测试（harness）。
   - `rule` TR-39.2: 跨端两局实跑日志（net-smoke 扩展 scenario）；不可达项列 REVIEW_CHECKLIST 并如实记录。
 - **Notes**: 沿用 Task 26 net-smoke 脚手架扩 scenario，不新建工具链。
+
+### Task 39 Completion Evidence（2026-11-03）
+- **TR-39.1 ✅**：三层集成全绿——① `ui/online.rs` 4 单测（FakeRelay 双 session）：`run_cmd SetWeapon/SetSub/SetSpecial` lobby 收敛 + 广播、非法 weapon 保留原值/非法 sub·special 清空（JS session.js L201-203 语义，`dualies` 表内合法表外回退路径覆盖）、`SetMode` host-only 守卫 + guest 收敛、`project` 投影 mode/loadout；② `tr39_start_roster_carries_loadout`：双端各自 loadout 后 `start()` cfg.roster human 条目逐字段携带选择；③ harness `tr39_loadout_end_to_end`（net-harness e2e，FakeRelay 两 client，charger/mine/crab vs brolly/bomb/stamp）：actor kind == 选择、Active 后 1s 一次性按键驱动 sub+special，**guest 端** `sub_fired>=1 && specials_used>=1` 断言部署接线闭环。workspace **553 passed**（546→553：+7——online 4、mod cycle 1、nettest parse 1、harness e2e 1）。
+- **TR-39.2 ⚠️ 降级如实记录（AC-M3-4 Pass Condition）**：net-smoke 新增 scenario C（turf 跨端完整局：JS host charger/mine/crab ↔ Rust guest brolly/bomb/stamp，断言 roster 互认/coverage 差<0.5%/winner 一致/sub·sp≥1/无 err）与 D（zones：JS `setSettings({mode:'zones'})`，300s 固定钟 + zone 终局 counts/penalty/reason/overtime 逐项对比）。**沙箱三次实跑均 DEGRADED**（dump `net-smoke-2026-11-03T05-58/06-06/07-25…json`）：SwiftShader PBR 崩溃在首个重试窗口前杀死 wasm tab（boot 行已证 loadout knobs 端到端解析、JS host 建房成功）；scenario A 同因由 Task 26 的 PASS 退化为 DEGRADED（环境内存压力实证：trunk 构建 wasm-bindgen 被 OOM kill）。已加 nettest 1a/1b create/join 对称重试（测试缝专用）+ net-smoke ⑤ err 过滤；C/D 完整局断言的首次真实执行列入 REVIEW_CHECKLIST 用户机器复核。
+- **loadout UI**：lobby 设置区四行单按钮 click-cycle（WEAPON 12/SUB 15+NONE/SPECIAL 19+NONE/MODE turf⇄zones host-only），复用 compact 按钮与 difficulty 循环先例；`SessionCmd` 四新臂 → `set_me`/`set_settings`；`LobbyView` 扩 mode/weapon/sub/special 投影。呈现偏差（滚动列表→cycle、guest 置灰→静默吞）定案 D-T39-3。
+- **sim 层**：roster 实值化既有（session.rs 零改动，D-T39-2）；真实缺口是 `matchbuild.rs` 的 `a.sub` 未接线——按 JS actor.js L38 falsy 链补齐（D-T39-6）；计数器 `Match::sub_fired`（weapons.js L151 分流 else 支）+ `ProjectileSim::bombs_thrown`（L151 bomb 支）纯数据 `serde(default)`；probe 行 `sub=/sp=` 插 cov/rem 之间、result 行 turf/zones 字面契约（D-T39-4/5）。
+- **门禁**：九段矩阵全绿（`task39-gates-20261103T073400Z.log`：fmt/clippy/test 553/wasm32/cargo tree 依赖面不变/trunk release/headless 600 帧/JS 树零改动/GATES_DONE）。
+
+### Task 39 Review 附录（独立评审：0 blocker / 0 major / 6 P2 → 全部当场闭环）
+- 评审员实核通过：JS 锚逐条（session.js L201-203/L244/L292、actor.js L38/L40、weapons.js L151、subs.js L71、net-test.mjs L75/80/85/144/338、match.js L256-257）；`a.sub` falsy 链与 JS 语义精确镜像（`from_id_str` 空串→None）；probe/result 行 format! 字面与脚本正则逐字符对照（含自检样本）；计数器落点唯一（`use_sub` 其余调用为 replication ghost/测试 helper 不重复计）；guest `specials_used` 自计路径实读（local actor 非 remote-masked）；A/B 判定语义与 JS 树零改动、无新依赖、英文注释。
+- **P2-1/6 ✅** spec 措辞回填（cycle NONE 停靠位、MODE 静默吞、setMe 七键、非法 weapon 保留原值、probe 插位）。**P2-2 ✅** scenario D 扩读 JS result `counts/penalty/overtime/reason` 四项逐项对比（match.js L256-257 实形）。**P2-3 ✅** ⑤「无 err」只计最后一条 retry 行之后的 err 线（重试吸收的连接失败不再假 FAIL C/D）。**P2-4 ✅** match_.rs 注释锚 L152-155→L151（实读 weapons.js L151 即分流行）。**P2-5 ✅** 沙箱 C/D 零 loadout/result 行证据如实入 D-T39-1 + 复核清单。
+- 修复复验：fmt/clippy/test 全绿（553 passed）；`node --check` + PROBE/RESULT 自检 exit 0；scenario A 重跑 DEGRADED（环境性，如实记录）。
 
 ## Task 40: M3 收尾——门禁、台账、文档与总评审
 - **Status**: `pending`

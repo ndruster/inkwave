@@ -22,6 +22,29 @@
 //!                    `lobby.duration` write bypassing the ≥60 clamp).
 //! ?netstart          host with `can_start()` ⇒ SessionCmd::Start once
 //!                    (≡ net-test L81-87).
+//! ?netweapon=<id>    Task 39 §3: on the first lobby frame, latch
+//!                    `SessionCmd::SetWeapon` (≡ JS `setMe({weapon})`,
+//!                    session.js L200-206). Id validity is the sim's job
+//!                    (`WEAPONS[x]` guard — an unknown id keeps the current
+//!                    weapon), the seam never re-validates.
+//! ?netsub=<id|none>  `setMe({sub})` (L202 `subOf`); the literal `none`
+//!                    maps to the explicit clear `Some(None)`, aligned with
+//!                    the lobby cycle UI's NONE stop.
+//! ?netspecial=<id|none>  `setMe({special})` (L203 `specialOf`), same
+//!                    `none` rule.
+//! ?netmode=turf|zones  host-only `hostSet({mode})` (session.js L244); any
+//!                    other value disqualifies the knob.
+//!                    → `[nettest] loadout w=<id> sub=<id|-> sp=<id|->
+//!                    mode=<turf|zones>` is logged once after the latch,
+//!                    reading the session's *effective* values (the lobby
+//!                    `me` row + `lob.mode`), so a sim-dropped invalid id
+//!                    shows the old weapon and the script can reconcile.
+//!                    → `[nettest] result w=<0|1> cov=<a>/<b>` once the
+//!                    local match settles (host-judged or the host's `res`
+//!                    on a guest); a zones match appends
+//!                    ` zone=<c0>/<c1> reason=<id|-> pen=<p0>/<p1> ot=<0|1>`
+//!                    (the `ZoneOutcome` fields, counts already `ceil`'d,
+//!                    penalty one decimal — the script's literal contract).
 //! ?autopilot         the local human slot gets a bot brain and the player
 //!                    input overwrite is skipped (≡ match.js L112
 //!                    `mine && (r.bot || o.autopilot)` + L118 no controller),
@@ -54,6 +77,16 @@ pub struct NetTestCfg {
     pub dur: Option<f64>,
     pub autopilot: bool,
     pub probe: bool,
+    /// Task 39 §3: `?netweapon=<id>` — validity is the sim's (`WEAPONS[x]`
+    /// guard, session.js L201: an unknown id keeps the current weapon).
+    pub weapon: Option<String>,
+    /// `?netsub=<id|none>`: `Some(None)` = the literal `none` (explicit
+    /// clear, ≡ the cycle UI's NONE stop); `Some(Some(id))` = equip.
+    pub sub: Option<Option<String>>,
+    /// `?netspecial=<id|none>`, same `none` rule.
+    pub special: Option<Option<String>>,
+    /// `?netmode=turf|zones` (host-only; anything else disqualifies).
+    pub mode: Option<String>,
 }
 
 /// Parse a page query string (`?a=b&c`) into the smoke config. Pure and
@@ -86,6 +119,44 @@ pub fn parse_query(search: &str) -> Option<NetTestCfg> {
             }
             "autopilot" => cfg.autopilot = true,
             "netprobe" => cfg.probe = true,
+            // Task 39 §3: loadout ids are the sim's to validate (the
+            // `WEAPONS[x]` / `subOf` / `specialOf` guards, session.js
+            // L200-206) — the seam only rejects empty values; the literal
+            // `none` on sub/special maps to the explicit clear.
+            "netweapon" => {
+                if v.is_empty() {
+                    continue;
+                }
+                cfg.weapon = Some(v.to_string());
+            }
+            "netsub" => {
+                if v.is_empty() {
+                    continue;
+                }
+                cfg.sub = Some(if v == "none" {
+                    None
+                } else {
+                    Some(v.to_string())
+                });
+            }
+            "netspecial" => {
+                if v.is_empty() {
+                    continue;
+                }
+                cfg.special = Some(if v == "none" {
+                    None
+                } else {
+                    Some(v.to_string())
+                });
+            }
+            "netmode" => {
+                // turf/zones only (session.js L244 `hostSet` accepts boss
+                // too, but the Rust UI/seam never drives it — M3 scope).
+                if v != "turf" && v != "zones" {
+                    continue;
+                }
+                cfg.mode = Some(v.to_string());
+            }
             _ => continue,
         }
         seen = true;
@@ -106,6 +177,23 @@ pub struct NetTest {
     dur_sent: bool,
     started: bool,
     probe_acc: f32,
+    /// Task 39 §3: the one-shot loadout/mode latch + the settled-result line.
+    loadout_done: bool,
+    result_done: bool,
+    /// Task 39 §4: sandbox join retry — under the software renderer the JS
+    /// host's `welcome` can exceed the transport's 8 s handshake budget
+    /// (`CONNECT_TIMEOUT_MS`, transport.rs L51 ≡ transport.js L48) while the
+    /// room itself stays alive; re-issue the join a few times instead of
+    /// failing the scenario. Test-seam only, no sim/JS behaviour change.
+    join_attempts: u8,
+    retry_acc: f32,
+    /// Task 39 §4 (resilience): the symmetric *create* retry for the host
+    /// tab — the first connect can blow the same 8 s budget while the wasm
+    /// main thread is blocked compiling PBR shaders under SwiftShader,
+    /// leaving the session in `Error` with no room minted (`settle` releases
+    /// `busy`, online.rs L317-319, so a re-issued `Create` runs).
+    create_attempts: u8,
+    create_acc: f32,
 }
 
 impl NetTest {
@@ -124,6 +212,12 @@ impl NetTest {
             dur_sent: false,
             started: false,
             probe_acc: 0.0,
+            loadout_done: false,
+            result_done: false,
+            join_attempts: 0,
+            retry_acc: 0.0,
+            create_attempts: 0,
+            create_acc: 0.0,
         }
     }
 }
@@ -191,6 +285,39 @@ pub fn nettest_update(
         }
     }
 
+    // 1a. Task 39 §4 (resilience) sandbox create retry: the host's first
+    // connect timing out against the 8 s handshake budget (SwiftShader
+    // shader compilation blocking the wasm main thread) lands the session
+    // in `Error` before any room is minted — re-issue Create (up to 3
+    // times, 5 s apart), exactly symmetric to 1b. Test-seam only.
+    if cfg.create && nt.hub_done && os.sess.state() == SessionState::Error && nt.create_attempts < 3
+    {
+        nt.create_acc += time.delta_secs();
+        if nt.create_acc >= 5.0 {
+            nt.create_acc = 0.0;
+            nt.create_attempts += 1;
+            console_log(&format!("[nettest] create retry {}", nt.create_attempts));
+            run_cmd(&mut os.sess, &mut os.flags, SessionCmd::Create);
+        }
+    }
+
+    // 1b. Task 39 §4 sandbox join retry: a `welcome` slower than the 8 s
+    // handshake budget lands the session in `Error` while the room stays
+    // alive — re-issue the join (up to 3 times, 5 s apart). Test-seam only.
+    if cfg.join.is_some()
+        && nt.hub_done
+        && os.sess.state() == SessionState::Error
+        && nt.join_attempts < 3
+    {
+        nt.retry_acc += time.delta_secs();
+        if nt.retry_acc >= 5.0 {
+            nt.retry_acc = 0.0;
+            nt.join_attempts += 1;
+            console_log(&format!("[nettest] join retry {}", nt.join_attempts));
+            run_cmd(&mut os.sess, &mut os.flags, SessionCmd::Join);
+        }
+    }
+
     // 2. the minted room code is the script's join input (≡ net-test L73's
     // `create()` return value, which the harness reads out of the page).
     if cfg.create
@@ -211,6 +338,48 @@ pub fn nettest_update(
             "[nettest] lobby {} members {}",
             if os.sess.is_host() { "host" } else { "guest" },
             os.sess.member_ids().len()
+        ));
+    }
+
+    // 2c. Task 39 §3: latch the loadout picks + host mode once the lobby
+    // lands, *before* ready / start, so the `start()` cfg roster carries
+    // them (JS `setMe` L200-206 self-select; `hostSet({mode})` L244 — the
+    // host-only / Lobby-state guards live in `run_cmd`). The confirmation
+    // line reads the session's effective values: an id the sim dropped
+    // (invalid weapon → current kept; invalid sub/special → cleared) shows
+    // the settled state, which is exactly what the script reconciles on.
+    if !nt.loadout_done
+        && os.sess.state() == SessionState::Lobby
+        && (cfg.weapon.is_some()
+            || cfg.sub.is_some()
+            || cfg.special.is_some()
+            || cfg.mode.is_some())
+    {
+        nt.loadout_done = true;
+        if let Some(w) = &cfg.weapon {
+            run_cmd(
+                &mut os.sess,
+                &mut os.flags,
+                SessionCmd::SetWeapon(w.clone()),
+            );
+        }
+        if let Some(s) = cfg.sub.clone() {
+            run_cmd(&mut os.sess, &mut os.flags, SessionCmd::SetSub(s));
+        }
+        if let Some(sp) = cfg.special.clone() {
+            run_cmd(&mut os.sess, &mut os.flags, SessionCmd::SetSpecial(sp));
+        }
+        if let Some(m) = &cfg.mode {
+            run_cmd(&mut os.sess, &mut os.flags, SessionCmd::SetMode(m.clone()));
+        }
+        let lob = os.sess.lobby();
+        let me = lob.players.iter().find(|p| p.you);
+        console_log(&format!(
+            "[nettest] loadout w={} sub={} sp={} mode={}",
+            me.map(|p| p.weapon.as_str()).unwrap_or("shooter"),
+            me.and_then(|p| p.sub.as_deref()).unwrap_or("-"),
+            me.and_then(|p| p.special.as_deref()).unwrap_or("-"),
+            lob.mode,
         ));
     }
 
@@ -250,9 +419,17 @@ pub fn nettest_update(
         if nt.probe_acc >= 2.0 {
             nt.probe_acc = 0.0;
             let cov = demo.m.paint.coverage();
+            // Task 39 §3: `sub=` = the local deploy counters (non-bomb
+            // `Match::sub_fired`, JS subs.js L71 `use`, + bomb
+            // `bombs_thrown`, weapons.js L151); `sp=` = Σ `specials_used`
+            // (the existing `stats.specials++`, JS actor.js L840 /
+            // specials.js L254 start). Inserted between `cov=` and `rem=`
+            // so the script's `rem=(.*)` capture keeps its meaning.
+            let sub_n = demo.m.sub_fired + demo.m.projectiles.bombs_thrown;
+            let sp_n: u32 = demo.m.actors.iter().map(|a| a.specials_used).sum();
             let mut line = format!(
-                "[nettest] probe t={:.1} cov={:.4}/{:.4} rem=",
-                demo.m.time, cov[0], cov[1]
+                "[nettest] probe t={:.1} cov={:.4}/{:.4} sub={} sp={} rem=",
+                demo.m.time, cov[0], cov[1], sub_n, sp_n
             );
             if let Some(rep) = &nms.rep {
                 let mask = rep.remote_mask();
@@ -268,11 +445,76 @@ pub fn nettest_update(
             console_log(&line);
         }
     }
+
+    // 7. Task 39 §3: the settled-result line, once. `Match::result` is the
+    // end state (the host judges locally, a guest gets the host's `{k:'res'}`
+    // — replication drives the same field, netmatch.js L652-660). Literal
+    // contract (the script parses this verbatim):
+    //   turf:  `[nettest] result w=<0|1> cov=<a>/<b>`
+    //   zones: `[nettest] result w=<0|1> cov=<a>/<b> zone=<c0>/<c1>
+    //           reason=<id|-> pen=<p0>/<p1> ot=<0|1>`
+    // `w` is the sim's seeded tie-break winner, never -1 (the -1 slot stays
+    // reserved for a result-less End, structurally unreachable here).
+    if !nt.result_done
+        && let Some(res) = demo.m.result.as_ref()
+    {
+        nt.result_done = true;
+        let mut line = format!(
+            "[nettest] result w={} cov={:.4}/{:.4}",
+            res.winner, res.coverage[0], res.coverage[1]
+        );
+        if let Some(z) = &res.zones {
+            line.push_str(&format!(
+                " zone={}/{} reason={} pen={:.1}/{:.1} ot={}",
+                z.counts[0],
+                z.counts[1],
+                z.reason.as_deref().unwrap_or("-"),
+                z.penalty[0],
+                z.penalty[1],
+                u8::from(z.overtime)
+            ));
+        }
+        console_log(&line);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tr39_parse_loadout_knobs() {
+        // Task 39 §3: the four new keys, the `none` → `Some(None)` clear
+        // mapping (the cycle UI's NONE stop), and the `netmode` value gate.
+        let c = parse_query(
+            "?netjoin=ABCDE&netweapon=brolly&netsub=none&netspecial=stamp&netmode=zones",
+        )
+        .expect("join makes it Some");
+        assert_eq!(c.weapon.as_deref(), Some("brolly"));
+        assert_eq!(c.sub, Some(None), "`netsub=none` maps to the clear");
+        assert_eq!(c.special, Some(Some("stamp".to_string())));
+        assert_eq!(c.mode.as_deref(), Some("zones"));
+        // turf is the other accepted value; an unknown id is NOT screened
+        // here (the sim's `WEAPONS[x]` / `subOf` guards own validity).
+        let c = parse_query("?net=create&netmode=turf&netweapon=weird&netsub=bomb").expect("some");
+        assert_eq!(c.mode.as_deref(), Some("turf"));
+        assert_eq!(c.weapon.as_deref(), Some("weird"));
+        assert_eq!(c.sub, Some(Some("bomb".to_string())));
+        assert_eq!(c.special, None, "absent knob stays None");
+        // A bad `netmode` value disqualifies only that knob (boss is out of
+        // the M3 seam scope); empty values drop their own knob; no loadout
+        // keys ⇒ all fields None and the cfg still exists for other keys.
+        assert_eq!(
+            parse_query("?net=create&netmode=boss&netweapon=&netsub=")
+                .map(|c| (c.mode, c.weapon, c.sub)),
+            Some((None, None, None))
+        );
+        let c = parse_query("?net=create&netweapon=charger").expect("some");
+        assert_eq!(c.weapon.as_deref(), Some("charger"));
+        assert_eq!(c.sub, None);
+        assert_eq!(c.special, None);
+        assert_eq!(c.mode, None);
+    }
 
     #[test]
     fn tr26_parse_no_seam_params_is_none() {

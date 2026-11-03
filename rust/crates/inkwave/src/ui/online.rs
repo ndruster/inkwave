@@ -236,12 +236,25 @@ pub enum SessionCmd {
     ToggleReady,
     /// `requestTeam` (L3075-3083).
     SetTeam(TeamSel),
+    /// `setMe({weapon})` (session.js L200-206): any lobby player self-selects
+    /// (JS has no lobby loadout UI — the loadout screen drives the same call;
+    /// an unknown id is dropped by the `WEAPONS[x]` guard L201, so the current
+    /// weapon stays).
+    SetWeapon(String),
+    /// `setMe({sub})` (session.js L202: `subOf` — an unknown id maps to `null`,
+    /// i.e. clears the slot).
+    SetSub(Option<String>),
+    /// `setMe({special})` (session.js L203: `specialOf` — unknown ⇒ `null`).
+    SetSpecial(Option<String>),
     /// `hostSet({duration})` (L2841/L2944-2950).
     SetDuration(f64),
     /// `hostSet({bots})` (L2848).
     SetBots(bool),
     /// `hostSet({difficulty})` (L2850).
     SetDifficulty(String),
+    /// `hostSet({mode})` applied at session.js L244 (turf/zones; the Rust UI
+    /// never sends `boss` — out of M3 scope). Host-only.
+    SetMode(String),
     /// `tryStart` (L3060-3072).
     Start,
 }
@@ -424,6 +437,46 @@ pub fn run_cmd<T: Transport, F: FnMut() -> T>(
                 });
             }
         }
+        SessionCmd::SetWeapon(w) => {
+            // setMe L200-206: any lobby player self-selects their weapon (the
+            // validity check lives in `NetSession::set_me`, mirroring the JS
+            // `WEAPONS[x]` guard L201 — an unknown id keeps the old weapon).
+            // The lobby guard follows SetTeam above (`S.launching` L3080).
+            if s.state() != SessionState::Lobby {
+                return;
+            }
+            if s.lobby().players.iter().any(|p| p.you) {
+                s.set_me(MeChange {
+                    weapon: Some(w),
+                    ..Default::default()
+                });
+            }
+        }
+        SessionCmd::SetSub(v) => {
+            // setMe L202: `Some(None)` is the JS explicit `null` — `subOf`
+            // maps it (and any unknown id) to `null`, clearing the slot.
+            if s.state() != SessionState::Lobby {
+                return;
+            }
+            if s.lobby().players.iter().any(|p| p.you) {
+                s.set_me(MeChange {
+                    sub: Some(v),
+                    ..Default::default()
+                });
+            }
+        }
+        SessionCmd::SetSpecial(v) => {
+            // setMe L203 (`specialOf`, same shape as SetSub above).
+            if s.state() != SessionState::Lobby {
+                return;
+            }
+            if s.lobby().players.iter().any(|p| p.you) {
+                s.set_me(MeChange {
+                    special: Some(v),
+                    ..Default::default()
+                });
+            }
+        }
         SessionCmd::SetDuration(d) => {
             // hostSet L2944-2946: host-only, ignored while launching
             if s.is_host() && s.state() == SessionState::Lobby {
@@ -445,6 +498,17 @@ pub fn run_cmd<T: Transport, F: FnMut() -> T>(
             if s.is_host() && s.state() == SessionState::Lobby {
                 s.set_settings(SettingsPatch {
                     difficulty: Some(d),
+                    ..Default::default()
+                });
+            }
+        }
+        SessionCmd::SetMode(m) => {
+            // hostSet mode application (session.js L244): host-only, ignored
+            // once the room left Lobby — the guard is exactly SetDuration's
+            // (menus.js hostSet L2944-2946).
+            if s.is_host() && s.state() == SessionState::Lobby {
+                s.set_settings(SettingsPatch {
+                    mode: Some(m),
                     ..Default::default()
                 });
             }
@@ -565,6 +629,14 @@ pub struct LobbyView {
     pub duration: i64,
     pub bots: bool,
     pub difficulty: String,
+    /// Room mode (`lob.mode`: `'turf'` from `_blankLobby` L61, host edits via
+    /// session.js L244) — drives the MODE toggle label.
+    pub mode: String,
+    /// Own loadout row (`me`, setMe L200-203). With no `me` row yet `weapon`
+    /// falls back to the Profile default `'shooter'` (`_profile()` L67).
+    pub weapon: String,
+    pub sub: Option<String>,
+    pub special: Option<String>,
     /// `SQUIDKIDS n/8` count (L2815).
     pub count: usize,
     /// two-step leave banner (deviation ⑦) when armed.
@@ -756,6 +828,12 @@ pub fn project(f: &OnlineFacts<'_>) -> OnlineView {
         duration: lob.duration,
         bots: lob.bots,
         difficulty: lob.difficulty.clone(),
+        mode: lob.mode.clone(),
+        weapon: me
+            .map(|p| p.weapon.clone())
+            .unwrap_or_else(|| "shooter".to_string()),
+        sub: me.and_then(|p| p.sub.clone()),
+        special: me.and_then(|p| p.special.clone()),
         count: humans,
         leave_text,
         banner: f.flags.banner.clone(),
@@ -1603,5 +1681,271 @@ mod tests {
         let mut caret = 4;
         assert!(code_type('2', &mut draft, &mut caret).is_none());
         assert!(auto_join_armed(&draft, caret, '2'));
+    }
+
+    // -- TR-39.1: lobby loadout / mode commands -------------------------------
+
+    /// Task 39 helper: a host room plus one joined guest, both settled in the
+    /// lobby with two players each (`tr24_start_block_banner` setup).
+    fn host_and_guest(relay: &FakeRelay) -> (Sess, OnlineFlags, Sess, OnlineFlags, String) {
+        let mut h = sess(relay, 11);
+        let mut hf = OnlineFlags::default();
+        run_cmd(&mut h, &mut hf, SessionCmd::Create);
+        for _ in 0..50 {
+            step(&mut h, 1.0);
+            if h.state() == SessionState::Lobby {
+                break;
+            }
+        }
+        let code = h.code().expect("code").to_string();
+        hf.settle(None);
+        let mut g = sess(relay, 22);
+        let mut gf = OnlineFlags {
+            code_draft: code.clone(),
+            ..Default::default()
+        };
+        run_cmd(&mut g, &mut gf, SessionCmd::Join);
+        for _ in 0..50 {
+            step2(&mut h, &mut g, 1.0);
+            if g.state() == SessionState::Lobby
+                && g.lobby().players.len() == 2
+                && h.lobby().players.len() == 2
+            {
+                break;
+            }
+        }
+        gf.settle(None);
+        (h, hf, g, gf, code)
+    }
+
+    #[test]
+    fn tr39_loadout_cmds_converge_and_sanitize() {
+        let relay = FakeRelay::new();
+        let (mut h, mut hf, mut g, mut gf, _code) = host_and_guest(&relay);
+
+        let me_on = |s: &Sess| s.lobby().players.iter().find(|p| p.you).cloned();
+        let other_on = |s: &Sess| s.lobby().players.iter().find(|p| !p.you).cloned();
+
+        // Guest self-selects the full loadout (setMe L200-203): the optimistic
+        // echo (L210-211) lands locally, the host converges off the wire.
+        run_cmd(&mut g, &mut gf, SessionCmd::SetWeapon("charger".into()));
+        run_cmd(&mut g, &mut gf, SessionCmd::SetSub(Some("mine".into())));
+        run_cmd(&mut g, &mut gf, SessionCmd::SetSpecial(Some("crab".into())));
+        // Wait for BOTH sides: the optimistic echo can be overwritten by a
+        // host lobby push minted before the `me` landed (the push is
+        // authoritative, `_message` L358-370), so the guest only settles on
+        // `charger` once the host's post-apply push arrives.
+        let full = |p: &LobbyPlayer| {
+            p.weapon == "charger"
+                && p.sub.as_deref() == Some("mine")
+                && p.special.as_deref() == Some("crab")
+        };
+        for _ in 0..50 {
+            step2(&mut h, &mut g, 1.0);
+            if other_on(&h).is_some_and(|p| full(&p)) && me_on(&g).is_some_and(|p| full(&p)) {
+                break;
+            }
+        }
+        let hg = other_on(&h).expect("guest row on host");
+        assert_eq!(hg.weapon, "charger");
+        assert_eq!(hg.sub.as_deref(), Some("mine"));
+        assert_eq!(hg.special.as_deref(), Some("crab"));
+        let gg = me_on(&g).expect("me row");
+        assert_eq!(gg.weapon, "charger");
+        assert_eq!(gg.sub.as_deref(), Some("mine"));
+        assert_eq!(gg.special.as_deref(), Some("crab"));
+
+        // The host self-selects too (any lobby player may setMe — JS L207
+        // host arm of `this._applyMe(this.myId, o)`).
+        run_cmd(&mut h, &mut hf, SessionCmd::SetWeapon("brolly".into()));
+        for _ in 0..50 {
+            step2(&mut h, &mut g, 1.0);
+            if other_on(&g).is_some_and(|p| p.weapon == "brolly") {
+                break;
+            }
+        }
+        assert_eq!(other_on(&g).expect("host row on guest").weapon, "brolly");
+
+        // `dualies` is a VALID weapon id — the 15-key `WEAPONS` table
+        // (config.js L266) accepts it; it is only absent from the 12-weapon
+        // `WEAPON_ORDER` the lobby UI cycles.
+        run_cmd(&mut g, &mut gf, SessionCmd::SetWeapon("dualies".into()));
+        for _ in 0..50 {
+            step2(&mut h, &mut g, 1.0);
+            if other_on(&h).is_some_and(|p| p.weapon == "dualies") {
+                break;
+            }
+        }
+        assert_eq!(other_on(&h).expect("guest row").weapon, "dualies");
+
+        // Unknown weapon id: JS L201 `if (ch.weapon && WEAPONS[ch.weapon])`
+        // drops the key, so the CURRENT weapon is kept — no `shooter`
+        // fallback (that is the join-time `_profile()` sanitiser L67, not
+        // setMe).
+        run_cmd(&mut g, &mut gf, SessionCmd::SetWeapon("notagun".into()));
+        for _ in 0..10 {
+            step2(&mut h, &mut g, 1.0);
+        }
+        assert_eq!(
+            me_on(&g).expect("me").weapon,
+            "dualies",
+            "unknown weapon id keeps the old weapon (L201)"
+        );
+        assert_eq!(other_on(&h).expect("guest row").weapon, "dualies");
+
+        // Unknown sub/special id: `subOf`/`specialOf` (L18) map it to `null`,
+        // i.e. the slot CLEARS (JS L202-203 — opposite of the weapon arm).
+        run_cmd(&mut g, &mut gf, SessionCmd::SetSub(Some("notasub".into())));
+        run_cmd(
+            &mut g,
+            &mut gf,
+            SessionCmd::SetSpecial(Some("nospecial".into())),
+        );
+        for _ in 0..50 {
+            step2(&mut h, &mut g, 1.0);
+            if other_on(&h).map(|p| (p.sub.clone(), p.special.clone())) == Some((None, None)) {
+                break;
+            }
+        }
+        let gg = me_on(&g).expect("me");
+        assert_eq!(gg.sub, None, "unknown sub id clears the slot");
+        assert_eq!(gg.special, None, "unknown special id clears the slot");
+        let hg = other_on(&h).expect("guest row");
+        assert_eq!(hg.sub, None);
+        assert_eq!(hg.special, None);
+    }
+
+    #[test]
+    fn tr39_set_mode_host_only_and_broadcast() {
+        let relay = FakeRelay::new();
+        let (mut h, mut hf, mut g, mut gf, _code) = host_and_guest(&relay);
+
+        // Host flips the room to zones (hostSet L244 ⇒ `_broadcastLobby`):
+        // the guest lobby keeps the mode (guest lobbyState merge L364).
+        run_cmd(&mut h, &mut hf, SessionCmd::SetMode("zones".into()));
+        for _ in 0..50 {
+            step2(&mut h, &mut g, 1.0);
+            if g.lobby().mode == "zones" {
+                break;
+            }
+        }
+        assert_eq!(h.lobby().mode, "zones");
+        assert_eq!(g.lobby().mode, "zones", "the guest sees the new mode");
+
+        // Guest SetMode is a no-op (host-only guard, session.js L236).
+        run_cmd(&mut g, &mut gf, SessionCmd::SetMode("turf".into()));
+        for _ in 0..10 {
+            step2(&mut h, &mut g, 1.0);
+        }
+        assert_eq!(g.lobby().mode, "zones", "the guest cannot flip the mode");
+        assert_eq!(h.lobby().mode, "zones");
+    }
+
+    #[test]
+    fn tr39_start_roster_carries_loadout() {
+        let relay = FakeRelay::new();
+        let (mut h, mut hf, mut g, mut gf, _code) = host_and_guest(&relay);
+
+        run_cmd(&mut g, &mut gf, SessionCmd::SetWeapon("charger".into()));
+        run_cmd(&mut g, &mut gf, SessionCmd::SetSub(Some("mine".into())));
+        run_cmd(&mut g, &mut gf, SessionCmd::SetSpecial(Some("crab".into())));
+        run_cmd(&mut h, &mut hf, SessionCmd::SetWeapon("brolly".into()));
+        run_cmd(&mut h, &mut hf, SessionCmd::SetSub(Some("bomb".into())));
+        run_cmd(&mut g, &mut gf, SessionCmd::ToggleReady);
+        for _ in 0..50 {
+            step2(&mut h, &mut g, 1.0);
+            if h.can_start()
+                && h.lobby()
+                    .players
+                    .iter()
+                    .any(|p| p.you && p.weapon == "brolly")
+                && h.lobby()
+                    .players
+                    .iter()
+                    .any(|p| !p.you && p.weapon == "charger")
+            {
+                break;
+            }
+        }
+        assert!(h.can_start(), "the guest readied up");
+        run_cmd(&mut h, &mut hf, SessionCmd::Start);
+        assert_eq!(h.state(), SessionState::Starting);
+
+        // Human roster entries carry the chosen loadout verbatim (session.js
+        // L279 `weapon: p.weapon, sub: subOf(p.sub), special: specialOf(…)`).
+        let cfg = h.start_cfg().expect("host cfg").clone();
+        let host_id = h.lobby().players.iter().find(|p| p.you).unwrap().id.clone();
+        let guest_id = h
+            .lobby()
+            .players
+            .iter()
+            .find(|p| !p.you)
+            .unwrap()
+            .id
+            .clone();
+        let humans: Vec<_> = cfg.roster.iter().filter(|r| !r.bot).collect();
+        assert_eq!(humans.len(), 2, "the two humans; bots fill the sides");
+        let hr = humans.iter().find(|r| r.owner == host_id).expect("host");
+        assert_eq!(hr.weapon, "brolly");
+        assert_eq!(hr.sub.as_deref(), Some("bomb"));
+        assert_eq!(hr.special, None, "the host never picked a special");
+        let gr = humans.iter().find(|r| r.owner == guest_id).expect("guest");
+        assert_eq!(gr.weapon, "charger");
+        assert_eq!(gr.sub.as_deref(), Some("mine"));
+        assert_eq!(gr.special.as_deref(), Some("crab"));
+
+        // The guest decodes the *same* cfg off the wire.
+        for _ in 0..50 {
+            step2(&mut h, &mut g, 1.0);
+            if g.start_cfg().is_some() {
+                break;
+            }
+        }
+        assert_eq!(g.start_cfg(), Some(&cfg), "guest cfg == host cfg");
+    }
+
+    #[test]
+    fn tr39_project_lobby_mode_and_loadout() {
+        let flags = OnlineFlags::default();
+        // Default room: turf, no players ⇒ no `me` row, so the projected
+        // weapon is the Profile default `shooter` (session.js `_profile()` L67).
+        let lobby = Lobby::default();
+        let v = project(&facts(
+            SessionState::Lobby,
+            &flags,
+            &lobby,
+            true,
+            Some("BCEFG"),
+            true,
+            None,
+        ));
+        assert_eq!(v.lobby.mode, "turf");
+        assert_eq!(v.lobby.weapon, "shooter");
+        assert_eq!(v.lobby.sub, None);
+        assert_eq!(v.lobby.special, None);
+
+        // zones room with a loaded `me` row.
+        let mut lobby = Lobby {
+            mode: "zones".to_string(),
+            ..Default::default()
+        };
+        let mut me = lp("h1", "Host", true, true, false, TeamSel::Zero);
+        me.weapon = "charger".into();
+        me.sub = Some("mine".into());
+        me.special = Some("crab".into());
+        lobby.players.push(me);
+        let v = project(&facts(
+            SessionState::Lobby,
+            &flags,
+            &lobby,
+            true,
+            Some("BCEFG"),
+            false,
+            None,
+        ));
+        assert_eq!(v.lobby.mode, "zones");
+        assert_eq!(v.lobby.weapon, "charger");
+        assert_eq!(v.lobby.sub.as_deref(), Some("mine"));
+        assert_eq!(v.lobby.special.as_deref(), Some("crab"));
     }
 }

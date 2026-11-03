@@ -88,7 +88,7 @@ M1 渲染为**固定简化档**，唯一运行时可调项：
 | `src/boss/*` | `inkwave_sim::boss` + 渲染 | M2+ | Boss 战 |
 | `src/net/netmatch.js`（825 行） | `inkwave_sim::net::{wire,session,replication,playback}`（事件重放在 `replication::play_events`） | M2 done | codec 与 JS packer 逐字节一致（金标准 `assets/net-fixtures.json`，Task 17）；session/replication/playback/replay 逐字平移（Task 20–25），Rust↔Rust 完整局一致性 TR-25.1 |
 | `src/net/transport.js` | `inkwave_sim::net::transport`（trait + FakeTransport）/ `inkwave::net::transport`（native + wasm） | M2 done | **选型（spec OQ-2）**：native = `tungstenite` 0.26 同步 API + 独立线程 + `std::mpsc`（Bevy 主线程零阻塞），TLS 走 `rustls-tls-webpki-roots`（纯 Rust、离线可解析）；弃 `fastwebsockets`（tokio 异步栈，违反 sim/最小依赖纪律）。wasm = `web-sys` WebSocket。必须发合规 `Origin` 头过 relay ORIGIN_OK |
-| `src/net/session.js` / `mock.js` | `inkwave_sim::net::session` + `inkwave::net`（transport 接线）+ `inkwave::ui::online`（极简大厅） | M2 done | relay 复用、协议不改（`server/` 零改动）；大厅 UI 为极简版（Task 24），showcase 3D 大厅场景未做（M2+） |
+| `src/net/session.js` / `mock.js` | `inkwave_sim::net::session` + `inkwave::net`（transport 接线）+ `inkwave::ui::online`（极简大厅） | M2/Task 39 | relay 复用、协议不改（`server/` 零改动）；大厅 UI 为极简版（Task 24），showcase 3D 大厅场景未做（M2+）；Task 39：lobby loadout cycle 选择（WEAPON 12/SUB 15+NONE/SPECIAL 19+NONE）+ MODE turf⇄zones host-only，roster `{weapon,sub,special,style}` 经 `set_me`/`hostSet` 实值透传（JS L200-206/L244/L279），`matchbuild` 按 actor.js L38 falsy 链接线 `a.sub` |
 
 ## 仓库其他部分
 
