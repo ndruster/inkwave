@@ -391,6 +391,11 @@ pub struct Match {
     /// Zone rules kept for the restart rebuild (only in Zones mode).
     #[serde(skip, default)]
     zones_tuning: Option<ZonesTuning>,
+    /// The bot team plan (JS `zonePlan()` / the `_plans` WeakMap, bots.js
+    /// L70-77): built once per [`Match::zones`] instance by the replication /
+    /// autopilot driver, reticked every frame. Task 38 batch 3.
+    #[serde(skip, default)]
+    pub zone_plan: Option<crate::bot::zones::ZonePlan>,
 }
 
 impl Match {
@@ -509,6 +514,7 @@ impl Match {
             zones: None,
             zone_layout: zone_layout.cloned(),
             zones_tuning,
+            zone_plan: None,
         };
         // JS setup() L96-99: `if (this.mode === 'zones') this.zones = new
         // ZoneControl(this)` — built after the roster/paint exist, before
@@ -634,7 +640,10 @@ impl Match {
         self.projectiles = ProjectileSim::new(self.seed);
         self.rng = Rng::new(self.seed ^ 0x5bd1_e995);
         // JS tears the whole match down (and with it `match.zones`,
-        // match.js L96-99): rebuild the rules engine on the fresh grid.
+        // match.js L96-99): rebuild the rules engine on the fresh grid. The
+        // bot plan rides along — the WeakMap key dies with the old zones
+        // (bots.js L70), so the driver rebuilds it on the next tick.
+        self.zone_plan = None;
         if self.mode == MatchMode::Zones
             && let Some(zt) = self.zones_tuning
         {

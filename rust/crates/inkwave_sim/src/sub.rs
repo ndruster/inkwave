@@ -158,6 +158,27 @@ pub enum SubKind {
 }
 
 impl SubKind {
+    /// JS `THROWN[d.kind]` (bots.js L36, `THROWN.waddle = true` waddle.js
+    /// L768, `THROWN.torpedo = true` torpedo.js L750, `THROWN.shaker = true`
+    /// shaker.js L618, `THROWN[KIND] = true` boomerang.js L594): the lobbed
+    /// / stickable subs (`bomb` / `sticky` / `burst` / `mist` / `seeker` /
+    /// `waddle` / `torpedo` / `shaker` / `boomerang`).
+    #[must_use]
+    pub fn is_thrown(self) -> bool {
+        matches!(
+            self,
+            Self::Bomb
+                | Self::Sticky
+                | Self::Burst
+                | Self::Mist
+                | Self::Seeker
+                | Self::Waddle
+                | Self::Torpedo
+                | Self::Shaker
+                | Self::Boomerang
+        )
+    }
+
     /// The JS `SUBS` key / wire string for this kind.
     #[must_use]
     pub fn id_str(self) -> &'static str {

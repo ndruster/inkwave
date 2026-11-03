@@ -287,7 +287,7 @@
 - 偏差定案 D-T37-1..4 见 spec.md §7.1（含 crossmarket side-zone 取格 turf/zones 等值的前提修正——过滤证据改块数+旗标在场断言）。
 
 ## Task 38: bot normal/hard + 武器/副/特殊使用 + zone tactic
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: medium
 - **Depends On**: Task 36
 - **Description**:
@@ -297,6 +297,26 @@
   - `rule` TR-38.1: 三档同 seed 统计单调性（存活/命中/涂速）报告。
   - `rule` TR-38.2: bot 持各 kind 武器无 panic 长跑（autopilot headless 120 帧 × 全武器矩阵）。
 - **Notes**: 量化对照口径尽量贴 botlab（tools/botlab 只读）。
+
+### Task 38 Completion Evidence（2026-11-03）
+- **档位接线 ✅**：`DifficultySet::get`（未知 id 兜底 normal ≡ JS L276）；`bot_difficulty` helper 使 app 侧 bot 脑实读 `cfg.difficulty`（lobby 默认 normal）；harness `MatchOpts.difficulty`（Default "easy" 保既有 scenario 零漂移）。六参数消费：reaction→反应门限、aimError→瞄准噪声、fireDiscipline→retreat 概率 + `_fightSub` roll（L954 档位消费点）、awareness→感知半径（既有）、aimOmega/aimTurn→瞄准弹簧（既有）。
+- **TR-38.2 ✅**：12 kind × 无头 ≥120 帧矩阵 + sub 15 × special 19 装备矩阵 + zone 角色分配矩阵（bot/tests.rs）全绿；roster 50% sub/special 分布断言（session.rs）落。
+- **逐 kind 行为平移 ✅**（对 bots.js 实读锚）：fight L421-537（lead L428/pref L443/strafe 门 L450/MELEE 冲脸 L451/twins planted L453-459/开火分发 L478-503/charge keep L506-508/游泳逼近 L510/dodge L519-523）；paint L538-610（sweep L540/scan reach L544/paintYawOff L546-553/pitch 梯 L557/逐 kind 开火 L572-597）；refill L611-617；tail L635-709（trying CHARGES 门 L683）。
+- **家族表 + 运行时补丁 ✅**：`is_melee/is_charge/is_long/is_painters`（weapon.rs）+ `is_thrown`（sub.rs）按 JS 初始字面量 + **8 条 kits 运行时补丁**实现（D-T38-2：blade/mitts∈MELEE、bow∈CHARGES/LONG、waddle/torpedo/shaker/boomerang∈THROWN，boomerang 为方括号记法）。
+- **kit 钩子 ✅**：`MAIN_KITS[k].bot`（brolly/blade/bow/mitts 的 fight/paint/paintPitch/stayIn/targetBias/tactics 浅段）+ `SUB_KITS[k].bot` 五件 + 表函数消费链。
+- **sub/special 决策 ✅**：`_fightSub`/`_paintSub`（L950-983）+ bombCd 两帧释放链（L638-639）；`_wantSpecial`（L831-856 fight 15 臂 + paint 白名单）；`_specialCtl`（L858-948：cheer/stamp 否决/九 kind 驱动，strike 热点接 zonePlan.hotspot）。
+- **zone tactic ✅**：`bot/zones.rs` ZonePlan 平移（L68-268：build/tick 重扫/roles 分配/双 center 切分/waves/hotspot）+ zone 手臂（`_zoneSync/_zoneEngage/_zoneHoldGround/_pickZoneGoal` 三角色 picker/`_zoneAim/_zoneSpecial/_zoneBombAim`+lobPitch 全量生效 D-T38-4）；turf 局 zp 恒 None 零漂移。
+- **TR-38.1 ✅（口径定案 D-T38-1）**：8 seeds × 3 档 × 60s turf 局 ladder（rung=team1 骑档位、yardstick=team0 钉 hard）：kills 单调 56/60/81 ✓、survival endpoint hard≥easy ✓（1590.2/1533.3/1631.1s，normal 反序为 seed 噪声主导，评审裁定接受 endpoint 口径）；涂速仅报告（0.00372/0.00373/0.00378）。证据 `rust/tools/verify/logs/task38-ladder-1793671427.log`（per-seed 24 行）。
+- **门禁**：workspace **546 passed**（基线 525→546 单调递增：批一 +5、批二 +12、批三 +4+评审补测）；九段门禁日志 `rust/tools/verify/logs/task38-gates-20261103T021526Z.log`（fmt/clippy/test/wasm32/cargo tree/trunk release/headless 600 帧/JS 树零改动，全 exit 0）。
+
+### Task 38 Review 附录（独立评审：0 blocker / 1 P1 / 4 P2 → 全部当场修复 → APPROVE）
+- 评审员实核通过：ZonePlan/zone 手臂逐段忠实（对 L68-268/L987-1250）；lobPitch 全量移植生效（无 §7 退化）；确定性无 HashMap 迭代序依赖；turf 零漂移（zp 恒 None、既有 scenario 断言无阈值改动、546 复跑绿）；抽核 ~25 处 `// JS L…` 锚，kits/bot.rs 全对；裁剪清单全落模块 doc；spec 承诺钩子真接逐条核（blade stayIn/targetBias、四 kit paintPitch、brolly paint、tail trying、special_ctl 九臂）；JS 树零改动、sim 依赖仅 glam/serde/serde_json。
+- **P1 ✅** ladder 测试尾注「normal 反序 systematic across seeds」因果过度声称 → 改为 seed 噪声主导 + 交换比观测（easy 0.86/normal 0.80/hard 1.42），与 per-seed 数据一致（D-T38-1）。
+- **P2 ✅** zones.rs `_build` 区段 16 处 JS 锚系统性偏 5-6 行 → 按实读修正（faces L71、reach L102、isActive L136、roleOf L137、enemyDir L139-142、onZone L144-147、onActive L149、_build L83-134、二分 L89-91、cellNode L97、nb L103-108、ring/far L109-115、stage L118-131）。
+- **P2 ✅** `el.max(1.0)`→JS `||1` 精确语义（仅 hypot==0 替换）；far 回退改读原始 ring（JS L132 对象字面量求值序，ring 空则 far 也空——真实地图不可达但逐字镜像）。
+- **P2 ✅** paint_sub doc「ink pad short-circuits before the kit hook」措辞误导 → 改为 kit 分支自带 +4 门并直接返回钩子判定。
+- **P2 ✅** 12 个重复 ladder log → 去重留最新 1 个。
+- 修复复验：fmt/clippy/test 重跑全绿（546 passed），九段门禁矩阵全绿。
 
 ## Task 39: 大厅 loadout UI + 跨端完整开黑验证
 - **Status**: `pending`

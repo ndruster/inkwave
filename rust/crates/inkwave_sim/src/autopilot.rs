@@ -121,6 +121,19 @@ pub fn run(
                 for (i, b) in bots.iter().enumerate() {
                     mate_goals[i] = b.goal_node();
                 }
+                let mate_minds = bots.iter().map(|b| Some(b.mind())).collect::<Vec<_>>();
+                // Task 38 batch 3: drive the shared Zone Control plan (JS
+                // `zonePlan().tick()` rides the match update; every actor is
+                // a bot here).
+                let mut zone_plan = m.zone_plan.take();
+                if let Some(zctl) = m.zones.as_ref() {
+                    let mut p = zone_plan.take().unwrap_or_else(|| {
+                        crate::bot::zones::ZonePlan::build(zctl, &nav, &m.paint, &sim)
+                    });
+                    let is_bot = vec![true; n];
+                    p.tick(zctl, &m.paint, &sim, &snap, &m.kinds, &is_bot);
+                    zone_plan = Some(p);
+                }
                 for i in 0..n {
                     let ctx = BotCtx {
                         actors: &snap,
@@ -128,11 +141,19 @@ pub fn run(
                         paint: &m.paint,
                         world: &sim,
                         t: &tuning.player,
-                        w: &tuning.weapons.shooter,
+                        weapons: &tuning.weapons,
+                        weapon_range: &tuning.weapon_range,
+                        kinds: &m.kinds,
+                        runners: &m.runners,
                         mate_goals: &mate_goals,
+                        subs: &m.subs,
+                        mate_minds: &mate_minds,
+                        zones: zone_plan.as_ref(),
+                        zctl: m.zones.as_ref(),
                     };
                     inputs[i] = bots[i].step(FIXED_DT, &mut m.actors[i], &ctx);
                 }
+                m.zone_plan = zone_plan;
             } else {
                 // JS `BotBrain.update` L342: outside `playing` the brains
                 // early-exit with zeroed intents — timers and RNG stay frozen.

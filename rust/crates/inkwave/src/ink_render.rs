@@ -253,6 +253,7 @@ impl DemoSim {
             for (i, b) in self.bots.iter().enumerate() {
                 self.mate_goals[i] = b.goal_node();
             }
+            let mate_minds = self.bots.iter().map(|b| Some(b.mind())).collect::<Vec<_>>();
             for i in 0..n {
                 if i == self.player_slot
                     && let Some((intent, yaw, pitch)) = self.player
@@ -270,8 +271,17 @@ impl DemoSim {
                     paint: &self.m.paint,
                     world: &sim,
                     t: &t.player,
-                    w: &t.weapons.shooter,
+                    weapons: &t.weapons,
+                    weapon_range: &t.weapon_range,
+                    kinds: &self.m.kinds,
+                    runners: &self.m.runners,
                     mate_goals: &self.mate_goals,
+                    subs: &self.m.subs,
+                    mate_minds: &mate_minds,
+                    // The demo match is turf-only (`Match::new`), so the zone
+                    // plan is never live here (Task 38 batch 3).
+                    zones: None,
+                    zctl: None,
                 };
                 self.inputs[i] = self.bots[i].step(FIXED_DT, &mut self.m.actors[i], &ctx);
             }

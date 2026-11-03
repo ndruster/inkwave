@@ -1363,6 +1363,20 @@ pub struct DifficultySet {
     pub hard: Difficulty,
 }
 
+impl DifficultySet {
+    /// JS `BotBrain.setDifficulty` (bots.js L276): `DIFFICULTY[d] ||
+    /// DIFFICULTY.normal` — an unknown / missing id falls back to `normal`.
+    #[must_use]
+    pub fn get(&self, id: &str) -> &Difficulty {
+        match id {
+            "easy" => &self.easy,
+            "normal" => &self.normal,
+            "hard" => &self.hard,
+            _ => &self.normal,
+        }
+    }
+}
+
 /// Parse a tuning document from JSON.
 pub fn tuning_from_str(s: &str) -> Result<Tuning, serde_json::Error> {
     serde_json::from_str(s)

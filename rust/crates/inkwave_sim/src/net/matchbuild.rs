@@ -6,8 +6,10 @@
 //! The logic is unchanged and still mirrors JS `new Match({roster: cfg.roster,
 //! …})` + `setup()` (match.js `_setupRoster` L107-113, placement L85-91) and
 //! `startNetMatch`'s local-slot resolution (match.js L116, netmatch.js L79).
-//! Declared deviations carried over with the code: ④ bot brains use
-//! `tuning.difficulty.easy` (caller-side), ⑤ the match seed is
+//! Declared deviations carried over with the code: ④ bot brains take their
+//! difficulty from the start cfg through [`bot_difficulty`] (Task 38 §1; JS
+//! `new BotBrain(a, cfg.difficulty)`, session.js L292, with the
+//! `DIFFICULTY[d] || normal` fallback, bots.js L276), ⑤ the match seed is
 //! `fnv1a(cfg.id)` (JS uses `Math.random()`; the Rust sim's determinism
 //! contract wants a stable seed).
 
@@ -15,8 +17,20 @@ use crate::actor::{Actor, SimWorld};
 use crate::geometry::ZoneLayout;
 use crate::match_::{Match, MatchMode, SPAWN_RING_N, SPAWN_RING_PHI, SPAWN_RING_R};
 use crate::net::session::{RosterEntry, StartCfg};
-use crate::tuning::{MatchConfig, PlayerTuning, ZonesTuning};
+use crate::tuning::{Difficulty, MatchConfig, PlayerTuning, Tuning, ZonesTuning};
 use crate::weapon::{WeaponKind, WeaponRunner};
+
+/// Task 38 §1: the difficulty slice for this match's bot brains — JS
+/// `new BotBrain(a, cfg.difficulty)` (session.js L292) with the
+/// `DIFFICULTY[d] || DIFFICULTY.normal` fallback (bots.js L276, ported as
+/// [`crate::tuning::DifficultySet::get`]). `build_net_match` itself never
+/// constructs brains (they live on `Replication::attach_bot` /
+/// `drive_bots`, which take the resolved `&Difficulty`); this is the one
+/// place the cfg → slice mapping lives so every caller wires the same value.
+#[must_use]
+pub fn bot_difficulty<'a>(cfg: &StartCfg, tuning: &'a Tuning) -> &'a Difficulty {
+    tuning.difficulty.get(&cfg.difficulty)
+}
 
 /// FNV-1a 64-bit over the match id (deviation ⑤).
 pub fn fnv1a(s: &str) -> u64 {

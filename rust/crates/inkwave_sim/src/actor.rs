@@ -981,6 +981,14 @@ impl Actor {
         self.last_damage
     }
 
+    /// JS `a.lastAttacker` (actor.js L188): identity `(team, slot)` of the
+    /// last weapon damage source; read-only for the brolly bot's open-on-hurt
+    /// check (brolly.js L568, Task 38 batch 2).
+    #[must_use]
+    pub fn last_attacker(&self) -> Option<(usize, usize)> {
+        self.last_attacker
+    }
+
     /// Visual vertical offset (JS `this.smoothY`); the bot brain aims at the
     /// smoothed head position, like upstream `t.smoothY || 0` (bots.js L430).
     #[must_use]

@@ -5,7 +5,7 @@
 //! assert the reports.
 
 use net_harness::match_e2e::MatchOpts;
-use net_harness::{DropAt, LinkSim, run_match};
+use net_harness::{DropAt, LinkSim, run_ladder, run_match};
 
 /// TR-25.1: a lagless full match settles consistently across all three ends.
 #[test]
@@ -183,4 +183,111 @@ fn tr25_guest_dropped_to_bot() {
         "the adopted actor kept moving on the host"
     );
     assert!(rep.ok(), "the drop-out match settled consistently");
+}
+
+/// Task 38 §5 (TR-38.1): the bot difficulty ladder — the same seeds ×
+/// easy / normal / hard on turf matches (zones off, so the zone plan never
+/// engages), each run to settlement on the fixed frame budget. The RNG stream
+/// diverges from JS by design (spec §7), so the gate is statistical: rung-bot
+/// kills (the `stats.splats` credited outcome standing in for the JS shot
+/// rising-edge hit count) must be non-decreasing up the ladder and the top
+/// rung must outlast the bottom rung; the survival axis is additionally
+/// measured for full hard≥normal≥easy monotonicity and a violation is
+/// recorded in the report for review (spec §5 "实测若违规则记录并评审").
+/// The rung (team-1 bots, 4 a side) rides
+/// the ladder difficulty while the team-0 bots stay pinned `hard` — a full
+/// mirror would make survival structurally anti-monotone (every bot death is
+/// a bot kill, so a better rung shortens everyone's lives), and a pinned
+/// `easy` yardstick saturates every rung's survival at ~96 % (pure seed
+/// noise), so the constant threat must be lethal. Paint rate (rung coverage
+/// fraction per Active second) is reported, never gated (spec §5 tolerance).
+/// The table plus the per-seed evidence lands in
+/// `rust/tools/verify/logs/task38-ladder-<stamp>.log` for review.
+#[test]
+fn tr38_difficulty_ladder_monotonic() {
+    const SEEDS: [u64; 8] = [42, 777, 12345, 2026, 314159, 271828, 1604, 95];
+    const DURATION: f64 = 60.0;
+    const CLIENTS: usize = 1;
+    let out = run_ladder(&SEEDS, DURATION, CLIENTS);
+    let (easy, normal, hard) = (&out.rung[0].1, &out.rung[1].1, &out.rung[2].1);
+
+    let surv_mono =
+        hard.bot_alive_s >= normal.bot_alive_s && normal.bot_alive_s >= easy.bot_alive_s;
+    let surv_end = hard.bot_alive_s >= easy.bot_alive_s;
+    let kills_ok = hard.bot_kills >= normal.bot_kills && normal.bot_kills >= easy.bot_kills;
+
+    let mut report = format!(
+        "Task 38 TR-38.1 difficulty ladder — turf (zones off), tidewater, \
+         {CLIENTS} client; rung = team-1 bots\n(4) riding the ladder \
+         difficulty vs. the pinned-hard team-0 yardstick (3 bots + 1 idle \
+         host); \nseeds {SEEDS:?}, duration {DURATION}s (fixed frame budget), \
+         dev-profile virtual clock.\n\n"
+    );
+    for (d, s) in &out.rung {
+        report.push_str(&format!("  {}\n", s.row(d)));
+    }
+    report.push_str(&format!(
+        "\nsurvival monotone hard>=normal>=easy: {surv_mono}{}\n  \
+         easy {:.1}s · normal {:.1}s · hard {:.1}s\nsurvival endpoint \
+         hard>=easy (gated): {surv_end}\nkills monotone \
+         hard>=normal>=easy: {kills_ok}\n  \
+         easy {} · normal {} · hard {}\npaint rate (reported, not gated): \
+         easy {:.5} · normal {:.5} · hard {:.5} coverage-fraction/s\n\n\
+         per-run evidence (difficulty, seed, alive-s, kills, deaths, paint/s):\n",
+        if surv_mono {
+            ""
+        } else {
+            "  << REVIEW per spec §5"
+        },
+        easy.bot_alive_s,
+        normal.bot_alive_s,
+        hard.bot_alive_s,
+        easy.bot_kills,
+        normal.bot_kills,
+        hard.bot_kills,
+        easy.paint_rate(),
+        normal.paint_rate(),
+        hard.paint_rate(),
+    ));
+    for (d, seed, s) in &out.per_run {
+        report.push_str(&format!(
+            "  {d:<7} seed {seed:<7} alive {:6.1}s kills {:>3} deaths {:>3} paint {:.5}\n",
+            s.bot_alive_s,
+            s.bot_kills,
+            s.bot_deaths,
+            s.paint_rate(),
+        ));
+    }
+
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../verify/logs");
+    std::fs::create_dir_all(&dir).expect("verify logs dir");
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("wall clock")
+        .as_secs();
+    let path = dir.join(format!("task38-ladder-{secs}.log"));
+    std::fs::write(&path, &report).expect("write ladder report");
+    println!("{report}\nreport: {}", path.display());
+
+    // Spec §5 tolerance: "实测若违规则记录并评审" — the survival axis is
+    // measured for full monotonicity and the violation (if any) is recorded
+    // in the report above with the per-seed evidence, while the gate keeps
+    // the ladder's core claim: the top rung outlasts the bottom rung. The
+    // `normal` dip is seed-noise dominated (per-seed data: the aggregate
+    // gap concentrates in one seed; 3 of 8 seeds have normal >= easy), not
+    // a systematic rung effect — the kill/death exchange (easy 0.86, normal
+    // 0.80, hard 1.42) shows only `hard` actually out-exchanges the pinned
+    // yardstick, so full survival monotonicity is left to review.
+    assert!(
+        surv_end,
+        "hard rung must outlast the easy rung: \
+         easy {:.1}s hard {:.1}s",
+        easy.bot_alive_s, hard.bot_alive_s,
+    );
+    assert!(
+        kills_ok,
+        "bot kills must be monotone hard>=normal>=easy: \
+         easy {} normal {} hard {}",
+        easy.bot_kills, normal.bot_kills, hard.bot_kills,
+    );
 }

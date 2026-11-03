@@ -1,0 +1,80 @@
+=== fmt ===
+sed: /root/.trae-cn-server/bin/stable-18cb5d04f38268251cd6fe91555dd2b55cd5f959-debian10/modules/ai-agent/libselinux.so.1: no version information available (required by sed)
+FMT_EXIT=0
+=== clippy ===
+sed: /root/.trae-cn-server/bin/stable-18cb5d04f38268251cd6fe91555dd2b55cd5f959-debian10/modules/ai-agent/libselinux.so.1: no version information available (required by sed)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.17s
+CLIPPY_EXIT=0
+=== test ===
+sed: /root/.trae-cn-server/bin/stable-18cb5d04f38268251cd6fe91555dd2b55cd5f959-debian10/modules/ai-agent/libselinux.so.1: no version information available (required by sed)
+running 63 tests
+test result: ok. 63 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.15s
+running 457 tests
+test paint::tests::flood_same_region_replaces_running_flood ... ok
+test result: ok. 456 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 34.42s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 5 tests
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 4 tests
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.00s
+running 10 tests
+test tr38_difficulty_ladder_monotonic has been running for over 60 seconds
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 104.72s
+running 8 tests
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+TEST_EXIT=0
+=== wasm32 check ===
+sed: /root/.trae-cn-server/bin/stable-18cb5d04f38268251cd6fe91555dd2b55cd5f959-debian10/modules/ai-agent/libselinux.so.1: no version information available (required by sed)
+    Checking inkwave v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 15.33s
+WASM_EXIT=0
+=== cargo tree -p inkwave_sim ===
+sed: /root/.trae-cn-server/bin/stable-18cb5d04f38268251cd6fe91555dd2b55cd5f959-debian10/modules/ai-agent/libselinux.so.1: no version information available (required by sed)
+inkwave_sim v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave_sim)
+├── glam v0.30.10
+│   └── serde_core v1.0.229
+├── serde v1.0.229
+│   ├── serde_core v1.0.229
+│   └── serde_derive v1.0.229 (proc-macro)
+│       ├── proc-macro2 v1.0.107
+│       │   └── unicode-ident v1.0.26
+│       ├── quote v1.0.47
+│       │   └── proc-macro2 v1.0.107 (*)
+│       └── syn v3.0.6
+│           ├── proc-macro2 v1.0.107 (*)
+│           ├── quote v1.0.47 (*)
+│           └── unicode-ident v1.0.26
+└── serde_json v1.0.151
+    ├── itoa v1.0.18
+    ├── memchr v2.8.3
+    ├── serde_core v1.0.229
+    └── zmij v1.0.23
+TREE_EXIT=0
+=== trunk build ===
+sed: /root/.trae-cn-server/bin/stable-18cb5d04f38268251cd6fe91555dd2b55cd5f959-debian10/modules/ai-agent/libselinux.so.1: no version information available (required by sed)
+2026-11-03T02:21:01.631501Z  INFO   2: error from asset pipeline
+2026-11-03T02:21:01.631503Z  INFO   3: running wasm-bindgen
+2026-11-03T02:21:01.631505Z  INFO   4: wasm-bindgen call to executable '/root/.cargo/bin/wasm-bindgen' with args: '["--target=web", "--out-dir=/root/work/project/inkwave/rust/target/wasm-bindgen/release", "--out-name=inkwave", "/root/work/project/inkwave/rust/target/wasm32-unknown-unknown/release/inkwave.wasm", "--no-typescript"]' returned a bad status: signal: 9 (SIGKILL)
+TRUNK_EXIT=0
+=== headless ===
+sed: /root/.trae-cn-server/bin/stable-18cb5d04f38268251cd6fe91555dd2b55cd5f959-debian10/modules/ai-agent/libselinux.so.1: no version information available (required by sed)
+     Running `target/release/inkwave --headless --frames 600`
+[inkwave] boot: sim crate 0.1.0-m1 (headless = true)
+[inkwave] headless frames complete
+HEADLESS_EXIT=0
+=== JS tree git status ===
+JS_TREE_CLEAN
+GATES_DONE

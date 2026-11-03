@@ -18,8 +18,8 @@
 //!    until `go` (`go_pending`), then re-enters `intro` on every client like
 //!    JS `netMatchGo` → `m.start()` (main.js L816-821). Guests additionally
 //!    re-enter on the host's `{k:'st'}` through the replication layer.
-//!  - ④ bot brains always use `tuning.difficulty.easy` (the Tuning table
-//!    ships one difficulty in M1).
+//!  - ④ (resolved by Task 38) bot brains read `cfg.difficulty` through
+//!    `DifficultySet::get` (JS `BotBrain.setDifficulty`, bots.js L276).
 //!  - ⑤ the match seed is `fnv1a(cfg.id)` (JS uses `Math.random()`; the Rust
 //!    sim's determinism contract wants a stable seed).
 
@@ -27,7 +27,7 @@ use bevy::prelude::*;
 use inkwave_sim::actor::{ActorInput, FIXED_DT, SimWorld};
 use inkwave_sim::bot::Bot;
 use inkwave_sim::match_::{Match, MatchEvent};
-use inkwave_sim::net::matchbuild::{build_net_match, fnv1a, local_roster_index};
+use inkwave_sim::net::matchbuild::{bot_difficulty, build_net_match, fnv1a, local_roster_index};
 use inkwave_sim::net::replication::{Replication, ReplicationEvent};
 use inkwave_sim::net::session::{MatchPhase, SessionEvent, StartCfg, map_no_bots};
 
@@ -113,10 +113,16 @@ fn start_net_match(
     // JS match.js L112: every bot roster entry gets a brain. On the host the
     // bot slots are owned (non-remote) so `attach_bot` takes; on a guest they
     // are remote and it is a no-op — exactly like JS (bots run host-side).
-    // Deviation ④: the one Tuning difficulty.
+    // Task 38 §1: the difficulty rides the start config (JS `new BotBrain(a,
+    // cfg.difficulty)`, match.js L112).
     for (i, r) in cfg.roster.iter().enumerate() {
         if r.bot {
-            rep.attach_bot(i, &built.actors[i], &demo.tuning.difficulty.easy, seed);
+            rep.attach_bot(
+                i,
+                &built.actors[i],
+                bot_difficulty(&cfg, &demo.tuning),
+                seed,
+            );
         }
     }
     // JS netmatch.js L79: humans-only stage — owners who left while the
@@ -140,7 +146,7 @@ fn start_net_match(
         rep.attach_bot(
             nms.local_idx,
             &built.actors[nms.local_idx],
-            &demo.tuning.difficulty.easy,
+            bot_difficulty(&cfg, &demo.tuning),
             seed,
         );
     }
@@ -350,7 +356,8 @@ pub fn net_tick(
                     &demo.nav,
                     &sim,
                     &t.player,
-                    &t.weapons.shooter,
+                    &t.weapons,
+                    &t.weapon_range,
                     &mut nms.inputs,
                 );
                 // Local player input into `inputs[local_idx]` (JS
@@ -696,14 +703,21 @@ mod tests {
 
         // N fixed substeps: host-authoritative sim + guest replication.
         let tp = &demo.tuning.player;
-        let sp = &demo.tuning.weapons.shooter;
         let ws = &demo.tuning.weapons;
         let sb = &demo.tuning.subs;
         let mut hinputs = vec![ActorInput::default(); hm.actors.len()];
         let mut ginputs = vec![ActorInput::default(); gm.actors.len()];
         // INTRO_TIME is 4.2 s (match_.rs L70): 300 substeps clear it.
         for _ in 0..300 {
-            hrep.drive_bots(&mut hm, &demo.nav, &sim, tp, sp, &mut hinputs);
+            hrep.drive_bots(
+                &mut hm,
+                &demo.nav,
+                &sim,
+                tp,
+                ws,
+                &demo.tuning.weapon_range,
+                &mut hinputs,
+            );
             hm.step_masked(
                 FIXED_DT,
                 &hinputs,
@@ -723,7 +737,15 @@ mod tests {
                 h.transport_mut().unwrap(),
             );
             hm.events.extend(rest);
-            grep.drive_bots(&mut gm, &demo.nav, &sim, tp, sp, &mut ginputs);
+            grep.drive_bots(
+                &mut gm,
+                &demo.nav,
+                &sim,
+                tp,
+                ws,
+                &demo.tuning.weapon_range,
+                &mut ginputs,
+            );
             gm.step_masked(
                 FIXED_DT,
                 &ginputs,

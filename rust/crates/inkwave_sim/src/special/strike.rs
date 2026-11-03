@@ -33,6 +33,10 @@ pub struct State {
     /// Sim-side latch (JS `launch` runs inline at L1292): [`body`] raises it,
     /// the match consumes it in [`launch`] the same frame.
     pub launch: bool,
+    /// JS `s._zoneAimed` (bots.js L873-874): the bot has retargeted this
+    /// strike onto the live zone's hotspot (Task 38 batch 3).
+    #[serde(default)]
+    pub zone_aimed: bool,
 }
 
 impl Default for State {
@@ -43,6 +47,7 @@ impl Default for State {
             auto_t: None,
             target: Vec3::ZERO,
             launch: false,
+            zone_aimed: false,
         }
     }
 }
@@ -63,6 +68,7 @@ pub fn start(a: &mut Actor, s: &mut SpecialActive) {
         auto_t: None,
         target: Vec3::new(tx, 0.0, tz),
         launch: false,
+        zone_aimed: false,
     });
 }
 

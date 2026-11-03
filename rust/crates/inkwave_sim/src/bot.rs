@@ -2,8 +2,9 @@
 //! `difficulty.easy` reaction/aim-error parameters → break off to heal /
 //! refill → respawn and continue. Faithful *simplification* of
 //! `src/game/bots.js` (`BotBrain`): the upstream state machine, perception,
-//! aim spring and stuck-recovery are ported; the Spritzer-only M1 weapon set
-//! removes every per-kind branch, and M2+ systems are out of scope.
+//! aim spring and stuck-recovery are ported; the M1 Spritzer-only build
+//! dropped the per-kind branches (Task 38 batch 1 restores them), and M2+
+//! systems are out of scope.
 //!
 //! Upstream mapping (bots.js):
 //!   - `BotBrain.reset` / ctor                          -> [`Bot::new`]
@@ -25,13 +26,53 @@
 //!   - `_wet` / `_nearWater` / `_edgeGuard` /
 //!     `_squidWouldDrop` / `_avoidWater`                -> water helpers
 //!
-//! Out of scope (M1, per PORT_MAP — "仅 easy" + Spritzer):
-//!   - Zone Control plan / roles / retake waves, Boss Battle, threat AI
-//!     (Waddle/Torpedo/canopy), kits, subs, specials, super jumps.
-//!   - Weapon kinds other than `shooter`: the per-kind branches (MELEE /
-//!     CHARGES / spinner / splatling / slosher / brush / roller / dualies /
-//!     twins) collapse to the Spritzer `else` branches.
+//! Task 38 batch 1 wires the per-kind branches for the eight non-kit roster
+//! kinds (`shooter` / `twins` / `blaster` / `spinner` / `charger` / `roller`
+//! / `brush` / `bucket`): the MELEE / CHARGES tables (bots.js L18-19), the
+//! fight dispatch (L478-503), the paint ladder (L540-597) and the tail
+//! `trying` gate (L683). The retired kinds (dualies / slosher / splatling)
+//! never enter the enum, so their branches are absent by construction.
+//!
+//! Task 38 batch 2 wires the four kit main-weapon hooks (`MAIN_KITS[k].bot`:
+//! brolly / blade / bow / mitts — bots.js L478-503 / L528 / L557 / L367 /
+//! L1627), the sub decision chain (`_fightSub` L950-967, `_paintSub`
+//! L969-983, the `bombCd` timer L286/L343, the `_bombAim` / `_releaseBomb`
+//! two-frame release L638-639 and the five `SUB_KITS[k].bot` hooks) and the
+//! special chain (`_wantSpecial` L830-856, `_specialCtl` L859-948). Batch 2
+//! also activates the kit-side runtime family-table patches — `MELEE.blade`
+//! (blade.js L35) / `MELEE.mitts` (mitts.js L833) / `CHARGES.bow` +
+//! `LONG.bow` (bow.js L492-493) / `THROWN.waddle|torpedo|shaker` (waddle.js
+//! L768 / torpedo.js L750 / shaker.js L618 / boomerang.js L594) — so the
+//! Cutlass and the Mitts
+//! now get full MELEE treatment in `fight` / `paint` and the Bow joins the
+//! charging-long ladder (see `WeaponKind::is_melee` / `is_charge` /
+//! `is_long` and `SubKind::is_thrown` docs).
+//!
+//! Out of scope (per spec §6 batches):
+//!   - Boss Battle, threat AI (Waddle/Torpedo/canopy), super jumps.
 //!   - Climb edges (see `nav` module docs): the bot never plans a climb.
+//!
+//! Batch-2 segments cut from the JS originals (recorded for review):
+//!   - the Cutlass deep fight tactics (`botTactics` in blade.js — pre-charge,
+//!     flank, swim-in; only `stayIn` / `targetBias` / `paint` / `paintPitch`
+//!     are ported) and its `_blHold` bookkeeping;
+//!   - the Mitts leap / wall-cling driving, mid-range pounce and travel
+//!     pounce (mitts.js L768-779 / L783-813 / L822-829) — `fight` keeps the
+//!     reach punch, `paint` the quick-cut tail, `tactics` the 5–14 m
+//!     approach;
+//!   - the brolly launched-canopy advance segment (brolly.js L586-592, the
+//!     sim's `LAUNCHED` registry is not bot-visible) and `_shieldFight` /
+//!     `_canopyCtl` (bots.js L525 / L623-626);
+//!   - the stamp threat-steer (bots.js L460-470) and the threat / climb
+//!     aim overrides in `_tail`;
+//!   - the bow group-aim `botYaw` on release (bow.js L473 — the runner fires
+//!     along the bot's own aim spring);
+//!   - the `_zoneJump` / `zJumpAt` super-jump-to-the-zone arms (bots.js
+//!     L1026 / L986-1016 — the sim has no super jumps; batch 3 wires every
+//!     other Zone Control arm: `_zoneSync` / `_zoneEngage` /
+//!     `_zoneHoldGround` / `_pickZoneGoal` + the four spot pickers /
+//!     `_zoneAim` / `_zoneSpecial` / `_zoneBombAim` and the strike
+//!     `_zoneAimed` retarget).
 //!
 //! Intentional deviations from JS (recorded for review):
 //!   - **`Math.random()`** → the bot's own seeded [`Rng`] stream (one per
@@ -46,9 +87,37 @@
 //!     the move-heading slew keeps motion smooth without the probe cost.
 //!   - **`_tail` bomb release / `aimPoint`**: the weapon runner consumes the
 //!     actor's `aim_dir()` directly; no separate aim point is needed.
-//!   - **dodge-hop**: upstream also rolls for dualies/twins kit moves; the
-//!     Spritzer branch (strafe-hop right after a hit, `lastDamage < 0.25`,
-//!     `dodgeCd`, never near water) is kept verbatim.
+//!   - **`chargeRelease` draw timing**: JS `reset()` L290 pre-draws it for
+//!     every brain; the Rust bot draws it lazily on first use (only the
+//!     charge kinds ever read it), keeping the M1 shooter RNG stream — and
+//!     the recorded harness baselines — byte-identical.
+//!   - **`bombCd` draw timing**: JS `reset()` L286 pre-draws `3 + rand·4`
+//!     for every brain; the Rust bot draws it lazily in the step timer block
+//!     (same precedent as `charge_release`). Batch 2 inserts one extra draw
+//!     early in every brain's stream, so the recorded bot-run baselines move
+//!     with the new behaviour.
+//!   - **brolly `G.time`**: the canopy hold / shield windows (brolly.js
+//!     L565-576) ride the brain's own `t_time` clock instead of the global
+//!     match clock — monotonic per brain, the same deltas.
+//!   - **bow bot scratch fields**: JS stores `botWant` / `botJump` /
+//!     `botJumped` / `botPaint` on `runner.kit` (bow.js L458-488); the Rust
+//!     [`crate::weapon::bow::BowKit`] has no bot slot, so they live on the
+//!     brain (same values, same lifetimes — the kit is per-runner either
+//!     way).
+//!   - **blade `targetBias` teammate memory**: JS reads the live
+//!     `e.bot.target` / `e.bot.seeTimer` of every enemy brain
+//!     (blade.js L718-725); the sim snapshots them through
+//!     [`BotCtx::mate_minds`]. Brains the replicator does not own (remote
+//!     actors) report `None` — the bias then only weighs the low-hp term.
+//!   - **fight-block gate**: JS L421 runs the fight / retreat block on any
+//!     `this.target` (not on visibility); M1 gated it on the target being
+//!     visible. Batch 1 widens it to the JS gate so the charge-keep branch
+//!     (L506-508) is reachable — the fire gate inside still uses
+//!     `enemyVisible` (L479), so the visible-duel behaviour is unchanged.
+//!   - **dodge-hop**: the twins probability / cooldown split (JS L519-522,
+//!     `0.6` / `0.9 + rand` vs `0.3` / `2 + rand·2.5`) and the CHARGES no-jump
+//!     gate (L519) are ported; the retired dualies roll branch (L511-518)
+//!     is absent by construction.
 //!   - **`_pickPaintGoal` goal-coverage check** (JS `goalCheckT`): the 1 s
 //!     "already covered → move on" probe is folded into the goal timer.
 //!   - **`_pickPaintGoal` `bot.goal` penalty**: teammate goals come from
@@ -58,19 +127,27 @@
 //!     the nearest valid node outright (M1 simplification; the walk-out
 //!     behaviour is identical on Tidewater's open plaza).
 
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
 use serde::{Deserialize, Serialize};
 
 use crate::actor::{Actor, ActorInput, Form, SimWorld};
+use crate::bot::zones::{WaveState, ZoneInfo, ZonePlan, ZoneRole, lob_pitch};
 use crate::match_::find_actor;
+use crate::match_::zones::ZoneState;
 use crate::nav::{EdgeType, NavGraph};
 use crate::paint::PaintGrid;
-use crate::tuning::{Difficulty, PlayerTuning, Spritzer};
-use crate::weapon::Rng;
+use crate::special::{KindState, def_by_id, specials};
+use crate::sub::{SubKind, SubState, SubSystem, ink_cost};
+use crate::tuning::{Difficulty, PlayerTuning, WeaponSet};
+use crate::weapon::brolly::CanopyState;
+use crate::weapon::{Rng, WeaponKind, WeaponRunner};
 use glam::{Vec2, Vec3};
 
-/// Paint-mode aim pitch for the shooter (JS `else` branch, bots.js L557).
+/// Paint-mode aim pitch for the generic branch (JS `else`, bots.js L557).
 const PAINT_PITCH: f32 = -0.42;
-/// Paint scan reach for the shooter (JS `else` branch, bots.js L544).
+/// Paint scan reach for the generic branch (JS `else`, bots.js L544).
 const PAINT_REACH: f32 = 4.5;
 /// Preferred duel distance factor (JS `range * 0.7`, non-melee/charger).
 const FIGHT_PREF_F: f32 = 0.7;
@@ -89,17 +166,131 @@ pub enum BotMode {
     Retreat,
 }
 
-/// Shared read-only context for one bot decision step.
+/// A teammate brain's target memory, for the Cutlass target bias (JS reads
+/// the live `e.bot.target` / `e.bot.seeTimer`, blade.js L718-725; the sim
+/// snapshots it through [`BotCtx::mate_minds`]).
+#[derive(Debug, Clone, Copy)]
+pub struct MateMind {
+    /// JS `e.bot.target` — `(team, slot)`.
+    pub target: Option<(usize, usize)>,
+    /// JS `e.bot.seeTimer`.
+    pub see_timer: f32,
+}
+
+/// JS `this._zAim` (bots.js L304 / L1199): a needy patch of the zone the
+/// paint aim is locked onto (Task 38 batch 3).
+#[derive(Debug, Clone, Copy)]
+struct ZAim {
+    x: f32,
+    y: f32,
+    z: f32,
+    /// JS `z.d`: the live XZ distance, refreshed every frame (L1203).
+    d: f32,
+}
+
+/// JS `this.zBomb` (bots.js L1256): the lob aim to hold while a Zone Control
+/// bomb throw winds up (two-frame release like the plain `_bombAim`).
+#[derive(Debug, Clone, Copy)]
+struct ZoneBomb {
+    yaw: f32,
+    pitch: f32,
+    /// JS `z.t`: the hold window (1.1 s).
+    t: f32,
+    release: bool,
+}
+
+/// Shared read-only context for one bot decision step. Task 38 batch 1: the
+/// Spritzer-only `w` slice became the full weapon table plus the per-id
+/// `weaponRange` map (JS `this.a.weapon` / `weaponRange(w)`, bots.js L1619),
+/// and the parallel `kinds` / `runners` arrays (JS reads the live
+/// `a.weapon.kind` and `a.weaponRunner` state). Batch 2 adds the sub
+/// registry (JS `G.subs`, bots.js L980 / the kit `blocked` hooks) and the
+/// teammate target snapshot (blade.js L718-725).
 pub struct BotCtx<'a> {
     pub actors: &'a [Actor],
     pub nav: &'a NavGraph,
     pub paint: &'a PaintGrid,
     pub world: &'a SimWorld<'a>,
     pub t: &'a PlayerTuning,
-    pub w: &'a Spritzer,
+    /// `WEAPONS` (config.js L94-264) — the full 12-weapon table.
+    pub weapons: &'a WeaponSet,
+    /// `weaponRange()` (config.js L307-315) precomputed per weapon id
+    /// (`Tuning::weapon_range`).
+    pub weapon_range: &'a HashMap<String, f32>,
+    /// Per-actor weapon kinds, parallel to `actors` (`Match::kinds`).
+    pub kinds: &'a [WeaponKind],
+    /// Per-actor weapon runners, parallel to `actors` (`Match::runners`;
+    /// JS `a.weaponRunner`).
+    pub runners: &'a [WeaponRunner],
     /// Teammate paint goals by roster index (`None` = no goal); mirrors the
     /// JS `m.bot.goal` read in `_pickPaintGoal`.
     pub mate_goals: &'a [Option<usize>],
+    /// `G.subs` (bots.js L980, the kit `blocked` hooks L733/L574).
+    pub subs: &'a SubSystem,
+    /// Teammate target memory by roster index, parallel to `actors`.
+    pub mate_minds: &'a [Option<MateMind>],
+    /// The shared Zone Control plan — `Some` only in a zones match (JS
+    /// `zonePlan()`, bots.js L356; Task 38 batch 3).
+    pub zones: Option<&'a crate::bot::zones::ZonePlan>,
+    /// The live Zone Control rules state (JS `G.zones`).
+    pub zctl: Option<&'a crate::match_::zones::ZoneControl>,
+}
+
+impl<'a> BotCtx<'a> {
+    /// JS `weaponRange(w)` (config.js L307-315) — the precomputed per-id
+    /// effective reach; the `|| 12` default of the JS `default:` arm covers
+    /// a missing id.
+    #[must_use]
+    pub fn weapon_reach(&self, kind: WeaponKind) -> f32 {
+        self.weapon_range
+            .get(kind.id_str())
+            .copied()
+            .unwrap_or(12.0)
+    }
+
+    /// JS `_range()` (bots.js L1617-1620): `weaponRange(w) * (CHARGES ? 0.9 : 1)`.
+    #[must_use]
+    pub fn bot_range(&self, kind: WeaponKind) -> f32 {
+        self.weapon_reach(kind) * if kind.is_charge() { 0.9 } else { 1.0 }
+    }
+
+    /// JS L428 lead denominator `w.projSpeed || w.speedMax || w.throwSpeed || 30`
+    /// (the retired slosher windup arm is absent by construction; the kit
+    /// kinds' own `MAIN_KITS[k].bot` triggers land in batch 2).
+    #[must_use]
+    pub fn shot_speed(&self, kind: WeaponKind) -> f32 {
+        let w = self.weapons;
+        match kind {
+            WeaponKind::Shooter => w.shooter.proj_speed,
+            WeaponKind::Twins => w.twins.proj_speed,
+            WeaponKind::Blaster => w.blaster.proj_speed,
+            WeaponKind::Brolly => w.brolly.proj_speed,
+            WeaponKind::Blade => w.blade.proj_speed,
+            WeaponKind::Spinner => w.spinner.speed_max,
+            WeaponKind::Bucket => w.bucket.throw_speed,
+            // charger / roller / brush / bow / mitts carry none of the three
+            // JS fields → the `|| 30` fallback.
+            WeaponKind::Charger
+            | WeaponKind::Roller
+            | WeaponKind::Brush
+            | WeaponKind::Bow
+            | WeaponKind::Mitts => 30.0,
+        }
+    }
+
+    /// This bot's own kind / runner (JS `this.a.weapon` / `this.a.weaponRunner`).
+    fn own(&self, team: usize, slot: usize) -> (WeaponKind, &WeaponRunner) {
+        static IDLE: std::sync::OnceLock<WeaponRunner> = std::sync::OnceLock::new();
+        let idx = find_actor(self.actors, team, slot);
+        let kind = idx
+            .and_then(|i| self.kinds.get(i))
+            .copied()
+            .unwrap_or(WeaponKind::Shooter);
+        let runner = idx
+            .and_then(|i| self.runners.get(i))
+            .unwrap_or_else(|| IDLE.get_or_init(WeaponRunner::default));
+        (kind, runner)
+    }
 }
 
 /// Per-bot observable counters for the autopilot report (TR-9.1/9.3/9.4).
@@ -166,6 +357,14 @@ pub struct Bot {
     sweep: f32,
     paint_scan_t: f32,
     paint_yaw_off: f32,
+    paint_pause: f32,
+    // ---- per-kind fight state (Task 38 batch 1)
+    /// JS `this.chargeRelease` (bots.js L290) — drawn lazily on first read
+    /// (module-docs deviation).
+    charge_release: Option<f32>,
+    /// JS `this.plantT` / `this._wasPlanted` (bots.js L455-457, twins).
+    plant_t: f32,
+    was_planted: bool,
     // ---- refill / retreat
     refill_until: f32,
     retreat_t: f32,
@@ -196,6 +395,69 @@ pub struct Bot {
     /// Whether the last frame's fire command was accepted (JS `_firing`,
     /// widens the aim tolerance while a burst is already running).
     firing: bool,
+    // ---- batch 2: sub / special / kit scratch (Task 38 batch 2)
+    /// JS `this.bombCd` (bots.js L286/L343) — drawn lazily on the first frame
+    /// (module-docs deviation).
+    bomb_cd: Option<f32>,
+    /// JS `this._bombAim` (bots.js L505/L600/L638) — press-frame stamp.
+    bomb_aim: bool,
+    /// JS `this._releaseBomb` (bots.js L639) — release-frame stamp.
+    release_bomb: bool,
+    /// JS `this.spT` (bots.js L887).
+    sp_t: f32,
+    /// JS `this.barrageCd` (bots.js L890).
+    barrage_cd: f32,
+    /// JS `this.stampFlip` (bots.js L906).
+    stamp_flip: f32,
+    /// JS `this.blowT` (bots.js L932).
+    blow_t: f32,
+    /// JS `brain._brolly.holdUntil` (kits/brolly.js L563).
+    bb_hold_until: f32,
+    /// JS `brain._brolly.nextShield` (kits/brolly.js L563).
+    bb_next_shield: f32,
+    /// JS `brain._brolly.launch` (kits/brolly.js L563).
+    bb_launch: bool,
+    /// JS `runner.kit.botWant` (kits/bow.js L458) — brain-side scratch
+    /// (module-docs deviation).
+    bow_want: f32,
+    /// JS `runner.kit.botJump` (kits/bow.js L460).
+    bow_jump: bool,
+    /// JS `runner.kit.botJumped` (kits/bow.js L461).
+    bow_jumped: bool,
+    /// JS `runner.kit.botPaint` (kits/bow.js L488).
+    bow_paint: f32,
+    /// JS `brain._bl.waveT` (kits/blade.js L408, seeded to 3).
+    bl_wave_t: f32,
+    /// JS `brain._bl.press` (kits/blade.js L408).
+    bl_press: bool,
+    /// JS `brain._mw.weaveT` (kits/mitts.js L745).
+    mw_weave_t: f32,
+    /// JS `brain._mw.weaveP` (kits/mitts.js L746) — drawn once, lazily.
+    mw_weave_p: Option<f32>,
+    // ---- Zone Control scratch (Task 38 batch 3; JS L304)
+    /// JS `this.zRole`.
+    z_role: Option<crate::bot::zones::ZoneRole>,
+    /// JS `this.zZone` (`-1` = none).
+    z_zone: isize,
+    /// JS `this.zHoldUntil`.
+    z_hold_until: f32,
+    /// JS `this.zHoldDur`.
+    z_hold_dur: f32,
+    /// JS `this._zAct` (the active objective at the last sync; `None` = JS
+    /// `null`).
+    z_act: Option<usize>,
+    /// JS `this.zAimT`.
+    z_aim_t: f32,
+    /// JS `this._zAim`.
+    z_aim: Option<ZAim>,
+    /// JS `this.zFail`.
+    z_fail: u8,
+    /// JS `this.zFace`.
+    z_face: f32,
+    /// JS `this.zBomb`.
+    z_bomb: Option<ZoneBomb>,
+    /// JS `this.zBombScan`.
+    z_bomb_scan: f32,
     pub stats: BotStats,
     last_pos: Vec3,
 }
@@ -255,6 +517,10 @@ impl Bot {
             sweep: r_sweep * 10.0,
             paint_scan_t: 0.0,
             paint_yaw_off: 0.0,
+            paint_pause: 0.0,
+            charge_release: None,
+            plant_t: 0.0,
+            was_planted: false,
             refill_until: 0.0,
             retreat_t: 0.0,
             best_d: f32::INFINITY,
@@ -278,6 +544,35 @@ impl Bot {
             prev_squid: false,
             was_dead: false,
             firing: false,
+            bomb_cd: None,
+            bomb_aim: false,
+            release_bomb: false,
+            sp_t: 0.0,
+            barrage_cd: 0.0,
+            stamp_flip: 0.0,
+            blow_t: 0.0,
+            bb_hold_until: 0.0,
+            bb_next_shield: 0.0,
+            bb_launch: false,
+            bow_want: 0.0,
+            bow_jump: false,
+            bow_jumped: false,
+            bow_paint: 0.0,
+            bl_wave_t: 3.0,
+            bl_press: false,
+            mw_weave_t: 0.0,
+            mw_weave_p: None,
+            z_role: None,
+            z_zone: -1,
+            z_hold_until: 0.0,
+            z_hold_dur: 0.0,
+            z_act: None,
+            z_aim_t: 0.0,
+            z_aim: None,
+            z_fail: 0,
+            z_face: 0.0,
+            z_bomb: None,
+            z_bomb_scan: 0.0,
             stats: BotStats::default(),
             last_pos: a.pos,
         }
@@ -293,7 +588,17 @@ impl Bot {
         }
     }
 
-    /// JS `BotBrain.update` for the shooter/easy branch: returns this frame's
+    /// JS `this.chargeRelease` (bots.js L290: `0.95 + Math.random() * 0.05`).
+    /// Drawn lazily (module-docs deviation): only the charge kinds ever read
+    /// it, so the M1 shooter RNG stream and the recorded baselines are
+    /// unchanged.
+    fn charge_release(&mut self) -> f32 {
+        *self
+            .charge_release
+            .get_or_insert_with(|| 0.95 + self.rng.next_f32() * 0.05)
+    }
+
+    /// JS `BotBrain.update`: returns this frame's
     /// intent and writes the aim angles onto `a` (JS `a.aimYaw = ...`).
     pub fn step(&mut self, dt: f32, a: &mut Actor, ctx: &BotCtx) -> ActorInput {
         let mut it = ActorInput::default();
@@ -327,7 +632,14 @@ impl Bot {
         // ---- timers (JS L343-344)
         self.think -= dt;
         self.jump_cd -= dt;
+        // JS L286 pre-draws `bombCd = 3 + rand·4` at reset; the Rust bot
+        // draws it lazily here (module-docs deviation).
+        let bomb_cd = self
+            .bomb_cd
+            .get_or_insert_with(|| 3.0 + self.rng.next_f32() * 4.0);
+        *bomb_cd -= dt;
         self.strafe_t -= dt;
+        self.paint_pause -= dt;
         self.dodge_cd -= dt;
         self.acq_t += dt;
         self.t_time += dt;
@@ -344,11 +656,18 @@ impl Bot {
             self.target = None;
         }
 
+        // ---- Zone Control: the team plan (JS L355-357); a rotation or a
+        // changed role / zone re-targets straight away.
+        if ctx.zones.is_some() {
+            self.zone_sync(ctx, a);
+        }
+
         // ---- mode selection (JS L359-381)
         let ink_frac = a.ink / ctx.t.ink_max;
         let hp_frac = a.hp / ctx.t.hp;
         let last_damage = a.last_damage();
-        self.select_mode(dt, ink_frac, hp_frac, last_damage);
+        let (kind, wr) = ctx.own(self.team, self.slot);
+        self.select_mode(dt, ink_frac, hp_frac, last_damage, kind, a, ctx, wr);
 
         // ---- navigation goal (JS L383-406)
         self.goal_timer -= dt;
@@ -356,11 +675,16 @@ impl Bot {
         match self.mode {
             BotMode::Fight => {
                 if let Some(tid) = self.target
-                    && self.repath <= 0.0
                     && let Some(idx) = find_actor(ctx.actors, tid.0, tid.1)
                 {
                     let p = ctx.actors[idx].pos;
-                    self.path_to(ctx, a.pos, a.grounded, p, 0.6);
+                    if ctx.zones.is_some() && self.zone_hold_ground(ctx, a, p, kind) {
+                        // watchers / guards: don't chase off the zone (JS L386)
+                        self.path = None;
+                        self.repath = 0.3;
+                    } else if self.repath <= 0.0 {
+                        self.path_to(ctx, a.pos, a.grounded, p, 0.6);
+                    }
                 }
             }
             BotMode::Refill => {
@@ -374,7 +698,21 @@ impl Bot {
                 }
             }
             BotMode::Paint => {
-                if self.goal_timer <= 0.0
+                if let Some(zp) = ctx.zones {
+                    // Zone Control: arrive → hold a moment (guards /
+                    // watchers) → next spot on the zone (JS L400-404).
+                    let arrived =
+                        self.path.is_none() || self.pi >= self.path.as_ref().map_or(0, |p| p.len());
+                    if arrived && self.z_hold_dur > 0.0 {
+                        self.z_hold_until = self.t_time + self.z_hold_dur;
+                        self.z_hold_dur = 0.0;
+                    }
+                    if self.wiggle_t <= 0.0
+                        && (self.goal_timer <= 0.0 || (arrived && self.t_time >= self.z_hold_until))
+                    {
+                        self.pick_zone_goal(a, ctx, zp, kind);
+                    }
+                } else if self.goal_timer <= 0.0
                     || self.path.is_none()
                     || self.pi >= self.path.as_ref().map_or(0, |p| p.len())
                 {
@@ -400,11 +738,11 @@ impl Bot {
         let mut want_pitch = -0.1f32;
         let enemy_visible = self.target.is_some() && self.see_timer > 0.0;
 
-        let tgt_idx = if enemy_visible {
-            self.target.and_then(|(t, s)| find_actor(ctx.actors, t, s))
-        } else {
-            None
-        };
+        // JS L419: the fight distance feeds `_specialCtl` (L620).
+        let mut fight_dist = 0.0f32;
+        // JS L421: the block runs on any target — visibility is only the fire
+        // gate's concern (L479).
+        let tgt_idx = self.target.and_then(|(t, s)| find_actor(ctx.actors, t, s));
         if (self.mode == BotMode::Fight || self.mode == BotMode::Retreat)
             && let Some(ti) = tgt_idx
         {
@@ -412,9 +750,16 @@ impl Bot {
             let dx = t.pos.x - a.pos.x;
             let dz = t.pos.z - a.pos.z;
             let dist = dx.hypot(dz);
-            let range = ctx.w.range;
-            // lead the target by the projectile flight time (JS L428)
-            let lead = dist / ctx.w.proj_speed;
+            fight_dist = dist;
+            let range = ctx.bot_range(kind);
+            // lead the target by the projectile flight time (JS L428; the
+            // charger's beam needs no lead, the retired slosher windup arm
+            // is absent by construction)
+            let lead = if kind == WeaponKind::Charger {
+                0.0
+            } else {
+                dist / ctx.shot_speed(kind)
+            };
             let tx = t.pos.x + t.vel.x * lead;
             let ty = t.pos.y + t.smooth_y() + if t.form == Form::Squid { 0.3 } else { 0.85 };
             let tz = t.pos.z + t.vel.z * lead;
@@ -446,6 +791,9 @@ impl Bot {
                     want_move,
                     ink_frac,
                     ti,
+                    kind,
+                    wr,
+                    enemy_visible,
                 );
             } else {
                 // retreat: swim away through own ink, eyes on the threat
@@ -462,10 +810,17 @@ impl Bot {
                 &mut want_pitch,
                 want_move,
                 ink_frac,
+                kind,
+                wr,
             );
         } else if self.mode == BotMode::Refill {
             self.refill(a, ctx, &mut it, &mut want_pitch);
         }
+
+        // JS L620: driving a running special + cheering a teammate's Cheer
+        // Orb (the threat / canopy steering and the climb aim overrides are
+        // cut — module docs).
+        self.special_ctl(dt, a, ctx, &mut move_v, &mut it, fight_dist, enemy_visible);
 
         self.tail(
             dt,
@@ -477,6 +832,8 @@ impl Bot {
             want_move,
             enemy_visible,
             &mut it,
+            kind,
+            wr,
         );
         if it.fire && !self.prev_fire {
             self.stats.shots += 1;
@@ -515,8 +872,22 @@ impl Bot {
 
     // ---------------------------------------------------------------- modes
 
-    /// JS `update` L359-381 (turf-war branch; no kit vetoes).
-    fn select_mode(&mut self, dt: f32, ink_frac: f32, hp_frac: f32, last_damage: f32) {
+    /// JS `update` L359-381 (turf-war branch). Task 38 batch 1 adds the
+    /// MELEE gates on the retreat roll (L366) and the refill guard (L370);
+    /// batch 2 adds the kit `stayIn` veto (L367 — only the Cutlass defines
+    /// one).
+    #[allow(clippy::too_many_arguments)]
+    fn select_mode(
+        &mut self,
+        dt: f32,
+        ink_frac: f32,
+        hp_frac: f32,
+        last_damage: f32,
+        kind: WeaponKind,
+        a: &Actor,
+        ctx: &BotCtx,
+        wr: &WeaponRunner,
+    ) {
         if self.mode == BotMode::Retreat {
             self.retreat_t -= dt;
             if hp_frac > 0.85 || self.retreat_t <= 0.0 || (self.target.is_none() && hp_frac > 0.6) {
@@ -526,8 +897,12 @@ impl Bot {
             }
         } else if self.target.is_some()
             && self.see_timer > 0.0
-            && ((hp_frac < 0.34 && last_damage < 0.8) || hp_frac < 0.2)
+            // JS L366: pushers don't break off a scratch at a third of hp
+            && ((hp_frac < 0.34 && !kind.is_melee() && last_damage < 0.8) || hp_frac < 0.2)
             && self.rng.next_f32() < 0.6 * dt * 60.0 * self.diff.fire_discipline
+            // JS L367: a kit may veto the retreat — the Cutlass finishes a
+            // fight it can win at blade range instead of turning
+            && !(kind == WeaponKind::Blade && self.blade_stay_in(a, ctx, wr))
         {
             // losing the duel: break line of sight and heal in own ink
             self.mode = BotMode::Retreat;
@@ -537,7 +912,12 @@ impl Bot {
         if self.mode != BotMode::Refill
             && self.mode != BotMode::Retreat
             && ink_frac < 0.12
-            && !(self.target.is_some() && self.see_timer > 0.0 && ink_frac > 0.05)
+            // JS L370: a melee weapon with a visible target finishes the duel
+            // on a trickle of ink instead of refilling
+            && !(self.target.is_some()
+                && self.see_timer > 0.0
+                && !kind.is_melee()
+                && ink_frac > 0.05)
         {
             self.mode = BotMode::Refill;
             self.refill_until = 0.85 + self.rng.next_f32() * 0.1;
@@ -545,7 +925,23 @@ impl Bot {
         if self.mode == BotMode::Refill && ink_frac >= self.refill_until {
             self.mode = BotMode::Paint;
         }
-        if self.mode != BotMode::Refill && self.mode != BotMode::Retreat {
+        if ctx.zones.is_some() {
+            // JS L374-380: the objective first — only take fights that are
+            // in range or on / by the zone (pushers fight like Turf War).
+            if self.mode != BotMode::Refill && self.mode != BotMode::Retreat {
+                let m = if self.target.is_some() && self.zone_engage(ctx, a, kind) {
+                    BotMode::Fight
+                } else {
+                    BotMode::Paint
+                };
+                if m == BotMode::Paint && self.mode == BotMode::Fight {
+                    // back to the zone
+                    self.goal_timer = 0.0;
+                    self.z_hold_until = 0.0;
+                }
+                self.mode = m;
+            }
+        } else if self.mode != BotMode::Refill && self.mode != BotMode::Retreat {
             self.mode = if self.target.is_some() {
                 BotMode::Fight
             } else {
@@ -556,13 +952,15 @@ impl Bot {
 
     // ---------------------------------------------------------------- perceive
 
-    /// JS `_perceive`.
+    /// JS `_perceive` (L1622-1656). Batch 2 adds the kit target bias
+    /// (L1627 / L1637 — only the Cutlass defines one).
     fn perceive(&mut self, a: &Actor, ctx: &BotCtx) {
         let eye = Vec3::new(a.pos.x, a.pos.y + EYE_Y, a.pos.z);
         let aw = self.diff.awareness;
+        let own_kind = ctx.own(self.team, self.slot).0;
         let mut best: Option<(usize, usize)> = None;
         let mut bd = f32::INFINITY;
-        for e in ctx.actors {
+        for (ei, e) in ctx.actors.iter().enumerate() {
             if e.team == a.team || !e.alive {
                 continue;
             }
@@ -591,6 +989,9 @@ impl Bot {
                 && ts == e.slot
             {
                 score -= 4.0;
+            }
+            if own_kind == WeaponKind::Blade {
+                score += self.blade_target_bias(a, ctx, ei, d);
             }
             if score < bd {
                 bd = score;
@@ -818,9 +1219,9 @@ impl Bot {
 
     // ---------------------------------------------------------------- fight
 
-    /// JS `update` fight block, shooter branch (L441-510): preferred
-    /// distance + eased strafing, fire when the *actual* aim is on the body,
-    /// swim-in over own ink, dodge-hop after a hit.
+    /// JS `update` fight block (L441-523): per-kind preferred distance,
+    /// eased strafing, fire when the *actual* aim is on the body, the per-kind
+    /// trigger dispatch, swim-in over own ink, dodge-hop after a hit.
     #[allow(clippy::too_many_arguments)]
     fn fight(
         &mut self,
@@ -836,11 +1237,22 @@ impl Bot {
         want_move: bool,
         ink_frac: f32,
         ti: usize,
+        kind: WeaponKind,
+        wr: &WeaponRunner,
+        enemy_visible: bool,
     ) {
         let t = &ctx.actors[ti];
         let dx = t.pos.x - a.pos.x;
         let dz = t.pos.z - a.pos.z;
-        let pref = range * FIGHT_PREF_F;
+        // preferred duel distance (JS L443): chargers hold back, pushers
+        // close to arm's length
+        let pref = if kind == WeaponKind::Charger {
+            range * 0.8
+        } else if kind.is_melee() {
+            0.5
+        } else {
+            range * FIGHT_PREF_F
+        };
         if self.strafe_t <= 0.0 {
             self.strafe_t = 0.6 + self.rng.next_f32() * 1.2;
             self.strafe = if self.rng.next_f32() < 0.5 { -1.0 } else { 1.0 };
@@ -855,12 +1267,34 @@ impl Bot {
         if dist > pref + 1.2 && want_move {
             mvx = move_v.x;
             mvz = move_v.z;
-        } else if dist < pref - 1.5 {
+        } else if dist < pref - 1.5 && !kind.is_melee() {
             mvx = -nx;
             mvz = -nz;
         }
-        mvx += -nz * self.strafe_s * 0.9;
-        mvz += nx * self.strafe_s * 0.9;
+        // a charging long weapon plants instead of strafing (JS L450)
+        if !(kind.is_charge() && wr.charging_flag()) {
+            mvx += -nz * self.strafe_s * 0.9;
+            mvz += nx * self.strafe_s * 0.9;
+        }
+        // pushers always close the distance (JS L451)
+        if kind.is_melee() && dist < 7.0 {
+            mvx = nx;
+            mvz = nz;
+        }
+        // twin pistols: stand planted for a moment after the turret re-mounts
+        // — moving would drop it back to dual mode (JS L453-459)
+        if kind == WeaponKind::Twins {
+            let planted = wr.turret();
+            if planted && !self.was_planted {
+                self.plant_t = 0.7 + self.rng.next_f32() * 0.7;
+            }
+            self.was_planted = planted;
+            self.plant_t -= dt;
+            if planted && self.plant_t > 0.0 {
+                mvx = 0.0;
+                mvz = 0.0;
+            }
+        }
         let l = mvx.hypot(mvz);
         *move_v = if l > 0.01 {
             Vec3::new(mvx / l, 0.0, mvz / l)
@@ -877,29 +1311,91 @@ impl Bot {
         let tol = (0.05f32).max((AIM_TOL_HALF / dist).atan()) * if self.firing { 2.4 } else { 1.5 };
         let aimed = off < tol;
         self.firing = false;
-        if self.see_timer > 0.0 && self.react <= 0.0 && aimed && ink_frac > 0.02 {
-            it.fire = dist < range * 1.08;
+        // per-kind trigger dispatch (JS L479-508; batch 2 adds the kit
+        // `BK.fight` hooks, the retired splatling / slosher / dualies arms
+        // are absent by construction)
+        if enemy_visible && self.react <= 0.0 && aimed && ink_frac > 0.02 {
+            it.fire = match kind {
+                // kit main weapons decide their own trigger and may steer
+                // (JS L480-482; the Cutlass has no `fight` hook and falls
+                // through to the generic reach test)
+                WeaponKind::Brolly => self.brolly_fight(a, ctx, dt, dist, range, move_v, wr),
+                WeaponKind::Bow => self.bow_fight(a, ctx, dist, range, move_v, it, ti, wr),
+                WeaponKind::Mitts => self.mitts_fight(dist, range, wr),
+                // spin up to the release point, let go, run the stream
+                // (JS L483-486)
+                WeaponKind::Spinner => {
+                    wr.burst_t() <= 0.0
+                        && !(wr.charging_flag() && wr.charge() >= self.charge_release())
+                }
+                WeaponKind::Brush => dist < 4.5,
+                WeaponKind::Charger => {
+                    !(wr.charging_flag() && wr.charge() >= self.charge_release())
+                }
+                WeaponKind::Roller => dist < 5.5 || (wr.rolling() && dist < 8.0),
+                _ => dist < range * 1.08,
+            };
+            // a charging charger creases its stride (JS L498)
+            if kind == WeaponKind::Charger && wr.charging_flag() {
+                *move_v *= 0.3;
+            }
             self.firing = it.fire;
+            // JS L505: a sub throw can ride the same fire frame
+            if self.bomb_cd.unwrap_or(0.0) <= 0.0 && self.fight_sub(a, ctx, dist) {
+                it.sub = true;
+                self.bomb_aim = true;
+            }
+        } else if kind.is_charge() && wr.charging_flag() && !enemy_visible {
+            // keep the charge while the target is briefly hidden (JS L506-508)
+            it.fire = true;
         }
-        // out of range with own ink underfoot: swim in (JS L509-510)
-        if !it.fire && dist > range * 1.15 && a.ground_team == 1 {
+        // out of range with own ink underfoot: swim in (JS L509-510; a
+        // charging weapon holds its ground)
+        if !it.fire && !wr.charging_flag() && dist > range * 1.15 && a.ground_team == 1 {
             it.squid = true;
         }
-        // dodge-hop right after taking a hit (JS L519-523, Spritzer branch)
+        // dodge-hop right after taking a hit (JS L519-522; twins roll with a
+        // wider water probe, chargers never jump)
         if a.last_damage() < 0.25
             && self.dodge_cd <= 0.0
             && a.grounded
-            && self.rng.next_f32() < 0.3
-            && !self.near_water(a, ctx, 1.6)
+            && !kind.is_charge()
+            && self.rng.next_f32() < if kind == WeaponKind::Twins { 0.6 } else { 0.3 }
+            && !self.near_water(
+                a,
+                ctx,
+                if kind == WeaponKind::Twins {
+                    ctx.weapons.twins.roll_dist + 0.4
+                } else {
+                    1.6
+                },
+            )
         {
             it.jump = true;
-            self.dodge_cd = 2.0 + self.rng.next_f32() * 2.5;
+            self.dodge_cd = if kind == WeaponKind::Twins {
+                0.9 + self.rng.next_f32()
+            } else {
+                2.0 + self.rng.next_f32() * 2.5
+            };
+        }
+        // kit fight tactics that run every frame after the defaults (JS L528;
+        // the Cutlass deep tactics are cut — only the Mitts approach remains)
+        if kind == WeaponKind::Mitts {
+            self.mitts_tactics(a, ctx, dt, dist, move_v, it, ti, enemy_visible, wr);
+        }
+        // JS L530: the special gate (batch 3 adds the Zone Control arm)
+        if a.special_ready()
+            && (self.want_special(a, ctx, true, dist, enemy_visible)
+                || (ctx.zones.is_some() && self.zone_special(ctx, a, true)))
+        {
+            it.special = true;
         }
     }
 
     // ---------------------------------------------------------------- paint
 
-    /// JS `update` paint block, shooter branch (L538-599).
+    /// JS `update` paint block (L538-599): the per-kind sweep-rate / scan-
+    /// reach / aim-pitch ladders and the per-kind trigger dispatch.
     #[allow(clippy::too_many_arguments)]
     fn paint(
         &mut self,
@@ -912,11 +1408,31 @@ impl Bot {
         want_pitch: &mut f32,
         want_move: bool,
         ink_frac: f32,
+        kind: WeaponKind,
+        wr: &WeaponRunner,
     ) {
-        self.sweep += dt * 2.1;
+        // chargers sweep slowly — every degree of the arc is a beam line
+        // (JS L540)
+        self.sweep += dt
+            * if kind == WeaponKind::Charger {
+                0.8
+            } else {
+                2.1
+            };
         self.paint_scan_t -= dt;
-        if self.paint_scan_t <= 0.0 {
+        // pushers paint straight ahead — no yaw scan (JS L542)
+        if self.paint_scan_t <= 0.0 && !kind.is_melee() {
             self.paint_scan_t = 0.35 + self.rng.next_f32() * 0.15;
+            // scan reach ladder (JS L544; splatling / slosher retired)
+            let reach = if kind == WeaponKind::Charger || kind == WeaponKind::Spinner {
+                8.5
+            } else if kind == WeaponKind::Bucket {
+                7.0
+            } else if kind == WeaponKind::Blaster {
+                5.0
+            } else {
+                PAINT_REACH
+            };
             let mut best_off = 0.0f32;
             let mut best_v = -1.0f32;
             for off in [0.0f32, -0.6, 0.6, -1.2, 1.2] {
@@ -927,17 +1443,29 @@ impl Bot {
                 }) + off;
                 let st = ctx.paint.region_stats(
                     ctx.world.collision,
-                    a.pos.x + yw.sin() * PAINT_REACH,
+                    a.pos.x + yw.sin() * reach,
                     a.pos.y,
-                    a.pos.z + yw.cos() * PAINT_REACH,
+                    a.pos.z + yw.cos() * reach,
                     2.2,
                     a.team,
                 );
-                let v = if st.n != 0 {
+                let mut v = if st.n != 0 {
                     st.empty + st.enemy * 1.4 - off.abs() * 0.12
                 } else {
                     -1.0
                 };
+                // JS L550: the zone's ink first
+                if let (Some(zp), Some(zctl)) = (ctx.zones, ctx.zctl)
+                    && st.n != 0
+                    && zp.on_active(
+                        a.pos.x + yw.sin() * reach,
+                        a.pos.y,
+                        a.pos.z + yw.cos() * reach,
+                        zctl,
+                    )
+                {
+                    v += 0.8;
+                }
                 if v > best_v {
                     best_v = v;
                     best_off = off;
@@ -945,8 +1473,44 @@ impl Bot {
             }
             self.paint_yaw_off = best_off;
         }
-        *want_yaw += self.paint_yaw_off + self.sweep.sin() * 0.35;
-        *want_pitch = PAINT_PITCH;
+        // pushers hold their heading: no yaw offset, no sweep wobble (JS L555)
+        let sweep_amt = if kind.is_melee() { 0.0 } else { 0.35 };
+        *want_yaw += (if kind.is_melee() {
+            0.0
+        } else {
+            self.paint_yaw_off
+        }) + self.sweep.sin() * sweep_amt;
+        *want_pitch = paint_pitch(kind);
+        // Zone Control: a needy patch of the zone in reach → ink that (long
+        // range: from the perch, straight at it) (JS L560-569)
+        let mut z_aim = if ctx.zones.is_some() && !kind.is_melee() {
+            self.zone_aim(ctx, a, dt, want_move, *move_v, kind)
+        } else {
+            None
+        };
+        if ctx.zones.is_some() && self.z_face > 0.0 {
+            // about to throw a special onto the zone: turn to it first
+            self.z_face -= dt;
+            if let Some(zctl) = ctx.zctl
+                && self.z_zone >= 0
+            {
+                let c = zctl.zones[self.z_zone as usize].center;
+                z_aim = Some(ZAim {
+                    x: c[0],
+                    y: c[1],
+                    z: c[2],
+                    d: (c[0] - a.pos.x).hypot(c[2] - a.pos.z),
+                });
+            }
+        }
+        if let Some(za) = z_aim {
+            *want_yaw = (za.x - a.pos.x).atan2(za.z - a.pos.z) + self.sweep.sin() * 0.22;
+            if kind.is_charge() || za.d < 3.2 {
+                *want_pitch = (za.y + 0.05 - (a.pos.y + 1.1))
+                    .atan2(za.d.max(0.5))
+                    .clamp(-0.95, 0.15);
+            }
+        }
         let ahead = ctx.paint.region_stats(
             ctx.world.collision,
             a.pos.x + want_yaw.sin() * 4.0,
@@ -955,11 +1519,85 @@ impl Bot {
             3.0,
             a.team,
         );
-        let need_paint = ahead.n == 0 || ahead.own < 0.75;
-        it.fire = need_paint && ink_frac > 0.18;
+        let need_paint = ahead.n == 0 || ahead.own < 0.75 || z_aim.is_some();
+        // per-kind trigger dispatch (JS L573-597; batch 2 adds the kit
+        // `PK.paint` hooks first, splatling retired)
+        it.fire = match kind {
+            // kit main weapons decide the paint trigger first (JS L573-574)
+            WeaponKind::Brolly => need_paint && ink_frac > 0.2,
+            WeaponKind::Blade => self.blade_paint(a, ctx, dt, need_paint, ink_frac, want_move, wr),
+            WeaponKind::Bow => self.bow_paint(a, ctx, need_paint, ink_frac, wr),
+            WeaponKind::Mitts => self.mitts_paint(need_paint, ink_frac, want_move, wr),
+            _ => {
+                if kind.is_melee() {
+                    ink_frac > 0.08 && (need_paint || self.rng.next_f32() < 0.02) && want_move
+                } else if kind == WeaponKind::Spinner {
+                    // spin to ~60 %, release, let the stream paint, breather
+                    if wr.burst_t() > 0.0 {
+                        false
+                    } else if wr.charging_flag() {
+                        let f = wr.charge() < 0.6;
+                        if !f {
+                            self.paint_pause = 0.25 + self.rng.next_f32() * 0.3;
+                        }
+                        f
+                    } else {
+                        need_paint && ink_frac > 0.3 && self.paint_pause <= 0.0
+                    }
+                } else if kind == WeaponKind::Charger {
+                    // charge to ~70 % and release a paint line, then a short
+                    // breather before the next one
+                    if wr.charging_flag() {
+                        let f = wr.charge() < 0.7;
+                        if !f {
+                            self.paint_pause = 0.3 + self.rng.next_f32() * 0.35;
+                        }
+                        f
+                    } else {
+                        need_paint && ink_frac > 0.3 && self.paint_pause <= 0.0
+                    }
+                } else {
+                    need_paint && ink_frac > 0.18
+                }
+            }
+        };
         // travel as a squid through own ink when not painting (JS L599)
         if !it.fire && self.path_remaining(a, ctx) > 5.0 && a.ground_team == 1 {
             it.squid = true;
+        }
+        // JS L600: a sub throw while painting
+        if self.bomb_cd.unwrap_or(0.0) <= 0.0 && self.paint_sub(a, ctx) {
+            it.sub = true;
+            self.bomb_aim = true;
+        } else if ctx.zones.is_some() {
+            // JS L601-608: Zone Control — lob a bomb onto a patch of their
+            // ink on the zone (turn to it, then throw)
+            if let Some(zb) = self.zone_bomb_aim(ctx, a, dt) {
+                *want_yaw = zb.yaw;
+                *want_pitch = zb.pitch;
+                if zb.release {
+                    self.z_bomb = None;
+                } else if angle_diff(self.aim_yaw, zb.yaw).abs() < 0.09
+                    && (self.aim_pitch - zb.pitch).abs() < 0.09
+                {
+                    self.bomb_aim = true;
+                    self.bomb_cd = Some(4.0 + self.rng.next_f32() * 3.0);
+                    if let Some(cur) = self.z_bomb.as_mut() {
+                        cur.release = true;
+                    }
+                }
+            }
+        }
+        // JS L610: the special gate (batch 3: the Zone Control arm replaces
+        // the plain paint roll)
+        if a.special_ready()
+            && if ctx.zones.is_some() {
+                self.zone_special(ctx, a, false)
+            } else {
+                self.want_special(a, ctx, false, 0.0, false)
+            }
+        {
+            it.special = true;
         }
     }
 
@@ -998,7 +1636,23 @@ impl Bot {
         want_move: bool,
         enemy_visible: bool,
         it: &mut ActorInput,
+        kind: WeaponKind,
+        wr: &WeaponRunner,
     ) {
+        // ---- two-frame sub release (JS L638-639): the press frame stamps
+        // `_bombAim`, the next frame drops `sub` and the squid form so the
+        // throw actually goes off.
+        if self.bomb_aim {
+            it.sub = true;
+            it.squid = false;
+            self.bomb_aim = false;
+            self.release_bomb = true;
+        } else if self.release_bomb {
+            it.sub = false;
+            it.squid = false;
+            self.release_bomb = false;
+        }
+
         // ---- aim spring (JS L641-654)
         let fighting = self.mode == BotMode::Fight;
         let snappy = fighting;
@@ -1053,7 +1707,10 @@ impl Bot {
         }
 
         // ---- waypoint-progress stuck recovery (JS L683-694)
-        let trying = self.path.is_some() && want_move;
+        // a charging / bursting long weapon is not "trying" to walk (JS L683)
+        let trying = self.path.is_some()
+            && want_move
+            && !(kind.is_charge() && (wr.charging_flag() || wr.burst_t() > 0.0));
         if !trying {
             self.no_prog = 0.0;
         }
@@ -1118,6 +1775,1611 @@ impl Bot {
             self.disp_t = 0.0;
             self.move_acc = 0.0;
         }
+    }
+
+    // ---------------------------------------------------------------- zone control
+
+    /// JS `_zoneSync` (bots.js L1019-1033): a rotation or a changed role /
+    /// zone re-targets straight away. The `zJumpAt` super-jump arm (L1026 /
+    /// L1029-1032 → `_zoneJump` L986-1016) is cut — the sim has no super
+    /// jumps (module docs).
+    fn zone_sync(&mut self, ctx: &BotCtx, a: &Actor) {
+        let (Some(zp), Some(zctl)) = (ctx.zones, ctx.zctl) else {
+            return;
+        };
+        let Some(idx) = find_actor(ctx.actors, a.team, a.slot) else {
+            return;
+        };
+        let r = zp.role_of(idx, a.team, zctl);
+        if Some(zctl.active) != self.z_act
+            || Some(r.role) != self.z_role
+            || r.zone as isize != self.z_zone
+        {
+            let rotated = self.z_act.is_some() && Some(zctl.active) != self.z_act;
+            self.z_act = Some(zctl.active);
+            self.z_role = Some(r.role);
+            self.z_zone = r.zone as isize;
+            self.goal_timer = 0.0;
+            self.z_hold_until = 0.0;
+            self.z_hold_dur = 0.0;
+            self.z_aim_t = 0.0;
+            self.z_aim = None;
+            if rotated && self.mode == BotMode::Paint {
+                self.path = None;
+            }
+        }
+    }
+
+    /// JS `_zoneEngage` (L1036-1045): take the fight? In range, or the foe
+    /// is on / by our zone; otherwise keep inking the objective.
+    fn zone_engage(&self, ctx: &BotCtx, a: &Actor, kind: WeaponKind) -> bool {
+        let (Some(zp), Some(zctl)) = (ctx.zones, ctx.zctl) else {
+            return false;
+        };
+        let Some((t, s)) = self.target else {
+            return false;
+        };
+        if self.z_role == Some(ZoneRole::Push) {
+            return true;
+        }
+        let Some(ti) = find_actor(ctx.actors, t, s) else {
+            return false;
+        };
+        let tp = ctx.actors[ti].pos;
+        let d = (tp.x - a.pos.x).hypot(tp.z - a.pos.z);
+        let range = ctx.bot_range(kind);
+        if d < range
+            * if self.z_role == Some(ZoneRole::Watch) {
+                1.05
+            } else {
+                1.25
+            }
+        {
+            return true;
+        }
+        // stagers wait for the group (JS L1042)
+        if matches!(self.z_role, Some(ZoneRole::Watch) | Some(ZoneRole::Stage)) {
+            return false;
+        }
+        let zi = self.z_zone as usize;
+        let c = zctl.zones[zi].center;
+        (tp.x - c[0]).hypot(tp.z - c[2]) < zp.info[zi].r + 5.0
+    }
+
+    /// JS `_zoneHoldGround` (L1047-1057): in a fight, watchers keep their
+    /// perch while the foe is in range; guards don't chase off the zone.
+    fn zone_hold_ground(&self, ctx: &BotCtx, a: &Actor, tp: Vec3, kind: WeaponKind) -> bool {
+        let (Some(zp), Some(zctl)) = (ctx.zones, ctx.zctl) else {
+            return false;
+        };
+        let range = ctx.bot_range(kind);
+        let d = (tp.x - a.pos.x).hypot(tp.z - a.pos.z);
+        match self.z_role {
+            Some(ZoneRole::Watch) => return d < range * 1.05 && d > 3.0,
+            // hold the staging spot: shoot, don't chase (JS L1051)
+            Some(ZoneRole::Stage) => return d > 4.0,
+            Some(ZoneRole::Push) | None => return false,
+            _ => {}
+        }
+        if d < 4.0 {
+            return false;
+        }
+        // guards / painters: never chase a foe further off the zone than we
+        // are (shoot from here, then back to the ink) (JS L1053-1056)
+        let zi = self.z_zone as usize;
+        let c = zctl.zones[zi].center;
+        let r = zp.info[zi].r;
+        let tz = (tp.x - c[0]).hypot(tp.z - c[2]);
+        let sz = (a.pos.x - c[0]).hypot(a.pos.z - c[2]);
+        tz > r + if self.z_role == Some(ZoneRole::Guard) {
+            3.0
+        } else {
+            6.0
+        } && tz > sz + 2.0
+    }
+
+    /// JS `_pickZoneGoal` (L1060-1095): the next spot to go to for the role.
+    fn pick_zone_goal(&mut self, a: &Actor, ctx: &BotCtx, zp: &ZonePlan, kind: WeaponKind) {
+        let Some(zctl) = ctx.zctl else {
+            return;
+        };
+        let Some(idx) = find_actor(ctx.actors, a.team, a.slot) else {
+            return;
+        };
+        let r = zp.role_of(idx, a.team, zctl);
+        let zi = r.zone;
+        let i = &zp.info[zi];
+        let zone = &zctl.zones[zi];
+        self.z_role = Some(r.role);
+        self.z_zone = zi as isize;
+        self.z_hold_dur = 0.0;
+        let mut role = r.role;
+        let need_frac = i.need_sum[a.team] / (i.reach.max(1)) as f32;
+        // a guard with touch-ups to do paints; a watcher with nowhere to
+        // perch (or a zone slipping away) paints too (JS L1066)
+        if role == ZoneRole::Guard && need_frac > 0.1 {
+            role = ZoneRole::Paint;
+        }
+        let mut id: isize = -1;
+        let mut hold = 0.0f32;
+        if role == ZoneRole::Stage {
+            // regroup just outside the zone on our side and wait for the
+            // push (JS L1068-1073)
+            if let Some(st) = i.stage[a.team].as_ref() {
+                let k = ((self.rng.next_f32() * st.spots.len() as f32) as usize)
+                    .min(st.spots.len() - 1);
+                id = st.spots[k] as isize;
+                hold = 2.0 + self.rng.next_f32() * 2.0;
+                self.goal_timer = 12.0;
+            } else {
+                role = ZoneRole::Guard;
+            }
+        }
+        if role == ZoneRole::Push {
+            id = self.zone_push_node(a, ctx, zp, i, zone) as isize;
+            self.goal_timer = 4.0 + self.rng.next_f32() * 3.0;
+        } else if role == ZoneRole::Watch {
+            let w = self.zone_watch_node(a, ctx, zp, i, zone, kind);
+            id = w;
+            if w >= 0 {
+                hold = 3.0 + self.rng.next_f32() * 3.0;
+                self.goal_timer = 12.0;
+            }
+        } else if role == ZoneRole::Guard && id < 0 {
+            id = self.zone_guard_node(a, ctx, zp, i, zone) as isize;
+            hold = 1.0 + self.rng.next_f32() * 1.6;
+            self.goal_timer = 7.0;
+        }
+        if id < 0 {
+            id = self.zone_paint_node(a, ctx, i) as isize;
+            hold = 0.0;
+            self.goal_timer = 3.5 + self.rng.next_f32() * 2.0;
+        }
+        // nothing left to ink on it: stand guard on it (or, failing that,
+        // press on past it) (JS L1089-1090)
+        if id < 0 {
+            id = self.zone_guard_node(a, ctx, zp, i, zone) as isize;
+            hold = 1.0 + self.rng.next_f32() * 1.5;
+            self.goal_timer = 6.0;
+        }
+        if id < 0 {
+            id = self.zone_push_node(a, ctx, zp, i, zone) as isize;
+            hold = 0.0;
+            self.goal_timer = 4.0 + self.rng.next_f32() * 3.0;
+        }
+        if id < 0 {
+            self.pick_paint_goal(a, ctx);
+            return;
+        }
+        let n = ctx.nav.nodes[id as usize].pos;
+        if self.path_to(ctx, a.pos, a.grounded, n, 0.3) {
+            self.z_hold_dur = hold;
+            self.z_fail = 0;
+        } else {
+            self.z_fail += 1;
+            if self.z_fail >= 3 {
+                self.z_fail = 0;
+                self.wiggle(0.8, a.grounded);
+            }
+        }
+    }
+
+    /// JS `_zonePaintNode` (L1098-1115): the neediest reachable patch of the
+    /// zone (its not-ours ink round a node), nearby first, away from
+    /// teammates' goals. `usize::MAX` = JS `-1`.
+    fn zone_paint_node(&mut self, a: &Actor, ctx: &BotCtx, i: &ZoneInfo) -> usize {
+        let n_count = i.nodes.len();
+        if n_count == 0 {
+            return usize::MAX;
+        }
+        let my_idx = find_actor(ctx.actors, a.team, a.slot).unwrap_or(usize::MAX);
+        let need = &i.need[a.team];
+        let mut best = usize::MAX;
+        let mut bs = f32::NEG_INFINITY;
+        let step = if n_count > 110 { 2 } else { 1 };
+        let mut li = ((self.rng.next_f32() * step as f32) as usize).min(step - 1);
+        while li < n_count {
+            let mut v = 0.0f32;
+            for &k in &i.nb[li] {
+                v += need[k];
+            }
+            if v >= 4.0 {
+                let n = &ctx.nav.nodes[i.nodes[li]];
+                let d =
+                    (n.pos.x - a.pos.x).hypot(n.pos.z - a.pos.z) + (n.pos.y - a.pos.y).abs() * 1.5;
+                let mut sc = v.min(60.0) * 0.25 - d * 0.16 + self.rng.next_f32() * 2.0;
+                for (j, m) in ctx.actors.iter().enumerate() {
+                    if j == my_idx || m.team != a.team || !m.alive {
+                        continue;
+                    }
+                    if let Some(g) = ctx.mate_goals.get(j).copied().flatten() {
+                        let gp = ctx.nav.nodes[g].pos;
+                        if (gp.x - n.pos.x).hypot(gp.z - n.pos.z) < 3.5 {
+                            sc -= 4.0;
+                        }
+                    }
+                }
+                if sc > bs {
+                    bs = sc;
+                    best = i.nodes[li];
+                }
+            }
+            li += step;
+        }
+        best
+    }
+
+    /// JS `_zoneGuardNode` (L1117-1132): a spot on / at the edge of the
+    /// zone, on its enemy-facing side, apart from the other guards.
+    fn zone_guard_node(
+        &mut self,
+        a: &Actor,
+        ctx: &BotCtx,
+        zp: &ZonePlan,
+        i: &ZoneInfo,
+        zone: &ZoneState,
+    ) -> usize {
+        let e = zp.enemy_dir(zone, a.team, ctx.world);
+        let c = zone.center;
+        let my_idx = find_actor(ctx.actors, a.team, a.slot).unwrap_or(usize::MAX);
+        let mut best = usize::MAX;
+        let mut bs = f32::NEG_INFINITY;
+        for _ in 0..40 {
+            if i.ring.is_empty() {
+                break;
+            }
+            let id = i.ring
+                [((self.rng.next_f32() * i.ring.len() as f32) as usize).min(i.ring.len() - 1)];
+            let n = &ctx.nav.nodes[id];
+            let dx = n.pos.x - c[0];
+            let dz = n.pos.z - c[2];
+            let d = dx.hypot(dz);
+            if d > i.r + 3.0 || n.wet == 2 {
+                continue;
+            }
+            let side = (dx * e[0] + dz * e[1]) / d.max(1.0);
+            let mut sc = side * 2.0 + if d > i.r * 0.4 { 1.0 } else { 0.0 }
+                - (n.pos.x - a.pos.x).hypot(n.pos.z - a.pos.z) * 0.05
+                + self.rng.next_f32() * 1.5
+                - (n.pos.y - c[1]).abs() * 0.5;
+            for (j, m) in ctx.actors.iter().enumerate() {
+                if j == my_idx || m.team != a.team || !m.alive {
+                    continue;
+                }
+                if let Some(g) = ctx.mate_goals.get(j).copied().flatten() {
+                    let gp = ctx.nav.nodes[g].pos;
+                    if (gp.x - n.pos.x).hypot(gp.z - n.pos.z) < 4.0 {
+                        sc -= 3.0;
+                    }
+                }
+            }
+            if sc > bs {
+                bs = sc;
+                best = id;
+            }
+        }
+        best
+    }
+
+    /// JS `_zoneWatchNode` (L1134-1155): long range — a perch on our side of
+    /// the zone, a little above it if possible, that can see it. `-1` = none.
+    fn zone_watch_node(
+        &mut self,
+        a: &Actor,
+        ctx: &BotCtx,
+        zp: &ZonePlan,
+        i: &ZoneInfo,
+        zone: &ZoneState,
+        kind: WeaponKind,
+    ) -> isize {
+        let e = zp.enemy_dir(zone, a.team, ctx.world);
+        let c = zone.center;
+        let range = ctx.bot_range(kind);
+        let my_idx = find_actor(ctx.actors, a.team, a.slot).unwrap_or(usize::MAX);
+        let d_max = (range * 0.85).min(i.r + 12.0);
+        let d_min = (i.r * 0.55).min(d_max - 2.0);
+        let mut cands: Vec<(f32, usize)> = Vec::new();
+        for _ in 0..70 {
+            if i.ring.is_empty() {
+                break;
+            }
+            let id = i.ring
+                [((self.rng.next_f32() * i.ring.len() as f32) as usize).min(i.ring.len() - 1)];
+            let n = &ctx.nav.nodes[id];
+            let dx = n.pos.x - c[0];
+            let dz = n.pos.z - c[2];
+            let d = dx.hypot(dz);
+            if d < d_min || d > d_max || n.wet == 2 {
+                continue;
+            }
+            let side = (dx * e[0] + dz * e[1]) / d.max(1.0);
+            let mut sc = (n.pos.y - c[1]).clamp(-2.0, 4.0) * 1.1
+                - side * 1.6
+                - (d - range * 0.55).abs() * 0.1
+                - (n.pos.x - a.pos.x).hypot(n.pos.z - a.pos.z) * 0.04
+                + self.rng.next_f32() * 1.2
+                - if n.wet != 0 { 1.5 } else { 0.0 };
+            for (j, m) in ctx.actors.iter().enumerate() {
+                if j == my_idx || m.team != a.team || !m.alive {
+                    continue;
+                }
+                if let Some(g) = ctx.mate_goals.get(j).copied().flatten() {
+                    let gp = ctx.nav.nodes[g].pos;
+                    if (gp.x - n.pos.x).hypot(gp.z - n.pos.z) < 5.0 {
+                        sc -= 4.0;
+                    }
+                }
+            }
+            cands.push((sc, id));
+        }
+        // JS `cands.sort((x, y) => y[0] - x[0])` — a stable sort, so ties
+        // keep insertion order; Rust's `sort_by` is stable too.
+        cands.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap_or(std::cmp::Ordering::Equal));
+        let look = Vec3::new(c[0], c[1] + 0.6, c[2]);
+        for &(_, id) in &cands[..cands.len().min(6)] {
+            let n = &ctx.nav.nodes[id];
+            if ctx
+                .world
+                .collision
+                .los(Vec3::new(n.pos.x, n.pos.y + 1.4, n.pos.z), look)
+            {
+                return id as isize;
+            }
+        }
+        -1
+    }
+
+    /// JS `_zonePushNode` (L1157-1174): pressure forward — unclaimed / enemy
+    /// turf 3–18 m past the zone toward the enemy's side (never camping
+    /// their spawn).
+    fn zone_push_node(
+        &mut self,
+        a: &Actor,
+        ctx: &BotCtx,
+        zp: &ZonePlan,
+        i: &ZoneInfo,
+        zone: &ZoneState,
+    ) -> usize {
+        let e = zp.enemy_dir(zone, a.team, ctx.world);
+        let c = zone.center;
+        let ep = ctx.world.spawn_pads[1 - a.team];
+        let mut best = usize::MAX;
+        let mut bs = f32::NEG_INFINITY;
+        for _ in 0..28 {
+            if i.far.is_empty() {
+                break;
+            }
+            let id =
+                i.far[((self.rng.next_f32() * i.far.len() as f32) as usize).min(i.far.len() - 1)];
+            let n = &ctx.nav.nodes[id];
+            if n.zone >= 0 || n.wet == 2 || (n.pos.x - ep.x).hypot(n.pos.z - ep.z) < 22.0 {
+                continue;
+            }
+            let dx = n.pos.x - c[0];
+            let dz = n.pos.z - c[2];
+            let d = dx.hypot(dz);
+            let side = (dx * e[0] + dz * e[1]) / d.max(1.0);
+            if side < -0.1 {
+                continue;
+            }
+            let near =
+                ctx.paint
+                    .region_stats(ctx.world.collision, n.pos.x, n.pos.y, n.pos.z, 3.0, a.team);
+            if near.n == 0 {
+                continue;
+            }
+            let v = near.empty + near.enemy * 1.4;
+            let sc = v * 10.0 + side * 2.0 - (n.pos.x - a.pos.x).hypot(n.pos.z - a.pos.z) * 0.1
+                + self.rng.next_f32() * 1.5
+                - if n.wet != 0 { 1.5 } else { 0.0 };
+            if sc > bs {
+                bs = sc;
+                best = id;
+            }
+        }
+        best
+    }
+
+    /// JS `_zoneAim` (L1177-1205): a needy patch of our zone in reach of
+    /// where we stand (re-picked ~1×/s); `None` = the normal paint scan
+    /// decides.
+    fn zone_aim(
+        &mut self,
+        ctx: &BotCtx,
+        a: &Actor,
+        dt: f32,
+        moving: bool,
+        move_v: Vec3,
+        kind: WeaponKind,
+    ) -> Option<ZAim> {
+        let (Some(zp), Some(zctl)) = (ctx.zones, ctx.zctl) else {
+            return None;
+        };
+        self.z_aim_t -= dt;
+        if self.z_aim_t <= 0.0 {
+            self.z_aim_t = 0.7 + self.rng.next_f32() * 0.4;
+            self.z_aim = None;
+            let zi = self.z_zone;
+            if zi < 0 || !zp.is_active(zi as usize, zctl) {
+                return None;
+            }
+            let i = &zp.info[zi as usize];
+            let need = &i.need[a.team];
+            // scan-reach ladder (JS L1185; slosher retired)
+            let far = if kind.is_charge() {
+                (ctx.bot_range(kind) * 0.9).min(16.0)
+            } else if kind == WeaponKind::Bucket {
+                7.0
+            } else if kind == WeaponKind::Blaster {
+                6.0
+            } else {
+                5.5
+            };
+            let c = zctl.zones[zi as usize].center;
+            if (a.pos.x - c[0]).hypot(a.pos.z - c[2]) > i.r + far {
+                return None;
+            }
+            let mut bs = f32::NEG_INFINITY;
+            let mut bp: Option<Vec3> = None;
+            for (li, &need_sc) in need.iter().enumerate() {
+                if need_sc < 3.0 {
+                    continue;
+                }
+                let n = ctx.nav.nodes[i.nodes[li]].pos;
+                let d = (n.x - a.pos.x).hypot(n.z - a.pos.z);
+                if d < 1.4 || d > far || (n.y - a.pos.y).abs() > 3.5 {
+                    continue;
+                }
+                let sc = need_sc - d * 0.35;
+                if sc > bs {
+                    bs = sc;
+                    bp = Some(n);
+                }
+            }
+            if let Some(bp) = bp {
+                // short-range kids only look aside for it when they're
+                // standing, or it's roughly the way they're going (JS L1198)
+                let ahead = !moving
+                    || angle_diff(
+                        move_v.x.atan2(move_v.z),
+                        (bp.x - a.pos.x).atan2(bp.z - a.pos.z),
+                    )
+                    .abs()
+                        < 1.1;
+                if kind.is_charge() || ahead {
+                    self.z_aim = Some(ZAim {
+                        x: bp.x,
+                        y: bp.y,
+                        z: bp.z,
+                        d: 0.0,
+                    });
+                }
+            }
+        }
+        let z = self.z_aim.as_mut()?;
+        z.d = (z.x - a.pos.x).hypot(z.z - a.pos.z);
+        Some(*z)
+    }
+
+    /// JS `_zoneSpecial` (L1209-1229): specials break a hold on the zone
+    /// (standing on / facing it), or defend it when foes turn up. JS rides
+    /// `G.time`; the sim uses [`ZoneControl::clock`] (zones.rs module docs).
+    fn zone_special(&mut self, ctx: &BotCtx, a: &Actor, fighting: bool) -> bool {
+        let (Some(zp), Some(zctl)) = (ctx.zones, ctx.zctl) else {
+            return false;
+        };
+        let t = a.team;
+        let zi = self.z_zone;
+        if zi < 0 || !zp.is_active(zi as usize, zctl) {
+            return false;
+        }
+        let w = *zp.wave_of(t);
+        if w.state == WaveState::Stage && !fighting {
+            // saved for the push (JS L1212)
+            return false;
+        }
+        if w.state == WaveState::Push && zctl.clock < zp.sp_next(t) {
+            // chained: one teammate at a time (JS L1213)
+            return false;
+        }
+        let zone = &zctl.zones[zi as usize];
+        let i = &zp.info[zi as usize];
+        let c = zone.center;
+        let dz = (a.pos.x - c[0]).hypot(a.pos.z - c[2]);
+        if dz > i.r + 12.0 {
+            return false;
+        }
+        let ours = zctl.owner == t as i8;
+        let foes = ctx
+            .actors
+            .iter()
+            .filter(|o| {
+                o.team != t && o.alive && (o.pos.x - c[0]).hypot(o.pos.z - c[2]) < i.r + 8.0
+            })
+            .count();
+        // holding it quietly: keep it for the push-back (JS L1220)
+        if ours && foes == 0 {
+            return false;
+        }
+        // JS L1221: `SPECIALS[a.specialId]?.kind || a.specialId`
+        let id_raw = a.special_id.as_deref().unwrap_or("");
+        let id = def_by_id(id_raw).map_or_else(|| id_raw.to_string(), |d| d.kind(id_raw));
+        let foes = foes > 0;
+        if matches!(
+            id.as_str(),
+            "sonar" | "bubbler" | "wail" | "zooka" | "stamp" | "crab"
+        ) && !foes
+        {
+            return false;
+        }
+        // thrown / aimed ones go where we look: only while facing the zone
+        // or standing on it (fights: `_wantSpecial`'s aim) (JS L1224-1225)
+        let thrown = matches!(
+            id.as_str(),
+            "storm" | "barrage" | "booyah" | "zooka" | "wail" | "blower"
+        );
+        if thrown
+            && !fighting
+            && dz > i.r * 0.7
+            && angle_diff(self.aim_yaw, (c[0] - a.pos.x).atan2(c[2] - a.pos.z)).abs() > 0.6
+        {
+            self.z_face = 0.8;
+            return false;
+        }
+        let go = self.rng.next_f32()
+            < if fighting {
+                0.03
+            } else if w.state == WaveState::Push {
+                0.2
+            } else {
+                0.08
+            };
+        if go && w.state == WaveState::Push {
+            zp.set_sp_next(t, zctl.clock + 2.2 + self.rng.next_f32() * 0.8);
+        }
+        go
+    }
+
+    /// JS `_zoneBombAim` (L1233-1258): a thrown sub onto the biggest patch
+    /// of their ink on our zone in lobbing range (re-looked-for twice a
+    /// second); returns the aim to hold while it's thrown.
+    fn zone_bomb_aim(&mut self, ctx: &BotCtx, a: &Actor, dt: f32) -> Option<ZoneBomb> {
+        let (Some(zp), Some(zctl)) = (ctx.zones, ctx.zctl) else {
+            return None;
+        };
+        if let Some(zb) = self.z_bomb.as_mut() {
+            zb.t -= dt;
+            if zb.t <= 0.0 {
+                self.z_bomb = None;
+                return None;
+            }
+            return Some(*zb);
+        }
+        self.z_bomb_scan -= dt;
+        // JS L1236: `const sub = a.sub || SUB.bomb` — the sim always has a
+        // sub slot set.
+        let sub = a.sub;
+        if self.z_bomb_scan > 0.0
+            || self.bomb_cd.unwrap_or(0.0) > 0.0
+            || !sub.is_thrown()
+            || a.ink < ink_cost(sub, Self::sub_set()) + 10.0
+            || self.z_role == Some(ZoneRole::Watch)
+        {
+            return None;
+        }
+        // JS L1238: one already out (Torpedo / Boomerang) — don't wind up
+        if find_actor(ctx.actors, a.team, a.slot).is_some_and(|i| ctx.subs.kit_blocked(sub, i)) {
+            return None;
+        }
+        self.z_bomb_scan = 0.5;
+        let t = a.team;
+        let zi = self.z_zone;
+        if zi < 0 || !zp.is_active(zi as usize, zctl) {
+            return None;
+        }
+        let zone = &zctl.zones[zi as usize];
+        // only to open up a zone they hold / are taking (JS L1243)
+        if zone.owner != (1 - t) as i8 && zone.share[1 - t] < 0.25 {
+            return None;
+        }
+        let i = &zp.info[zi as usize];
+        let ink = &i.ink[1 - t];
+        let mut bv = 24.0f32;
+        let mut bn: Option<Vec3> = None;
+        let mut bd = 0.0f32;
+        for li in 0..i.nodes.len() {
+            if ink[li] < 6 {
+                continue;
+            }
+            let n = ctx.nav.nodes[i.nodes[li]].pos;
+            let d = (n.x - a.pos.x).hypot(n.z - a.pos.z);
+            if d < 4.5 || d > 12.0 || (n.y - a.pos.y).abs() > 3.0 {
+                continue;
+            }
+            let mut v = 0.0f32;
+            for &k in &i.nb[li] {
+                v += ink[k] as f32;
+            }
+            if v > bv {
+                bv = v;
+                bn = Some(n);
+                bd = d;
+            }
+        }
+        let bn = bn?;
+        let pitch = lob_pitch(bd, bn.y - a.pos.y, sub_throw_speed(sub))?;
+        let zb = ZoneBomb {
+            yaw: (bn.x - a.pos.x).atan2(bn.z - a.pos.z),
+            pitch,
+            t: 1.1,
+            release: false,
+        };
+        self.z_bomb = Some(zb);
+        Some(zb)
+    }
+
+    // ---------------------------------------------------------------- subs
+
+    /// Embedded `SUBS` (config.js L317+ via the tuning artifact) for
+    /// [`ink_cost`]. Mirrors the [`crate::special::specials`] accessor.
+    #[must_use]
+    fn sub_set() -> &'static crate::tuning::SubSet {
+        static SUBS: OnceLock<crate::tuning::SubSet> = OnceLock::new();
+        SUBS.get_or_init(|| crate::embedded_tuning().subs)
+    }
+
+    /// This brain's target memory for [`BotCtx::mate_minds`] (JS reads the
+    /// live `e.bot.target` / `e.bot.seeTimer`; the sim snapshots it).
+    #[must_use]
+    pub fn mind(&self) -> MateMind {
+        MateMind {
+            target: self.target,
+            see_timer: self.see_timer,
+        }
+    }
+
+    /// JS `_fightSub` (bots.js L950-967): a mid-duel sub throw. Sets
+    /// [`Bot::bomb_cd`] and returns whether to throw this frame.
+    fn fight_sub(&mut self, a: &Actor, ctx: &BotCtx, dist: f32) -> bool {
+        // JS L952: the ink pad and the beacon ban run before the kit hook
+        let cost = ink_cost(a.sub, Self::sub_set());
+        if a.ink < cost + 8.0 || a.sub == SubKind::Beacon {
+            return false;
+        }
+        // JS L953: kit subs decide for themselves
+        if a.sub.is_kit() {
+            return self.kit_sub_fight(a, ctx, dist);
+        }
+        // JS L954: the shared roll is drawn even when the arm rolls again
+        let disc = self.diff.fire_discipline;
+        let roll = self.rng.next_f32() < 0.02 * (1.0 + disc);
+        let go = match a.sub {
+            SubKind::Burst => dist > 3.0 && dist < 12.0 && self.rng.next_f32() < 0.04,
+            SubKind::Scan => dist > 8.0 && dist < 18.0 && roll,
+            SubKind::Curtain => {
+                dist > 4.0 && dist < 14.0 && a.last_damage() < 0.6 && self.rng.next_f32() < 0.05
+            }
+            SubKind::Sprinkler => false,
+            SubKind::Mine => dist < 10.0 && a.last_damage() < 1.5 && self.rng.next_f32() < 0.05,
+            SubKind::Seeker => dist > 5.0 && dist < 15.0 && roll,
+            // bomb, sticky, mist (JS `default`)
+            _ => dist > 4.0 && dist < 14.0 && roll,
+        };
+        if go {
+            self.bomb_cd = Some(if a.sub == SubKind::Burst {
+                1.5 + self.rng.next_f32() * 2.0
+            } else {
+                5.0 + self.rng.next_f32() * 6.0
+            });
+        }
+        go
+    }
+
+    /// The kit sub `SUB_KITS[k].bot.fight` hooks: waddle.js L751-755,
+    /// tracer.js L463-467, torpedo.js L738-744, shaker.js L605-609,
+    /// boomerang.js L572-583.
+    fn kit_sub_fight(&mut self, a: &Actor, ctx: &BotCtx, dist: f32) -> bool {
+        let disc = self.diff.fire_discipline;
+        let own_idx = find_actor(ctx.actors, a.team, a.slot);
+        match a.sub {
+            // waddle: lob it into the fight, it walks the rest of the way
+            SubKind::Waddle => {
+                let go = dist > 4.5 && dist < 15.0 && self.rng.next_f32() < 0.02 * (1.0 + disc);
+                if go {
+                    self.bomb_cd = Some(6.0 + self.rng.next_f32() * 5.0);
+                }
+                go
+            }
+            // tracer: a cheap snap at a foe in mid range
+            SubKind::Tracer => {
+                let go = dist > 3.0 && dist < 17.0 && self.rng.next_f32() < 0.05;
+                if go {
+                    self.bomb_cd = Some(2.5 + self.rng.next_f32() * 3.0);
+                }
+                go
+            }
+            // torpedo: one out at a time (JS `blocked`, L733/L740)
+            SubKind::Torpedo => {
+                if own_idx.is_some_and(|i| ctx.subs.kit_blocked(SubKind::Torpedo, i)) {
+                    return false;
+                }
+                let go = dist > 4.0 && dist < 13.5 && self.rng.next_f32() < 0.035;
+                if go {
+                    self.bomb_cd = Some(6.0 + self.rng.next_f32() * 5.0);
+                }
+                go
+            }
+            // shaker: a mid-range lob (the hold then charges it)
+            SubKind::Shaker => {
+                let go = dist > 4.0 && dist < 14.0 && self.rng.next_f32() < 0.03 * (1.0 + disc);
+                if go {
+                    self.bomb_cd = Some(5.0 + self.rng.next_f32() * 5.0);
+                }
+                go
+            }
+            // boomerang: only with the aim on the target (L572-583)
+            SubKind::Boomerang => {
+                if own_idx.is_some_and(|i| ctx.subs.kit_blocked(SubKind::Boomerang, i)) {
+                    return false;
+                }
+                let Some(ti) = self.target.and_then(|(t, s)| find_actor(ctx.actors, t, s)) else {
+                    return false;
+                };
+                if self.see_timer <= 0.0 {
+                    return false;
+                }
+                let t = &ctx.actors[ti];
+                let off = angle_diff(a.aim_yaw, (t.pos.x - a.pos.x).atan2(t.pos.z - a.pos.z)).abs();
+                if off > 0.35f32.min(0.9 / dist.max(1.0)) {
+                    return false;
+                }
+                let close = dist < 3.2 && a.last_damage() < 0.8 && self.rng.next_f32() < 0.08;
+                let mid = dist > 4.0 && dist < 10.5 && self.rng.next_f32() < 0.035 * (1.0 + disc);
+                if !close && !mid {
+                    return false;
+                }
+                self.bomb_cd = Some(6.0 + self.rng.next_f32() * 5.0);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// JS `_paintSub` (bots.js L969-983): a sub throw while painting.
+    fn paint_sub(&mut self, a: &Actor, ctx: &BotCtx) -> bool {
+        let cost = ink_cost(a.sub, Self::sub_set());
+        // JS L971: the kit branch carries its own `+4` ink gate and returns
+        // the hook's verdict directly — the generic placed / probability
+        // gates below never see a kit sub.
+        if a.sub.is_kit() {
+            return a.ink >= cost + 4.0 && self.kit_sub_paint(a, ctx);
+        }
+        let placed = matches!(a.sub, SubKind::Mine | SubKind::Beacon);
+        let pad = if placed { 4.0 } else { 20.0 };
+        let roll_max = if placed { 0.04 } else { 0.01 };
+        if a.ink < cost + pad || self.rng.next_f32() > roll_max {
+            return false;
+        }
+        // JS L973-974: progress along the spawn-pad line (the unclamped JS
+        // division is mirrored — `total` is never 0 on a real stage)
+        let pads = ctx.world.spawn_pads;
+        let total = pads[0].distance(pads[1]);
+        let foe_pad = pads[1 - a.team];
+        let progress = 1.0 - (a.pos.x - foe_pad.x).hypot(a.pos.z - foe_pad.z) / total;
+        let go = match a.sub {
+            // sprinkler: onto open turf ahead (JS L976-978)
+            SubKind::Sprinkler => {
+                let st = ctx.paint.region_stats(
+                    ctx.world.collision,
+                    a.pos.x + a.aim_yaw.sin() * 5.0,
+                    a.pos.y,
+                    a.pos.z + a.aim_yaw.cos() * 5.0,
+                    3.0,
+                    a.team,
+                );
+                st.n != 0 && st.own < 0.4
+            }
+            // mine: around the contested middle (JS L979)
+            SubKind::Mine => progress > 0.3 && progress < 0.7,
+            // beacon: up front, one per team stretch (JS L980)
+            SubKind::Beacon => {
+                progress > 0.4
+                    && !ctx.subs.items.iter().any(|b| {
+                        b.kind == SubKind::Beacon
+                            && b.team == a.team
+                            && b.state != SubState::Dead
+                            && b.pos.distance(a.pos) < 12.0
+                    })
+            }
+            _ => false,
+        };
+        if go {
+            self.bomb_cd = Some(8.0 + self.rng.next_f32() * 8.0);
+        }
+        go
+    }
+
+    /// The kit sub `SUB_KITS[k].bot.paint` hooks: waddle.js L757-765,
+    /// tracer.js L468-472, torpedo.js L745, shaker.js L611-615,
+    /// boomerang.js L585-592.
+    fn kit_sub_paint(&mut self, a: &Actor, ctx: &BotCtx) -> bool {
+        match a.sub {
+            // waddle: a foe we can't see is lurking near the landing point
+            SubKind::Waddle => {
+                if self.rng.next_f32() > 0.03 {
+                    return false;
+                }
+                let lx = a.pos.x + a.aim_yaw.sin() * 7.5;
+                let lz = a.pos.z + a.aim_yaw.cos() * 7.5;
+                for e in ctx.actors {
+                    if e.team == a.team || !e.alive || self.target == Some((e.team, e.slot)) {
+                        continue;
+                    }
+                    if (e.pos.x - lx).hypot(e.pos.z - lz) < 6.5 && (e.pos.y - a.pos.y).abs() < 3.0 {
+                        self.bomb_cd = Some(9.0 + self.rng.next_f32() * 6.0);
+                        return true;
+                    }
+                }
+                false
+            }
+            // tracer: now and then skim one along the ground for puddles
+            SubKind::Tracer => {
+                let go = self.rng.next_f32() < 0.006;
+                if go {
+                    self.bomb_cd = Some(6.0 + self.rng.next_f32() * 6.0);
+                }
+                go
+            }
+            // torpedo: never while painting
+            SubKind::Torpedo => false,
+            // shaker: three hops leave a long stripe of ink
+            SubKind::Shaker => {
+                let go = self.rng.next_f32() < 0.0012;
+                if go {
+                    self.bomb_cd = Some(9.0 + self.rng.next_f32() * 8.0);
+                }
+                go
+            }
+            // boomerang: onto a patch ahead that isn't ours yet
+            SubKind::Boomerang => {
+                let blocked = find_actor(ctx.actors, a.team, a.slot)
+                    .is_some_and(|i| ctx.subs.kit_blocked(SubKind::Boomerang, i));
+                if blocked || self.rng.next_f32() > 0.006 {
+                    return false;
+                }
+                let st = ctx.paint.region_stats(
+                    ctx.world.collision,
+                    a.pos.x + a.aim_yaw.sin() * 8.0,
+                    a.pos.y,
+                    a.pos.z + a.aim_yaw.cos() * 8.0,
+                    2.5,
+                    a.team,
+                );
+                if st.n == 0 || st.own > 0.45 {
+                    return false;
+                }
+                self.bomb_cd = Some(9.0 + self.rng.next_f32() * 7.0);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    // ---------------------------------------------------------------- specials
+
+    /// JS `_wantSpecial` (bots.js L830-856): when to fire the special. The
+    /// single `Math.random()` draw of the JS prologue happens once here.
+    fn want_special(&mut self, a: &Actor, ctx: &BotCtx, fight: bool, dist: f32, vis: bool) -> bool {
+        // JS L831: `SPECIALS[a.specialId]?.kind || a.specialId`
+        let id_raw = a.special_id.as_deref().unwrap_or("");
+        let id = def_by_id(id_raw).map_or_else(|| id_raw.to_string(), |d| d.kind(id_raw));
+        let r = self.rng.next_f32();
+        if fight {
+            let last_damage = a.last_damage();
+            return match id.as_str() {
+                "slam" => dist < 4.5,
+                "storm" => dist < 16.0,
+                "barrage" => dist < 14.0,
+                "bubbler" => dist < 12.0 && (last_damage < 0.6 || r < 0.02),
+                "sonar" => r < 0.02,
+                "strike" => dist > 14.0 && r < 0.01,
+                "zooka" => vis && dist > 7.0 && dist < 36.0,
+                "wail" => vis && dist > 5.0 && dist < 40.0,
+                "kraken" => dist < 10.0,
+                "blower" => dist < 14.0,
+                "jetpack" => dist > 5.0 && dist < 22.0,
+                "stamp" => dist < 9.0,
+                "booyah" => dist > 9.0 && dist < 26.0 && r < 0.03,
+                "zipcaster" => dist < 16.0,
+                "crab" => dist < 20.0,
+                _ => false,
+            };
+        }
+        // JS L852: only the turf-claiming specials get a paint-mode press
+        let turf = matches!(
+            id.as_str(),
+            "storm"
+                | "strike"
+                | "booyah"
+                | "barrage"
+                | "sonar"
+                | "kraken"
+                | "crab"
+                | "zooka"
+                | "blower"
+                | "stamp"
+        );
+        if !turf || r > 0.012 {
+            return false;
+        }
+        ctx.paint
+            .region_stats(ctx.world.collision, a.pos.x, a.pos.y, a.pos.z, 6.0, a.team)
+            .own
+            < 0.55
+    }
+
+    /// JS `_specialCtl` (bots.js L859-948): driving a running special +
+    /// cheering a teammate's Cheer Orb. Batch 3 adds the Zone Control strike
+    /// aiming (L872-877).
+    #[allow(clippy::too_many_arguments)]
+    fn special_ctl(
+        &mut self,
+        dt: f32,
+        a: &mut Actor,
+        ctx: &BotCtx,
+        move_v: &mut Vec3,
+        it: &mut ActorInput,
+        dist: f32,
+        vis: bool,
+    ) {
+        let cur = a.special_active.as_deref();
+        // JS L862-864: cheer on a teammate's charging Cheer Orb
+        if (cur.is_none() || cur.is_some_and(|x| x.id != "booyah"))
+            && self.rng.next_f32() < dt * 1.3
+        {
+            let own_idx = find_actor(ctx.actors, a.team, a.slot);
+            for (i, o) in ctx.actors.iter().enumerate() {
+                if Some(i) == own_idx || o.team != a.team {
+                    continue;
+                }
+                if let Some(os) = o.special_active.as_deref()
+                    && os.id == "booyah"
+                    && !matches!(&os.state, KindState::Booyah(st) if st.thrown)
+                {
+                    it.cheer = true;
+                    break;
+                }
+            }
+        }
+        // JS L866-870: don't waste shots or bombs into a Mega Stamp's front
+        // guard
+        if let Some(ti) = self
+            .target
+            .and_then(|(t, sl)| find_actor(ctx.actors, t, sl))
+            && let Some(tsa) = ctx.actors[ti].special_active.as_deref()
+            && tsa.id == "stamp"
+            && matches!(&tsa.state, KindState::Stamp(st) if st.guard > 0.0)
+        {
+            let t = &ctx.actors[ti];
+            let fy = match &tsa.state {
+                KindState::Stamp(st) => st.body_yaw,
+                _ => t.yaw,
+            };
+            let rx = a.pos.x - t.pos.x;
+            let rz = a.pos.z - t.pos.z;
+            let rl = rx.hypot(rz);
+            let rl = if rl == 0.0 { 1.0 } else { rl };
+            if (rx * fy.sin() + rz * fy.cos()) / rl > 1.2f32.cos() {
+                it.fire = false;
+                it.sub = false;
+            }
+        }
+        // JS L872-877: Zone Control — a Vortex Strike lands on the live
+        // zone (on its enemy ink when we're taking it back).
+        if let (Some(zp), Some(zctl)) = (ctx.zones, ctx.zctl) {
+            let pending = a.special_active.as_deref().is_some_and(|sa| {
+                sa.id == "strike"
+                    && matches!(&sa.state, KindState::Strike(st) if st.aiming && !st.zone_aimed)
+            });
+            if pending
+                && let Some(st) = a
+                    .special_active
+                    .as_mut()
+                    .and_then(|sa| match &mut sa.state {
+                        KindState::Strike(st) => Some(st),
+                        _ => None,
+                    })
+            {
+                st.zone_aimed = true;
+                if let Some(p) = zp.hotspot(self.z_zone, a.team, zctl, ctx.nav) {
+                    st.target = Vec3::new(p.x, 0.0, p.z);
+                }
+            }
+        }
+        let s = a.special_active.as_deref();
+        let Some(s) = s else { return };
+        let fighting = self.mode == BotMode::Fight && self.target.is_some();
+        self.sp_t += dt;
+        // JS L888: `switch (s.kind || s.id)`
+        let key = if s.kind.is_empty() { &s.id } else { &s.kind };
+        match key.as_str() {
+            "barrage" => {
+                self.barrage_cd -= dt;
+                if self.barrage_cd <= 0.0 && (!fighting || dist < 16.0) {
+                    it.sub = true;
+                    self.bomb_aim = true;
+                    self.barrage_cd = 0.35 + self.rng.next_f32() * 0.3;
+                }
+            }
+            "zooka" => {
+                it.fire = if fighting {
+                    vis && dist < 42.0
+                } else {
+                    self.rng.next_f32() < 0.06
+                };
+                it.squid = false;
+            }
+            "kraken" => {
+                it.squid = false;
+                if fighting {
+                    self.sp_toward(a, ctx, move_v, dist);
+                    it.fire = dist < 3.6 && vis;
+                    if a.grounded && dist > 6.0 && self.rng.next_f32() < dt * 0.8 {
+                        it.jump = true;
+                    }
+                }
+            }
+            "stamp" => {
+                it.squid = false;
+                self.stamp_flip -= dt;
+                if self.stamp_flip > 0.0 {
+                    // mid-jump: swing once airborne = the flip (JS L907)
+                    if !a.grounded {
+                        it.fire = true;
+                    }
+                    return;
+                }
+                if fighting {
+                    if let Some(ti) = self
+                        .target
+                        .and_then(|(t, sl)| find_actor(ctx.actors, t, sl))
+                    {
+                        let t = &ctx.actors[ti];
+                        let body_yaw = match &s.state {
+                            KindState::Stamp(st) => st.body_yaw,
+                            _ => a.yaw,
+                        };
+                        let off =
+                            angle_diff(body_yaw, (t.pos.x - a.pos.x).atan2(t.pos.z - a.pos.z))
+                                .abs();
+                        let near3 = (t.pos.y - a.pos.y).abs() < 1.8;
+                        // JS L911-912: two flip arms with identical bodies
+                        // (right behind / just out of reach) — merged, the
+                        // conditions are pure comparisons
+                        if a.grounded
+                            && near3
+                            && ((dist < 2.6 && off > 2.3)
+                                || (off < 0.3 && dist > 3.3 && dist < 4.3))
+                        {
+                            it.jump = true;
+                            self.stamp_flip = 0.4;
+                        } else if off > 0.9 && dist < 9.0 {
+                            *move_v = Vec3::ZERO;
+                        } else {
+                            // charge straight at the target (unless it runs
+                            // off a ledge) (JS L916-918)
+                            if near3 && dist < 12.0 {
+                                let dx = t.pos.x - a.pos.x;
+                                let dz = t.pos.z - a.pos.z;
+                                let l = dx.hypot(dz);
+                                let l = if l == 0.0 { 1.0 } else { l };
+                                if ctx.world.collision.ground_height(
+                                    a.pos.x + (dx / l) * 1.5,
+                                    a.pos.z + (dz / l) * 1.5,
+                                    a.pos.y + 1.0,
+                                    false,
+                                ) >= a.pos.y - 1.5
+                                {
+                                    *move_v = Vec3::new(dx / l, 0.0, dz / l);
+                                }
+                            }
+                            let d = &specials().stamp;
+                            it.fire = off < 0.7 && dist < d.reach + d.radius + 0.5;
+                        }
+                        if vis && dist > 9.0 && dist < 20.0 && self.rng.next_f32() < dt * 0.8 {
+                            it.sub = true;
+                        }
+                    }
+                } else {
+                    it.fire = self.rng.next_f32() < 0.5;
+                }
+            }
+            "crab" => {
+                it.fire = if fighting {
+                    vis && dist < 24.0
+                } else {
+                    self.rng.next_f32() < 0.3
+                };
+                it.sub =
+                    fighting && vis && dist > 8.0 && dist < 22.0 && self.rng.next_f32() < dt * 1.5;
+                let low = matches!(&s.state, KindState::Crab(st) if st.hp < specials().crab.hp as f32 * 0.3);
+                it.squid = (fighting && low && dist > 8.0)
+                    || (!fighting && self.path_remaining(a, ctx) > 12.0);
+            }
+            "blower" => {
+                self.blow_t += dt;
+                it.fire = self.blow_t < 0.9;
+                if self.blow_t > 1.4 {
+                    self.blow_t = 0.0;
+                }
+                it.squid = false;
+            }
+            "booyah" => {
+                it.squid = false;
+                let charged = matches!(&s.state, KindState::Booyah(st) if st.charge >= 1.0);
+                it.fire = charged && self.rng.next_f32() < dt * 3.0;
+            }
+            "jetpack" => {
+                it.fire = fighting && vis && dist < 30.0;
+            }
+            "zipcaster"
+                if fighting
+                    && vis
+                    && dist > 6.0
+                    && dist < 18.0
+                    && self.rng.next_f32() < dt * 0.6 =>
+            {
+                it.sub = true;
+            }
+            _ => {}
+        }
+    }
+
+    /// JS `toward()` (bots.js L881-886): charge straight at the target only
+    /// when it's close and the way doesn't drop off a ledge.
+    fn sp_toward(&self, a: &Actor, ctx: &BotCtx, move_v: &mut Vec3, dist: f32) {
+        let Some(ti) = self
+            .target
+            .and_then(|(t, sl)| find_actor(ctx.actors, t, sl))
+        else {
+            return;
+        };
+        let t = &ctx.actors[ti];
+        if dist > 5.0 || (t.pos.y - a.pos.y).abs() > 1.2 {
+            return;
+        }
+        let dx = t.pos.x - a.pos.x;
+        let dz = t.pos.z - a.pos.z;
+        let l = dx.hypot(dz);
+        let l = if l == 0.0 { 1.0 } else { l };
+        if ctx.world.collision.ground_height(
+            a.pos.x + (dx / l) * 1.5,
+            a.pos.z + (dz / l) * 1.5,
+            a.pos.y + 1.0,
+            false,
+        ) < a.pos.y - 1.5
+        {
+            return;
+        }
+        *move_v = Vec3::new(dx / l, 0.0, dz / l);
+    }
+
+    // ---------------------------------------------------------------- kit hooks
+
+    /// JS `MAIN_KITS.brolly.bot.fight` (kits/brolly.js L560-594): open the
+    /// canopy when taking fire or when a long weapon lines up from roughly
+    /// ahead; plant / launch behind it. The `advanceUntil` follow-the-
+    /// launched-canopy steering (L586-592) is cut (module docs).
+    #[allow(clippy::too_many_arguments)]
+    fn brolly_fight(
+        &mut self,
+        a: &Actor,
+        ctx: &BotCtx,
+        dt: f32,
+        dist: f32,
+        range: f32,
+        move_v: &mut Vec3,
+        wr: &WeaponRunner,
+    ) -> bool {
+        // JS `G.time` → the brain's own clock (module docs)
+        let t = self.t_time;
+        let grown = wr
+            .brolly
+            .as_ref()
+            .is_some_and(|k| k.state == CanopyState::Ready && k.grow > 0.9);
+        if grown && self.bb_hold_until <= t && t >= self.bb_next_shield && dist < 18.0 {
+            let thr = self.line_threat(a, ctx);
+            let ahead = thr.is_some_and(|i| {
+                let e = &ctx.actors[i];
+                angle_diff(a.aim_yaw, (e.pos.x - a.pos.x).atan2(e.pos.z - a.pos.z)).abs() < 0.9
+            });
+            let hurt = a.last_damage() < 0.45
+                && a.last_attacker()
+                    .and_then(|(tk, sl)| find_actor(ctx.actors, tk, sl))
+                    .is_some_and(|i| {
+                        ctx.actors[i].alive
+                            && angle_diff(
+                                a.aim_yaw,
+                                (ctx.actors[i].pos.x - a.pos.x)
+                                    .atan2(ctx.actors[i].pos.z - a.pos.z),
+                            )
+                            .abs()
+                                < 1.0
+                    });
+            let disc = self.diff.fire_discipline;
+            if (ahead && self.rng.next_f32() < 0.35 * dt * 60.0 * disc)
+                || (hurt && self.rng.next_f32() < 0.2 * dt * 60.0 * disc)
+            {
+                let own_idx = find_actor(ctx.actors, a.team, a.slot);
+                let allies = ctx
+                    .actors
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, o)| {
+                        Some(*i) != own_idx
+                            && o.alive
+                            && o.team == a.team
+                            && o.pos.distance_squared(a.pos) < 49.0
+                    })
+                    .count();
+                let launch_it = dist > 4.0
+                    && dist < 14.0
+                    && (allies > 0 || ahead)
+                    && self.rng.next_f32() < if allies > 0 { 0.45 } else { 0.2 };
+                let w = &ctx.weapons.brolly;
+                let hold = if launch_it {
+                    w.open_delay + w.open_time + w.launch_hold + 0.12
+                } else {
+                    0.5 + self.rng.next_f32() * 0.3
+                };
+                self.bb_hold_until = t + hold;
+                self.bb_launch = launch_it;
+                self.bb_next_shield = t + hold + 0.9 + self.rng.next_f32() * 1.4;
+            }
+        }
+        let ready_state = wr
+            .brolly
+            .as_ref()
+            .is_some_and(|k| k.state == CanopyState::Ready);
+        if self.bb_hold_until > t && ready_state {
+            if !self.bb_launch {
+                // plant behind the canopy (it slows you anyway) (JS L581)
+                *move_v *= 0.4;
+            }
+            return true;
+        }
+        if self.bb_hold_until > t {
+            // broke / launched mid-hold (JS L584)
+            self.bb_hold_until = 0.0;
+        }
+        dist < range * 1.1
+    }
+
+    /// JS `lineThreat` (kits/brolly.js L545-557): an enemy long weapon
+    /// lining up on this bot. JS gates on `CHARGES || LONG || KB.long ||
+    /// KB.charges`; no kit bot hook defines `long` / `charges`, so the
+    /// filter is `is_long()` (module docs).
+    fn line_threat(&self, a: &Actor, ctx: &BotCtx) -> Option<usize> {
+        for (i, e) in ctx.actors.iter().enumerate() {
+            if e.team == a.team || !e.alive {
+                continue;
+            }
+            let ek = ctx.kinds.get(i).copied()?;
+            if !ek.is_long() {
+                continue;
+            }
+            let er = &ctx.runners[i];
+            if !(er.charging_flag() || er.firing() || er.streaming() || er.burst_t() > 0.0) {
+                continue;
+            }
+            let dx = a.pos.x - e.pos.x;
+            let dy = a.pos.y + 0.8 - (e.pos.y + 1.1);
+            let dz = a.pos.z - e.pos.z;
+            let d = Vec3::new(dx, dy, dz).length();
+            if d > ctx.weapon_reach(ek) + 3.0 || d < 1.0 {
+                continue;
+            }
+            let ad = e.aim_dir();
+            if (ad.x * dx + ad.y * dy + ad.z * dz) / d < 0.14f32.cos() {
+                continue;
+            }
+            return Some(i);
+        }
+        None
+    }
+
+    /// JS `MAIN_KITS.bow.bot.fight` (kits/bow.js L453-475): start the draw
+    /// in range off cooldown, then loose at the wanted ring (jump-laning the
+    /// release when asked). The `groupYaw` fan bias (L473) is cut (module
+    /// docs).
+    #[allow(clippy::too_many_arguments)]
+    fn bow_fight(
+        &mut self,
+        a: &Actor,
+        ctx: &BotCtx,
+        dist: f32,
+        range: f32,
+        move_v: &mut Vec3,
+        it: &mut ActorInput,
+        ti: usize,
+        wr: &WeaponRunner,
+    ) -> bool {
+        let bow = &ctx.weapons.bow;
+        if !wr.charging_flag() {
+            if dist > range * 1.1 || wr.cooldown() > 0.0 {
+                return false;
+            }
+            self.bow_want = if dist > 11.0 { 1.0 } else { bow.ring1 + 0.08 };
+            let dy = ctx.actors[ti].pos.y - a.pos.y;
+            self.bow_jump = a.grounded
+                && dist > 4.0
+                && dist < 17.0
+                && (dy.abs() > 1.3 || self.rng.next_f32() < 0.18);
+            self.bow_jumped = false;
+            return true;
+        }
+        *move_v *= 0.4;
+        let want = self
+            .bow_want
+            .min((a.ink / bow.ink_full).clamp(0.0, 1.0) - 0.001);
+        if wr.charge() < want {
+            return true;
+        }
+        if self.bow_jump {
+            if !self.bow_jumped {
+                if a.grounded {
+                    it.jump = true;
+                    self.bow_jumped = true;
+                }
+                return true;
+            }
+            if a.grounded && a.vel.y <= 0.5 {
+                // landed already: just loose (JS L469)
+                self.bow_jump = false;
+                return false;
+            }
+            if a.vel.y > 1.5 {
+                // rising: loose near the top (JS L470)
+                return true;
+            }
+            return false;
+        }
+        false
+    }
+
+    /// JS `MAIN_KITS.bow.bot.paint` (kits/bow.js L476-490): draw a paint
+    /// ring down the lane, hold off when the path is stuck.
+    fn bow_paint(
+        &mut self,
+        a: &Actor,
+        ctx: &BotCtx,
+        need_paint: bool,
+        ink_frac: f32,
+        wr: &WeaponRunner,
+    ) -> bool {
+        let bow = &ctx.weapons.bow;
+        if wr.charging_flag() {
+            // JS L480: `k.botPaint || w.ring1 + 0.05`
+            let target = if self.bow_paint > 0.0 {
+                self.bow_paint
+            } else {
+                bow.ring1 + 0.05
+            };
+            let done = wr.charge() >= target.min((a.ink / bow.ink_full).clamp(0.0, 1.0) - 0.001);
+            if done {
+                self.paint_pause = 0.3 + self.rng.next_f32() * 0.35;
+            }
+            return !done;
+        }
+        if !(need_paint && ink_frac > 0.25 && self.paint_pause <= 0.0 && wr.cooldown() <= 0.0) {
+            return false;
+        }
+        // not getting anywhere: hold off the next draw (JS L487)
+        if self.no_prog > 0.25 {
+            return false;
+        }
+        self.bow_paint = if self.rng.next_f32() < 0.3 {
+            1.0
+        } else {
+            bow.ring1 + 0.05
+        };
+        true
+    }
+
+    /// JS `MAIN_KITS.blade.bot.paint` (kits/blade.js L726-741): quick cuts
+    /// on the move with a reserve, now and then a charged wave down a long
+    /// lane. The `_blHold` bookkeeping for the deep tactics is cut.
+    #[allow(clippy::too_many_arguments)]
+    fn blade_paint(
+        &mut self,
+        a: &Actor,
+        ctx: &BotCtx,
+        dt: f32,
+        need_paint: bool,
+        ink_frac: f32,
+        want_move: bool,
+        wr: &WeaponRunner,
+    ) -> bool {
+        self.bl_wave_t -= dt;
+        if wr.blade.as_ref().is_some_and(|k| k.charging) {
+            if wr.blade.as_ref().is_some_and(|k| k.full) {
+                // loose a paint wave down the lane (JS L732)
+                self.bl_wave_t = 3.5 + self.rng.next_f32() * 3.0;
+                return false;
+            }
+            return true;
+        }
+        if self.bl_wave_t <= 0.0
+            && want_move
+            && ink_frac > 0.45
+            && need_paint
+            && self.path_remaining(a, ctx) > 9.0
+        {
+            return true;
+        }
+        if need_paint && ink_frac > 0.25 && want_move {
+            self.bl_press = !self.bl_press;
+            return self.bl_press;
+        }
+        false
+    }
+
+    /// JS `MAIN_KITS.mitts.bot.fight` (kits/mitts.js L762-816) reduced to
+    /// the reach test: the cling / escape / pounce / wall leap branches all
+    /// hinge on `botLeap` deep tactics, which are cut (module docs).
+    fn mitts_fight(&self, dist: f32, range: f32, wr: &WeaponRunner) -> bool {
+        if wr.mitts.as_ref().is_some_and(|k| k.charging || k.leaping) {
+            return false;
+        }
+        dist < range * 1.05
+    }
+
+    /// JS `MAIN_KITS.mitts.bot.paint` (kits/mitts.js L817-831) reduced to
+    /// the punch test (the cling hang and the travel pounce are cut).
+    fn mitts_paint(
+        &mut self,
+        need_paint: bool,
+        ink_frac: f32,
+        want_move: bool,
+        wr: &WeaponRunner,
+    ) -> bool {
+        if wr.mitts.as_ref().is_some_and(|k| k.charging || k.leaping) {
+            return false;
+        }
+        ink_frac > 0.08 && (need_paint || self.rng.next_f32() < 0.02) && want_move
+    }
+
+    /// JS `botTactics` (kits/mitts.js L739-757): the weaving approach from
+    /// 5-14 m — swim an own-ink lane, else punch the way in. Runs every
+    /// fight frame after the core's defaults (bots.js L528).
+    #[allow(clippy::too_many_arguments)]
+    fn mitts_tactics(
+        &mut self,
+        a: &Actor,
+        ctx: &BotCtx,
+        dt: f32,
+        dist: f32,
+        move_v: &mut Vec3,
+        it: &mut ActorInput,
+        ti: usize,
+        visible: bool,
+        wr: &WeaponRunner,
+    ) {
+        let m = &ctx.weapons.mitts;
+        // JS L741: `!w.botApproach || ctx.retreat || !t || !t.pos ||
+        // !ctx.visible` — the retreat / target guards are held by the caller
+        if m.bot_approach <= 0.0 || !visible {
+            return;
+        }
+        if wr
+            .mitts
+            .as_ref()
+            .is_some_and(|k| k.charging || k.leaping || k.cling)
+        {
+            return;
+        }
+        if dist <= m.range * 1.05 || dist > 14.0 {
+            return;
+        }
+        self.mw_weave_t += dt;
+        // JS writes the literal `Math.random() * 6.28` (mitts.js L746), not
+        // Math.PI * 2 — kept byte-faithful
+        #[allow(clippy::approx_constant)]
+        let p = *self
+            .mw_weave_p
+            .get_or_insert_with(|| self.rng.next_f32() * 6.28);
+        let t = &ctx.actors[ti];
+        let nx = (t.pos.x - a.pos.x) / dist;
+        let nz = (t.pos.z - a.pos.z) / dist;
+        // heading: straight at them when the way is open, else the nav
+        // path's; plus the weave (JS L748-754)
+        let (mut ux, mut uz) = (nx, nz);
+        let ml = move_v.length();
+        if dist > 7.0 && ml > 0.1 {
+            ux = move_v.x / ml;
+            uz = move_v.z / ml;
+        }
+        let sway = (self.mw_weave_t * 4.2 + p).sin() * 0.6;
+        let mx = ux - uz * sway;
+        let mz = uz + ux * sway;
+        let l = mx.hypot(mz);
+        let l = if l == 0.0 { 1.0 } else { l };
+        *move_v = Vec3::new(mx / l, 0.0, mz / l);
+        if a.ground_team == 1 && self.own_lane(a, ctx, nx, nz, (dist - m.range).min(5.0)) {
+            it.squid = true;
+            it.fire = false;
+            return;
+        }
+        if a.ink > m.ink_per_punch * 6.0 {
+            it.squid = false;
+            it.fire = true;
+        }
+    }
+
+    /// JS `ownLane` (kits/mitts.js L725-732): own ink along (nx, nz) for
+    /// `d` m — a lane to swim in on.
+    fn own_lane(&self, a: &Actor, ctx: &BotCtx, nx: f32, nz: f32, d: f32) -> bool {
+        for k in [1.2f32, 2.6, 4.2] {
+            if k > 1.2 && k > d - 0.6 {
+                break;
+            }
+            let st = ctx.paint.region_stats(
+                ctx.world.collision,
+                a.pos.x + nx * k,
+                a.pos.y,
+                a.pos.z + nz * k,
+                0.8,
+                a.team,
+            );
+            if st.n == 0 || st.own < 0.5 {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// JS `MAIN_KITS.blade.bot.stayIn` (kits/blade.js L710-714): low on
+    /// health in a fight at blade range (or charged and nearly there):
+    /// finish it rather than turn and run.
+    fn blade_stay_in(&self, a: &Actor, ctx: &BotCtx, wr: &WeaponRunner) -> bool {
+        let Some(ti) = self
+            .target
+            .and_then(|(t, sl)| find_actor(ctx.actors, t, sl))
+        else {
+            return false;
+        };
+        let t = &ctx.actors[ti];
+        let d = (t.pos.x - a.pos.x).hypot(t.pos.z - a.pos.z);
+        let full = wr.blade.as_ref().is_some_and(|k| k.full);
+        (t.pos.y - a.pos.y).abs() < 1.4 && (d < 4.5 || (full && d < 5.5))
+    }
+
+    /// JS `MAIN_KITS.blade.bot.targetBias` (kits/blade.js L718-725), added
+    /// to the perception score (bots.js L1650). Teammate target memory comes
+    /// from [`BotCtx::mate_minds`]; `None` (a remote brain the replicator
+    /// does not own) leaves only the low-hp term (module docs).
+    fn blade_target_bias(&self, a: &Actor, ctx: &BotCtx, ei: usize, d: f32) -> f32 {
+        let e = &ctx.actors[ei];
+        let mut b = if e.hp <= 50.0 && d < 12.0 { -2.0 } else { 0.0 };
+        let Some(Some(m)) = ctx.mate_minds.get(ei) else {
+            return b;
+        };
+        let own_kind = ctx.own(self.team, self.slot).0;
+        if let Some((tt, ts)) = m.target {
+            if (tt, ts) != (a.team, a.slot) && tt == a.team && m.see_timer > 0.0 && d < 14.0 {
+                b -= 4.0;
+            } else if (tt, ts) == (a.team, a.slot)
+                && m.see_timer > 0.0
+                && d > ctx.weapons.blade.range
+                // JS `!MELEE[e.weapon.kind]` (blade.js L724): MELEE.blade is
+                // patched true (blade.js L35), so this arm is dead code for a
+                // Cutlass owner — kept faithful to the JS runtime table
+                && !own_kind.is_melee()
+            {
+                b += 4.0;
+            }
+        }
+        b
     }
 
     // ---------------------------------------------------------------- steer
@@ -1402,6 +3664,45 @@ fn angle_diff(a: f32, b: f32) -> f32 {
 fn wander(x: f32) -> f32 {
     x.sin() * 0.6 + (x * 2.27 + 1.3).sin() * 0.4
 }
+
+/// JS `sub.throwSpeed || 13.5` (bots.js L1254): the tuning table's lob speed
+/// for a thrown sub. Only the [`SubKind::is_thrown`] kinds ever reach it (the
+/// `zone_bomb_aim` gate); the rest fall through to the JS default.
+fn sub_throw_speed(sub: SubKind) -> f32 {
+    let s = Bot::sub_set();
+    let v = match sub {
+        SubKind::Bomb => s.bomb.throw_speed,
+        SubKind::Sticky => s.sticky.throw_speed,
+        SubKind::Burst => s.burst.throw_speed,
+        SubKind::Seeker => s.seeker.throw_speed,
+        SubKind::Mist => s.mist.throw_speed,
+        SubKind::Shaker => s.shaker.throw_speed,
+        SubKind::Waddle => s.waddle.throw_speed,
+        SubKind::Torpedo => s.torpedo.throw_speed,
+        SubKind::Boomerang => s.boomerang.throw_speed,
+        _ => 0.0,
+    };
+    if v == 0.0 { 13.5 } else { v }
+}
+
+/// JS L557 paint aim-pitch ladder + the kit `paintPitch` hooks (brolly.js
+/// L559, blade.js L707, bow.js L452, mitts.js L760; splatling / slosher
+/// retired).
+fn paint_pitch(kind: WeaponKind) -> f32 {
+    match kind {
+        WeaponKind::Charger => -0.12,
+        WeaponKind::Spinner => -0.16,
+        WeaponKind::Blaster => -0.28,
+        WeaponKind::Bucket => -0.5,
+        WeaponKind::Brolly => -0.36,
+        WeaponKind::Blade => -0.2,
+        WeaponKind::Bow => -0.18,
+        WeaponKind::Mitts => -0.32,
+        _ => PAINT_PITCH,
+    }
+}
+
+pub mod zones;
 
 #[cfg(test)]
 mod tests;

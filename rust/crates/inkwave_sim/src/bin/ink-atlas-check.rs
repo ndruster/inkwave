@@ -47,6 +47,7 @@ fn main() {
             for (i, b) in bots.iter().enumerate() {
                 mate_goals[i] = b.goal_node();
             }
+            let mate_minds = bots.iter().map(|b| Some(b.mind())).collect::<Vec<_>>();
             for i in 0..n {
                 let ctx = BotCtx {
                     actors: &snap,
@@ -54,8 +55,15 @@ fn main() {
                     paint: &m.paint,
                     world: &sim,
                     t: &tuning.player,
-                    w: &tuning.weapons.shooter,
+                    weapons: &tuning.weapons,
+                    weapon_range: &tuning.weapon_range,
+                    kinds: &m.kinds,
+                    runners: &m.runners,
                     mate_goals: &mate_goals,
+                    subs: &m.subs,
+                    mate_minds: &mate_minds,
+                    zones: None,
+                    zctl: None,
                 };
                 inputs[i] = bots[i].step(FIXED_DT, &mut m.actors[i], &ctx);
             }

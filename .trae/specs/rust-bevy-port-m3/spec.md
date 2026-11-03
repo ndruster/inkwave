@@ -635,3 +635,68 @@ SubSystem 平移（subs.js 693 行，非 kit 10 key + splat bomb 在 weapons.js 
 - saltpan `chamfer()`/crossmarket `TB()` 产出的 obox rotY 为负角/非轴对齐——mirrorDef 对 rotY 的处理：JS level.js 镜像 obox 只转 center（rotY 不变？核对 mirrorDef L47：center 取反，rotY 原样）——180° 旋转复合性质使 rotY 不需变化（提取器逐字复制 level.js，天然一致）。
 - `intro`/`art`/`decor` 字段不入布局 JSON（M1 口径：呈现/相机为 M4；碰撞冒烟不需要）。
 - 装饰 props（props.js 1.8-2.1k 行/图）不提取（tasks.md Notes M1 口径）；saltpan L22 "catwalk 下 braced off（prop colliders）"的可站立性依赖 props——冒烟阈值按无 props 世界校准，REVIEW_CHECKLIST 记「props 碰撞体顺延」。
+
+## Task 38 实施设计 — bot normal/hard + 武器/副/特殊使用 + zone tactic
+
+### §0 上游锚点（已实读）
+- `config.js` L503-508 `DIFFICULTY`：easy/normal/hard 六参数（reaction/aimError/fireDiscipline/awareness/aimOmega/aimTurn）。Rust `tuning.rs` L1347-1363 `Difficulty`/`DifficultySet` 已提取且断言齐（L1439-1442/2387-2401）——参数层零缺口，缺的是**档位选择接线**与**行为消费点补全**。
+- `bots.js` 消费点全景（grep 实核）：aimError L436/1395/1915；reaction L437/1288/1642/1883/1916/2018；fireDiscipline L366/954/2002；awareness L1626；aimOmega/aimTurn L644-645（tail 弹簧，Rust bot.rs L1005-1006 已接）。Rust 已有：L428-429（aimError/acq）、L530（fireDiscipline retreat 概率）、L562（awareness）、L603（react）、L1005-1006（弹簧）。
+- 档位接线现状：`matchbuild.rs` 注④「bot brains use tuning.difficulty.easy (caller-side)」；harness `match_e2e.rs` L511/L1131 硬编码 easy。JS 口径：`BotBrain` ctor L271-276 `setDifficulty(difficulty)`（match cfg 传入；session.js L292 cfg.difficulty）。
+- 逐 kind 行为（bots.js）：表 L18-19/L35-36/L49（MELEE=roller,brush；CHARGES=charger,spinner,splatling；LONG=charger,spinner,splatling；THROWN=bomb,sticky,burst,mist,seeker；PAINTERS=roller,brush,bucket,slosher）。**退役 kind 剔除**：dualies/slosher/splatling 不在 `WEAPON_ORDER`（config.js L303 恰为 Rust 12 kind；L305 `WEAPON_SUCCESSOR` 证退役）——bots.js 中它们的分支（L428 slosher lead、L487-493 splatling/slosher 开火、L511-518 dualies roll、L557-558 paintPitch、L583-588 paint、L1937-1939 boss 段）不移植。
+- fight 段 L421-537：lead L428（charger 0 / else dist/projSpeed||speedMax||throwSpeed||30）；pref 距离 L443（charger 0.8r / MELEE 0.5 / else 0.7r）；strafe 门 L450（CHARGES&&charging 不 strafe）；MELEE 冲脸 L451；twins planted 站桩 L453-459（`wr.turret`）；开火分发 L478-503（BK?.fight → spinner `burstT<=0 && !(charging&&charge>=chargeRelease)` → brush `dist<4.5` → charger `!(charging&&charge>=chargeRelease)`+move×0.3 → roller `dist<5.5||(rolling&&dist<8)` → else `dist<range*1.08`）；charge 保持 L506-508（CHARGES&&charging&&!visible 续压）；游泳逼近 L510；dodge L519-523（twins 概率 0.6/CD 0.9+rand，else 0.3/CD 2+rand2.5，CHARGES 不跳）；special 触发 L530（`_wantSpecial('fight')||zp&&_zoneSpecial(zp,true)`）。
+- paint 段 L538-610：sweep 速率 L540（charger 0.8 else 2.1）；scan reach L544（charger/spinner 8.5 / bucket 7 / blaster 5 / else 4.5，MELEE 不扫）；paintYawOff 选向 L546-553（zone 内 +0.8 偏置 L550）；pitch L557（kit paintPitch → charger -0.12 / spinner -0.16 / blaster -0.28 / bucket -0.5 / else -0.42）；开火 L572-597（PK?.paint → MELEE `inkFrac>0.08&&(needPaint||rand<0.02)&&wantMove` → spinner 60% 释放+breather → charger 70% 释放+breather → else `needPaint&&inkFrac>0.18`）；sub L600 `_paintSub`；special L610。
+- refill L611-617 + tail L635-709（bomb 释放两帧 L638-639；`trying` CHARGES 门 L683；charge 爬墙 L740 属 _climb——Rust 无 climb 边，维持既有偏差声明）。
+- kit 主武器钩子（MAIN_KITS[k].bot，kits/*.js）：brolly L558 起、blade L706 起、bow L451 起、mitts L759 起——批二实读移植（fight/paint/stayIn/melee/charges/paintPitch/targetBias/tactics 钩子；tactics 深段视实现成本裁剪并落偏差）。
+- sub 决策 L950-983：`_fightSub`（ink 门 `inkCost+8`、beacon 拒、kit 自决 `SUB_KITS[k].bot.fight`、roll=`0.02*(1+fireDiscipline)`、burst `3<d<12&&rand<0.04`/CD 1.5+2、scan `8<d<18&&roll`、curtain `4<d<14&&lastDamage<0.6&&rand<0.05`、mine `d<10&&lastDamage<1.5&&rand<0.05`、seeker `5<d<15&&roll`、default(bomb/sticky/mist) `4<d<14&&roll`、CD 5+6）；`_paintSub`（kit 自决、ink 门 `inkCost+(placed?4:20)`、概率 `placed?0.04:0.01`、progress=1-d(敌pad)/总pad距、sprinkler 前方 5m regionStats own<0.4、mine 0.3<progress<0.7、beacon progress>0.4 且 12m 内无己方 beacon、CD 8+8）。kit sub 钩子 SUB_KITS[k].bot（waddle L749/tracer L461/torpedo L736/shaker L603/boomerang L570 起）批二实读。
+- 特殊决策 L831-856 `_wantSpecial(mode,dist,vis)`：fight 逐 id 距离/概率表（slam 4.5/storm 16/barrage 14/bubbler 12+受伤/sonar 0.02/strike 14+0.01/zooka 7-36/wail 5-40/kraken 10/blower 14/jetpack 5-22/stamp 9/booyah 9-26+0.03/zipcaster 16/crab 20）；paint 用 turf 白名单 {storm,strike,booyah,barrage,sonar,kraken,crab,zooka,blower,stamp} + `rand<0.012` + 己方 6m own<0.55。
+- 特殊驾驶 L858-948 `_specialCtl`：booyah 队友充能欢呼 L862-864；stamp 护盾前不开火/不投掷 L866-870；strike 落点改 zone 热点 L873-877；toward() 贴脸直冲+悬崖检查 L881-886；逐 kind 驱动 L888-947（barrage sub 连投 0.35+0.3、zooka 开火门、kraken 跳+贴脸、stamp flip/转向/投掷、crab 三态、blower 0.9/1.4 循环、booyah charge>=1 释放、jetpack/zipcaster 触发）。依赖 special 运行时字段：`s.id/kind/charge/hp/guard/bodyYaw/aiming/target/thrown/def.reach/def.radius`——批二对照 Rust `SpecialActive`（special.rs L180-220：body/firing/speed/face_yaw/no_squid/aim_face/jumpBack…）实核缺口，缺的字段在 special 模块补只读访问器（纯数据，不改行为）。
+- zone tactic（任务口径=L1176 段 + 其依赖）：`ZonePlan` L68-268（_build cells→nav 节点映射 L83-116、ring/far L109-116、stage 点 L118+、ink/need 重扫 tick、roles 分配 L229-267：kind()=charger/LONG&&holdAll→2 watch、PAINTERS→1、else 0；pushers 1-2、guard holdAll 且 kind!=1、其余 paint；双 center 按距离+focus 切分 L240-253；waves L255-263）；`_zoneSync` L1019-1033、`_zoneEngage` L1036-1045、`_zoneHoldGround` L1047-1057、`_pickZoneGoal` L1059-1132（guard L1100-1132/watch L1134-1155/push L1157-1174 采样打分）、`_zoneAim` L1177-1205（need[y]>=3、far=CHARGES min(0.9r,16)/bucket 7/blaster 6/else 5.5、d 1.4..far、|dy|<=3.5、sc=need-d*0.35、短射程需 ahead 或 CHARGES）、`_zoneSpecial` L1209-1229、`_zoneBombAim` L1233-1250+（lobPitch L39-48）。**裁剪声明**：`_zoneJump` L987-1016 依赖 superJump/beacon 跳（Rust actor 无 superJump）→ 顺延（D-T38 记档）；roster 50% sub/special 已落 session.rs L1460-1479（Task 25），仅补断言测试。
+- Rust 现状缺口：`BotCtx` L93-103 仅 actors/nav/paint/world/t(Spritzer!)/mate_goals——需扩 `w: &Weapons`（全表）、sub 状态查询、special 状态、zone plan 句柄、`t` 表；`Bot::new(a,diff,seed,idx)` 已收 `&Difficulty`——接线在调用方。
+
+### §1 档位接线（纯 plumbing）
+- `matchbuild.rs`：bot brain 构造改读 cfg.difficulty（`tuning.difficulty.get(id)`，JS L276 `DIFFICULTY[d]||normal` 兜底）；补 `DifficultySet::get(&str)`。
+- harness `match_e2e.rs`：`MatchOpts` 补 `difficulty: String`（Default "easy" 保既有 scenario 数值不变）；L511/L1131 改 `tuning.difficulty.get(&opts.difficulty)`。
+- 消费点补全：`_fightSub` roll 用 fireDiscipline（L954 口径）；perceive react 门已有；boss/threat 段消费点（L1883/2002/2018）随段顺延不接（声明偏差）。
+
+### §2 逐 kind 行为（bot.rs 核心扩展）
+- 表函数（geometry.rs 同款纯函数风格）：`WeaponKind` 上 `is_melee()`（Roller|Brush）、`is_charge()`（Charger|Spinner）、`is_long()`、`is_painters()`；`SubKind` 上 `is_thrown()`（Bomb|Sticky|Burst|Mist|Seeker）。退役 kind 不出现。
+- `BotCtx` 扩字段：`weapons: &Weapons`（kind 参数/射程 projSpeed 等）、`subs: &SubSystem`（beacon 查询/placed 计数/blocked）、`specials: &Specials`（active 状态只读）、`zones: Option<&ZonePlanRt>`（批三）、`match_mode: bool`（zones 局）。
+- fight/paint/refill/tail 按 §0 行号逐字平移（含 twins planted、spinner/charger 节奏、MELEE 冲脸/扫击开火、roller rolling 门、blaster/brolly/blade/bow/mitts 经 kit 钩子）；`_range()` L1619：`weapon_range(w)*(CHARGES?0.9:1)`。
+- kit 钩子：Rust 以 `weapon/kit_bot.rs`（或 bot.rs 内 enum 分派）实现 blade/bow/mitts/brolly 的 fight/paint/stayIn/melee/charges/paintPitch/targetBias；`tactics` 深段移植成本高的部分裁剪+落偏差档（评审定）。
+
+### §3 sub/special 决策
+- `_fightSub`/`_paintSub` L950-983 逐字平移（kit sub 钩子 fight/paint/blocked 按 SUB_KITS 五件移植：waddle botLob 投掷、torpedo/tracer/shaker/boomerang 自决门）。
+- `_wantSpecial` L831-856 逐字（id→kind 名 Rust 已有 def_by_id）；`_specialCtl` L858-948 逐字（stamp 依赖 `guard/bodyYaw`、barrage `it.sub` 连投、booyah `charge`、crab `hp/def.hp`、strike zone 热点随批三）；欢呼 L862-864 需遍历队友 specialActive——Rust 状态可查则接，缺字段批二补访问器。
+- 触发链：fight L505（bombCd 门 + `_bombAim` 两帧释放 L638-639 已具形）、paint L600/610、special L530/610。
+
+### §4 zone tactic（批三）
+- `bot/zones.rs`：`ZonePlan` 移植——build（zone_cells→nav nearest 映射、R、ring/far、stage）、tick（~3/s ink 重扫→per-node need）、roles（kind/pushers/guard/watch/paint + 双 center 切分 + waves free/stage/push + spNext）。消费 Task 36 `ZoneControl` 运行时（owner/share/active/rotation）。
+- `_zoneSync/_zoneEngage/_zoneHoldGround/_pickZoneGoal/_zoneAim/_zoneSpecial/_zoneBombAim` 逐字平移；`_zoneJump` 顺延（无 superJump）。
+- mode 选择接 L374-381/L400-404（zones 局 objective-first）。
+
+### §5 TR 对应
+- TR-38.1：harness 新 scenario 组——同 seed 三档（easy/normal/hard）zones 关闭 turf 局各跑固定帧数，统计存活时长/命中（shots 上升沿→splats 代理）/涂速（覆盖率/秒），断言 hard≥normal≥easy 单调（容差：允许涂速非严格——以报告形式落 `rust/tools/verify/logs/`，断言只卡存活+击杀两维，实测若违规则记录并评审）。
+- TR-38.2：`#[test]` 矩阵——12 kind × bot 持该武器（roster 手置）无 panic 步进 ≥120 帧（headless sim 级，非 trunk）；sub 15 × special 19 装备矩阵同跑（决策路径覆盖冒烟）。
+- roster 50%：session.rs 既有逻辑补断言（bot 行 sub/special 各 ~50% 分布、人类行不受影响）。
+
+### §6 分批
+- 批一：§1 接线 + §2 逐 kind（非 kit 8 把）+ 表函数 + BotCtx 扩展 + 单测。
+- 批二：kit 主武器钩子 4 把 + §3 sub/special（含 kit sub 钩子、SpecialActive 访问器补齐）+ 单测。
+- 批三：§4 zone tactic + §5 TR 报告/矩阵测试 + 回归。
+
+### §7 风险与裁剪
+- RNG 流必然与 JS 分歧（既有声明）：TR-38.1 用统计单调性而非逐值对照。
+- threat AI（L1288/1395/1883-2050 段）与 boss 段不在任务口径 → 顺延（PORT_MAP 注记保持）。
+- climb 段（L711-744）维持 M1 偏差（无 climb 边）。
+- `_zoneBombAim` 的 lobPitch 依赖投掷弹道与 aim 释放耦合——若 Rust sub 投掷不吃 pitch 精确弹道，退化为「转向+距离门」并落偏差档。
+- 基线纪律：既有 harness scenario 全绿不改数值（difficulty 默认 easy）。
+
+### §8 Task 38 定案（实施+评审闭环，2026-11-02）
+- **D-T38-1 TR-38.1 gate 口径**：实测 survival 完整单调 false（normal 1533.3s < easy 1590.2s），kills 单调 true（56/60/81）、endpoint hard≥easy true。gate 取「kills 单调 + survival endpoint」，完整单调性仅测量并落报告（`rust/tools/verify/logs/task38-ladder-*.log` per-seed 证据）。评审裁定：反序集中于单 seed（seed42 normal 134.4s/20死），8 seed 中 3 个 normal≥easy，属 seed 噪声非系统性档位效应；kill/death 交换比（0.86/0.80/1.42）显示仅 hard 真正压制钉死 yardstick。实施方「awareness 参战率」因果声称过度，已按评审改为噪声+交换比表述。yardstick=hard 钉死为设计事实（消除队友方差、偏置方向保守）。
+- **D-T38-2 家族表运行时补丁 8 条**：kit 文件运行时改表是 bots.js 家族表的真实语义——`MELEE.blade`（blade.js L35）、`MELEE.mitts`（mitts.js L833）、`CHARGES.bow`/`LONG.bow`（bow.js L492-493）、`THROWN.waddle/torpedo/shaker`（L768/L750/L618）、`THROWN[KIND]` boomerang（boomerang.js L594 方括号记法）。Rust `is_melee/is_charge/is_long/is_painters/is_thrown` 按补丁后集合实现（行为变更：blade/mitts 冲脸待遇、bow 吃 CHARGES 全部门、四 sub∈THROWN）。spec §0 表锚点仅列 bots.js 初始字面量，为已知盲区。
+- **D-T38-3 fight 块门控**：JS L421 按 `this.target`（非可见性）门控，Rust M1 曾按可见性——批一拓宽为 JS 口径以使 L506-508 charge-keep 可达；块内 fire 门仍 `enemy_visible`（L479），可见对决行为不变（shooter 零漂移前提：`weapon_range["shooter"]=12.5`、`shot_speed=34` 与原硬编码等值，评审复核）。
+- **D-T38-4 lobPitch 无退化**：§7 预案（投掷不吃 pitch 则退化）未触发——Rust `weapon.rs` throw_velocity 已用 `(pitch+0.28).clamp(-0.3,1.1)` lob 模型，`_zoneBombAim` 全量移植生效（评审实证）。
+- **D-T38-5 裁剪定案（评审接受）**：`_zoneJump`/`zJumpAt`（L986-1016，无 superJump）、threat AI/boss/climb（§7 既有）、`_shieldFight`/`_canopyCtl`（L525/L623-626）、mitts leap/wall-cling/pounce（mitts.js L768-829）、brolly advanceUntil（L586-592）、bow groupYaw（L473）、blade 深战术+`_blHold`、stamp threat-steer（bots.js L460-470）与 `_tail` threat/climb aim 覆写——均落模块 doc 注记；spec §2 承诺的纯数据钩子（paintPitch/stayIn/melee/charges/targetBias）全部真接（评审逐条核）。
+- **D-T38-6 RNG 惰性抽取**：`charge_release`/`bomb_cd` 首用抽取（JS ctor L290 预抽）——RNG 流偏移在既有声明内，保 M1 基线数值。
+- **D-T38-7 ZonePlan `spNext`**：relaxed `AtomicU32`（f32 bits）——JS 经共享 plan 可变引用，Rust 保 `BotCtx` 不可变 + Bevy Sync；单写者语义等价。
+- **D-T38-8 评审修复**：0 P0/1 P1/4 P2 全闭环——P1 ladder 注释因果表述（见 D-T38-1）；P2 zones.rs `_build` 区段 16 处 JS 锚系统性偏 5-6 行（已按实读 L71/L83-134/L136-163 修正）；P2 `el.max(1)`→JS `||1` 精确语义、far 回退改读原始 ring（JS L132 对象字面量求值序，真实地图不可达但逐字镜像）；P2 paint_sub doc 措辞；ladder log 去重留最新。

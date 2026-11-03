@@ -250,6 +250,39 @@ impl WeaponKind {
         }
     }
 
+    /// JS `MELEE[w.kind]` (bots.js L18, `MELEE.blade = true` blade.js L35,
+    /// `MELEE.mitts = true` mitts.js L833): the close-range pushers
+    /// (`roller` / `brush` / `blade` / `mitts`). The retired kinds never
+    /// enter the enum (TR-28.2), so the table's extra members are simply
+    /// absent.
+    #[must_use]
+    pub fn is_melee(self) -> bool {
+        matches!(self, Self::Roller | Self::Brush | Self::Blade | Self::Mitts)
+    }
+
+    /// JS `CHARGES[w.kind]` (bots.js L19, `CHARGES.bow = true` bow.js L492;
+    /// the retired `splatling` is absent): charge-then-release weapons
+    /// (`charger` / `spinner` / `bow`).
+    #[must_use]
+    pub fn is_charge(self) -> bool {
+        matches!(self, Self::Charger | Self::Spinner | Self::Bow)
+    }
+
+    /// JS `LONG[w.kind]` (bots.js L35, `LONG.bow = true` bow.js L493; the
+    /// retired `splatling` is absent): the long-range weapons (`charger` /
+    /// `spinner` / `bow`).
+    #[must_use]
+    pub fn is_long(self) -> bool {
+        matches!(self, Self::Charger | Self::Spinner | Self::Bow)
+    }
+
+    /// JS `PAINTERS[w.kind]` (bots.js L49): the wide-paint weapons
+    /// (`roller` / `brush` / `bucket`; the retired `slosher` is absent).
+    #[must_use]
+    pub fn is_painters(self) -> bool {
+        matches!(self, Self::Roller | Self::Brush | Self::Bucket)
+    }
+
     /// Whether this kind's update branch is wired (Task 29: `Shooter`;
     /// Task 30: `Twins` / `Blaster` / `Brolly`; Task 31: `Charger` /
     /// `Spinner` / `Bucket`; Task 32: `Roller` / `Brush` / `Blade`;
@@ -2254,6 +2287,34 @@ impl WeaponRunner {
     #[must_use]
     pub fn charging_flag(&self) -> bool {
         self.charging
+    }
+
+    /// JS `this.burstT` (bots.js L486/L580: the spinner release stream left;
+    /// read-only for the bot brain, Task 38).
+    #[must_use]
+    pub fn burst_t(&self) -> f32 {
+        self.burst_t
+    }
+
+    /// JS `this.rolling` (bots.js L500: roller drum / brush stroke in
+    /// progress; read-only for the bot brain, Task 38).
+    #[must_use]
+    pub fn rolling(&self) -> bool {
+        self.rolling
+    }
+
+    /// JS `this.turret` (bots.js L454: the twins planted stance; read-only
+    /// for the bot brain, Task 38).
+    #[must_use]
+    pub fn turret(&self) -> bool {
+        self.turret
+    }
+
+    /// JS `this.cooldown` (bots.js L457/L484: the bow's shot clock gate;
+    /// read-only for the bot brain, Task 38 batch 2).
+    #[must_use]
+    pub fn cooldown(&self) -> f32 {
+        self.cooldown
     }
 
     /// JS `wr.flick >= 0` (the `F.flick` flag, netmatch.js L740; the

@@ -2163,6 +2163,54 @@ mod tests {
         assert_eq!(g2.error(), Some("Room not found"));
     }
 
+    // L285-286 (TR-38.2): a bot row rolls a random sub / special about half
+    // the time; human rows keep exactly what they picked.
+    #[test]
+    fn bot_roster_rolls_sub_and_special_about_half_the_time() {
+        let (mut sub, mut sp, mut rows, mut human_rows) = (0usize, 0usize, 0usize, 0usize);
+        for k in 0..30u64 {
+            // One room per relay instance (the fake relay is single-room).
+            let relay = FakeRelay::new();
+            let mut h = sess(&relay, 700 + k, None);
+            h.create(None);
+            for _ in 0..50 {
+                step(&mut h, 1.0);
+                if h.state() == SessionState::Lobby {
+                    break;
+                }
+            }
+            assert_eq!(h.state(), SessionState::Lobby);
+            assert!(h.start(), "host starts (bots on, tidewater)");
+            let cfg = h.start_cfg().expect("cfg").clone();
+            for r in &cfg.roster {
+                if r.bot {
+                    rows += 1;
+                    sub += usize::from(r.sub.is_some());
+                    sp += usize::from(r.special.is_some());
+                    if let Some(s) = &r.sub {
+                        assert!(SUB_IDS.contains(&s.as_str()), "bot sub id {s}");
+                    }
+                    if let Some(s) = &r.special {
+                        assert!(SPECIAL_IDS.contains(&s.as_str()), "bot special id {s}");
+                    }
+                } else {
+                    human_rows += 1;
+                    // The fixture human picked no gear; L285-286 must not add
+                    // any to a human row.
+                    assert!(
+                        r.sub.is_none() && r.special.is_none(),
+                        "human row untouched"
+                    );
+                }
+            }
+        }
+        assert_eq!(human_rows, 30, "one host human per session");
+        assert!(rows >= 150, "bot rows sampled: {rows}");
+        let f = |n: usize| n as f64 / rows as f64;
+        assert!((0.3..=0.7).contains(&f(sub)), "bot sub share {}", f(sub));
+        assert!((0.3..=0.7).contains(&f(sp)), "bot special share {}", f(sp));
+    }
+
     #[test]
     fn join_a_locked_room_gets_match_in_progress() {
         let relay = FakeRelay::new();

@@ -121,6 +121,8 @@
 //!     must still exist when the recorder runs). The
 //!     `regression_recording_survives_render_draining` test pins it.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::actor::{Actor, ActorInput, FIXED_DT, SimWorld};
@@ -1878,13 +1880,15 @@ impl Replication {
     /// writing into `inputs` for [`Match::step_masked`]. The autopilot
     /// snapshot pattern (Task 9): brains read a roster snapshot taken before
     /// any bot steps.
+    #[allow(clippy::too_many_arguments)] // Task 38: the weapon set + range table the brains read
     pub fn drive_bots(
         &mut self,
         m: &mut Match,
         nav: &NavGraph,
         world: &SimWorld,
         t: &PlayerTuning,
-        w: &Spritzer,
+        ws: &WeaponSet,
+        ranges: &HashMap<String, f32>,
         inputs: &mut [ActorInput],
     ) {
         if !self.bots.iter().any(|b| b.is_some()) {
@@ -1897,6 +1901,30 @@ impl Replication {
             if let Some(b) = b {
                 mate_goals[i] = b.goal_node();
             }
+        }
+        // Remote slots have no local brain — their target memory reports
+        // `None` (blade targetBias deviation, module docs).
+        let mate_minds = self
+            .bots
+            .iter()
+            .map(|b| b.as_ref().map(|bb| bb.mind()))
+            .collect::<Vec<_>>();
+        // Task 38 batch 3: drive the shared Zone Control plan once per frame
+        // before the brains (JS `zonePlan().tick()` rides the match update);
+        // only locally-driven bots appear in `is_bot`.
+        let mut zone_plan = m.zone_plan.take();
+        if let Some(zctl) = m.zones.as_ref() {
+            let mut p = zone_plan
+                .take()
+                .unwrap_or_else(|| crate::bot::zones::ZonePlan::build(zctl, nav, &m.paint, world));
+            let is_bot = self
+                .bots
+                .iter()
+                .enumerate()
+                .map(|(i, b)| b.is_some() && !self.remote[i])
+                .collect::<Vec<_>>();
+            p.tick(zctl, &m.paint, world, &snap, &m.kinds, &is_bot);
+            zone_plan = Some(p);
         }
         for (i, slot) in self.bots.iter_mut().enumerate() {
             // Only owned actors ever hold a brain (module docs).
@@ -1913,14 +1941,22 @@ impl Replication {
                     paint: &m.paint,
                     world,
                     t,
-                    w,
+                    weapons: ws,
+                    weapon_range: ranges,
+                    kinds: &m.kinds,
+                    runners: &m.runners,
                     mate_goals: &mate_goals,
+                    subs: &m.subs,
+                    mate_minds: &mate_minds,
+                    zones: zone_plan.as_ref(),
+                    zctl: m.zones.as_ref(),
                 };
                 inputs[i] = b.step(FIXED_DT, &mut m.actors[i], &ctx);
             } else {
                 inputs[i] = b.hold(&m.actors[i]);
             }
         }
+        m.zone_plan = zone_plan;
     }
 }
 
@@ -2387,7 +2423,15 @@ mod tests {
         let nav = f.nav();
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
             let mut inputs = vec![ActorInput::default(); 3];
-            rh.drive_bots(&mut mh, &nav, &sim, t, &w.shooter, &mut inputs);
+            rh.drive_bots(
+                &mut mh,
+                &nav,
+                &sim,
+                t,
+                w,
+                &f.tuning.weapon_range,
+                &mut inputs,
+            );
             mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
         }
         // The leave: the host stays host, so `host_changed = false`.
@@ -2404,7 +2448,15 @@ mod tests {
         let before = mh.actors[1].pos;
         for _ in 0..120 {
             let mut inputs = vec![ActorInput::default(); 3];
-            rh.drive_bots(&mut mh, &nav, &sim, t, &w.shooter, &mut inputs);
+            rh.drive_bots(
+                &mut mh,
+                &nav,
+                &sim,
+                t,
+                w,
+                &f.tuning.weapon_range,
+                &mut inputs,
+            );
             mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
         }
         assert_ne!(mh.actors[1].pos, before, "the adopted bot lives again");
@@ -2446,7 +2498,7 @@ mod tests {
         // Intro out on both.
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
             let mut ih = vec![ActorInput::default(); 3];
-            rh.drive_bots(&mut mh, &nav, &sim, t, &w.shooter, &mut ih);
+            rh.drive_bots(&mut mh, &nav, &sim, t, w, &f.tuning.weapon_range, &mut ih);
             mh.step_masked(FIXED_DT, &ih, Some(rh.remote_mask()), &sim, t, w, sb);
             let mut ig = vec![ActorInput::default(); 3];
             ig[1].move_dir = vec3(0.0, 0.0, -1.0);
@@ -2500,7 +2552,7 @@ mod tests {
         let max = ((dur + FINISH_TIME) * 60.0) as usize + 120;
         for _ in 0..max {
             let mut ig = vec![ActorInput::default(); 3];
-            rg.drive_bots(&mut mg, &nav, &sim, t, &w.shooter, &mut ig);
+            rg.drive_bots(&mut mg, &nav, &sim, t, w, &f.tuning.weapon_range, &mut ig);
             mg.step_masked(FIXED_DT, &ig, Some(rg.remote_mask()), &sim, t, w, sb);
             let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             drain_msgs(&mut trg);
@@ -2586,7 +2638,15 @@ mod tests {
         let nav = f.nav();
         let mut inputs = vec![ActorInput::default(); 2];
         for _ in 0..60 {
-            rh.drive_bots(&mut mh, &nav, &sim, t, &w.shooter, &mut inputs);
+            rh.drive_bots(
+                &mut mh,
+                &nav,
+                &sim,
+                t,
+                w,
+                &f.tuning.weapon_range,
+                &mut inputs,
+            );
             mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
         }
         assert_eq!(mh.actors.len(), 2);
@@ -2848,7 +2908,7 @@ mod tests {
             for frame in 0..FRAMES {
                 let t0 = Instant::now();
                 let mut ih = vec![ActorInput::default(); 3];
-                rh.drive_bots(&mut mh, &nav, &sim, t, &w.shooter, &mut ih);
+                rh.drive_bots(&mut mh, &nav, &sim, t, w, &f.tuning.weapon_range, &mut ih);
                 mh.step_masked(FIXED_DT, &ih, Some(rh.remote_mask()), &sim, t, w, sb);
                 let ig = vec![ActorInput::default(); 3];
                 mg.step_masked(FIXED_DT, &ig, Some(rg.remote_mask()), &sim, t, w, sb);

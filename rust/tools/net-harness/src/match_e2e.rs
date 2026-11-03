@@ -39,7 +39,7 @@ use std::collections::HashMap;
 use inkwave_sim::actor::{ActorInput, FIXED_DT, SimWorld};
 use inkwave_sim::collision::CollisionWorld;
 use inkwave_sim::match_::{FINISH_TIME, INTRO_TIME, Match, MatchResult, Phase};
-use inkwave_sim::net::matchbuild::{build_net_match, fnv1a, local_roster_index};
+use inkwave_sim::net::matchbuild::{bot_difficulty, build_net_match, fnv1a, local_roster_index};
 use inkwave_sim::net::replication::{Replication, ReplicationEvent};
 use inkwave_sim::net::session::{
     MatchPhase, MeChange, NetSession, Profile, SessionEvent, SessionState, SettingsPatch, StartCfg,
@@ -122,9 +122,19 @@ pub struct MatchOpts {
     /// Task 37 §4; the embedded layout the world / sim / nav / zone layout
     /// are built from, mode-filtered by `mode`).
     pub stage: String,
+    /// Bot difficulty (Task 38 §1; rides `cfg.difficulty`, resolved through
+    /// `Tuning::difficulty.get` ≡ JS `DIFFICULTY[d] || normal`, bots.js L276).
+    /// The default `"easy"` keeps every pre-Task-38 scenario's numbers.
+    pub difficulty: String,
     pub drop: Option<DropAt>,
     /// Collect the kink / path-error smoothness stats (TR-25.2).
     pub stats: bool,
+    /// Collect the TR-38.1 difficulty-ladder metrics (rung-bot survival /
+    /// splats / paint rate) from the authoritative host each frame, and pin
+    /// the team-0 bots to `hard` as the lethal constant yardstick (see
+    /// [`build_side`]). Off by default so every pre-Task-38 scenario's
+    /// numbers stay untouched.
+    pub ladder: bool,
 }
 
 impl Default for MatchOpts {
@@ -136,8 +146,10 @@ impl Default for MatchOpts {
             duration: 15.0,
             mode: "turf".to_string(),
             stage: "tidewater".to_string(),
+            difficulty: "easy".to_string(),
             drop: None,
             stats: false,
+            ladder: false,
         }
     }
 }
@@ -191,6 +203,131 @@ pub struct MatchReport {
     /// Guest-drop scenario (TR-25.3): did the orphaned actor keep playing on
     /// the live host after `on_leave` adopted it as a bot (`None` otherwise).
     pub dropped_actor_moved: Option<bool>,
+    /// TR-38.1 ladder metrics (`Some` only when `opts.ladder`).
+    pub ladder: Option<LadderStats>,
+}
+
+/// The TR-38.1 difficulty-ladder metrics for one rung, summed over the
+/// scenario's seeds (spec §5: survival / hits / paint rate on the same seeds
+/// with zones off — the RNG stream diverges from JS by design, so the gate
+/// is statistical monotonicity, not per-value parity, spec §7). The measured
+/// population is the rung team (team-1 bots riding `cfg.difficulty`) against
+/// the pinned-`hard` yardstick team (team-0 bots) — see [`build_side`] for
+/// why a full mirror cannot measure survival.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LadderStats {
+    /// Σ rung-bot alive-frames ÷ 60 while the host clock is `Active` — the
+    /// survival-time axis.
+    pub bot_alive_s: f64,
+    /// Σ `stats.splats` credited to rung bots at settlement — the hits axis
+    /// (the JS shot rising-edge hit counter is not modelled on the Rust
+    /// actor; splats is its credited outcome, `actor.js` `stats.splats`).
+    pub bot_kills: u32,
+    /// Σ `stats.deaths` credited to rung bots at settlement.
+    pub bot_deaths: u32,
+    /// Σ rung-team coverage fraction at settlement (`net-test.mjs` L144
+    /// `P.coverage()`, team 1).
+    pub coverage_sum: f64,
+    /// Σ Active-phase seconds on the host clock — the paint-rate denominator.
+    pub active_s: f64,
+    /// Runs aggregated.
+    pub runs: usize,
+}
+
+impl LadderStats {
+    fn from_run(
+        rung_coverage: f32,
+        kills: u32,
+        deaths: u32,
+        alive_frames: u64,
+        active_frames: u64,
+    ) -> Self {
+        Self {
+            bot_alive_s: alive_frames as f64 / 60.0,
+            bot_kills: kills,
+            bot_deaths: deaths,
+            coverage_sum: f64::from(rung_coverage),
+            active_s: active_frames as f64 / 60.0,
+            runs: 1,
+        }
+    }
+
+    fn add(&mut self, other: &Self) {
+        self.bot_alive_s += other.bot_alive_s;
+        self.bot_kills += other.bot_kills;
+        self.bot_deaths += other.bot_deaths;
+        self.coverage_sum += other.coverage_sum;
+        self.active_s += other.active_s;
+        self.runs += other.runs;
+    }
+
+    /// Paint rate = coverage fraction per Active second (spec §5 TR-38.1
+    /// 涂速/秒). Reported, never gated (spec tolerance: the paint axis may be
+    /// non-monotone).
+    #[must_use]
+    pub fn paint_rate(&self) -> f64 {
+        self.coverage_sum / self.active_s.max(1e-6)
+    }
+
+    /// One printable table row (the harness CLI / report file line).
+    #[must_use]
+    pub fn row(&self, difficulty: &str) -> String {
+        format!(
+            "{difficulty:<7} · runs {} · bot-alive {:.1}s · kills {} · deaths {} · paint {:.4}/s",
+            self.runs,
+            self.bot_alive_s,
+            self.bot_kills,
+            self.bot_deaths,
+            self.paint_rate(),
+        )
+    }
+}
+
+/// The three ladder rungs, in order (spec §5 TR-38.1).
+pub const LADDER_DIFFS: [&str; 3] = ["easy", "normal", "hard"];
+
+/// Run the TR-38.1 difficulty ladder: the same seeds × three difficulties on
+/// turf matches (zones off — `mode: "turf"` leaves `Match::zones` `None`, so
+/// the zone plan never engages), each run to its natural settlement (the
+/// fixed `duration` pins the frame budget). The measured rung is the team-1
+/// bots riding `cfg.difficulty`; the team-0 bots are pinned to `hard` as a
+/// lethal constant yardstick (see [`build_side`]). Every run's own TR-25.1
+/// consistency checks must pass; the aggregated rows come back in
+/// [`LADDER_DIFFS`] order with the per-seed evidence alongside.
+#[must_use]
+pub fn run_ladder(seeds: &[u64], duration: f64, clients: usize) -> LadderOutcome {
+    let mut rung = Vec::new();
+    let mut per_run = Vec::new();
+    for d in LADDER_DIFFS {
+        let mut agg = LadderStats::default();
+        for &s in seeds {
+            let mut opts = MatchOpts::plain(clients, s);
+            opts.duration = duration;
+            opts.difficulty = d.to_string();
+            opts.ladder = true;
+            let rep = run_match(&opts);
+            assert!(
+                rep.ok(),
+                "ladder run {d} seed {s} failed a consistency check"
+            );
+            let st = *rep.ladder.as_ref().expect("opts.ladder collects stats");
+            agg.add(&st);
+            per_run.push((d, s, st));
+        }
+        rung.push((d, agg));
+    }
+    LadderOutcome { rung, per_run }
+}
+
+/// The [`run_ladder`] bundle: the aggregated per-rung rows plus the per-seed
+/// evidence the report file carries for review (spec §5: violations are
+/// recorded, not hidden).
+#[derive(Debug)]
+pub struct LadderOutcome {
+    /// Aggregated rows, in [`LADDER_DIFFS`] order.
+    pub rung: Vec<(&'static str, LadderStats)>,
+    /// Per-run rows `(difficulty, seed, stats)` in ladder order.
+    pub per_run: Vec<(&'static str, u64, LadderStats)>,
 }
 
 impl MatchReport {
@@ -228,6 +365,9 @@ impl MatchReport {
         );
         if let Some(moved) = self.dropped_actor_moved {
             println!("  dropped actor kept playing on the host: {moved}");
+        }
+        if let Some(l) = &self.ladder {
+            println!("  {}", l.row("ladder"));
         }
         if let Some(s) = &self.stats {
             s.print();
@@ -487,6 +627,7 @@ fn dispatch(
     gone: &[bool],
     sim: &SimWorld,
     tuning: &Tuning,
+    difficulty: &str,
     seed: u64,
 ) {
     match ev {
@@ -508,7 +649,7 @@ fn dispatch(
                 &player.id,
                 host_changed[i],
                 &mut m[i],
-                &tuning.difficulty.easy,
+                tuning.difficulty.get(difficulty),
                 seed,
                 sim,
                 &tuning.player,
@@ -547,7 +688,6 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
     let tp = &tuning.player;
     let ws = &tuning.weapons;
     let sb = &tuning.subs;
-    let sp = &ws.shooter;
     // Task 37 §4: the stage-selectable layout. JS main.js L242 builds the
     // level from `layoutFor(MAP_LAYOUTS[layoutId], mode)` — the collision
     // world, `SimWorld`, `NavGraph` and the `zone_layout` handed to each
@@ -638,6 +778,9 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
     // L1284-1290), so the harness overrides the *local* cfg every side
     // builds from — the same seam the JS harness uses, not a lobby patch.
     cfg.duration = opts.duration.max(1.0) as i64;
+    // Task 38 §1: the bot difficulty rides the same test-only cfg seam (the
+    // lobby path would carry `me.difficulty` → `StartCfg.difficulty`).
+    cfg.difficulty = opts.difficulty.clone();
     assert_eq!(cfg.roster.len(), 8, "bots pad the roster to 8");
     let seed = fnv1a(&cfg.id);
 
@@ -671,6 +814,7 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
             &tuning,
             layout.zones.as_ref(),
             zones_override,
+            opts.ladder,
         );
         m.push(mm);
         rep.push(rr);
@@ -742,6 +886,23 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
     let mut remote: Vec<HashMap<usize, Vec<Frame>>> = vec![HashMap::new(); n];
     let mut frame = 0usize;
     let mut host_settled = false;
+    // TR-38.1 ladder sampling: the rung is the team-1 bot roster rows
+    // (index identity: `build_net_match` stages actors in roster order and
+    // no `on_leave` prune runs in a dropless scenario); the team-0 bots are
+    // the pinned-`hard` yardstick and are not measured. Counted on the live
+    // host only — the authoritative bot simulation.
+    let ladder_bots: Vec<usize> = if opts.ladder {
+        cfg.roster
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.bot && e.team == 1)
+            .map(|(j, _)| j)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let mut ladder_alive = 0u64;
+    let mut ladder_active = 0u64;
     // Guest drop: snapshot the abandoned actor on the live host at the drop
     // frame; settlement checks it kept moving after the bot adoption.
     // Index identity `local_idx[guest]` == the host's slot for that actor
@@ -773,7 +934,15 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
             if gone[i] {
                 continue;
             }
-            rep[i].drive_bots(&mut m[i], &nav, &sim, tp, sp, &mut inputs[i]);
+            rep[i].drive_bots(
+                &mut m[i],
+                &nav,
+                &sim,
+                tp,
+                ws,
+                &tuning.weapon_range,
+                &mut inputs[i],
+            );
             m[i].step_masked(
                 FIXED_DT,
                 &inputs[i],
@@ -830,6 +999,7 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
                 &gone,
                 &sim,
                 &tuning,
+                &cfg.difficulty,
                 seed,
             );
         }
@@ -913,6 +1083,20 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
                         zones_state_ok = false;
                         break;
                     }
+                }
+            }
+        }
+        // TR-38.1 ladder sampling (see `ladder_bots`): Active-phase frames
+        // and bot alive-frames on the live host. Intro / finish frames are
+        // excluded so the axes measure played time only.
+        if opts.ladder
+            && let Some(h) = (0..n).find(|i| !gone[*i] && rep[*i].is_host())
+            && m[h].phase == Phase::Active
+        {
+            ladder_active += 1;
+            for &j in &ladder_bots {
+                if m[h].actors.get(j).is_some_and(|a| a.alive) {
+                    ladder_alive += 1;
                 }
             }
         }
@@ -1090,12 +1274,31 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
     }
 
     let stats = opts.stats.then(|| compute_stats(&own, &remote));
+    // TR-38.1: the settlement-side axes read the host's credited stats
+    // (`stats.splats` / `stats.deaths`, actor.js) and its final paint.
+    let ladder = opts.ladder.then(|| {
+        let (mut kills, mut deaths) = (0u32, 0u32);
+        for &j in &ladder_bots {
+            if let Some(a) = m[host_i].actors.get(j) {
+                kills += a.splats;
+                deaths += a.deaths;
+            }
+        }
+        LadderStats::from_run(
+            m[host_i].paint.coverage()[1],
+            kills,
+            deaths,
+            ladder_alive,
+            ladder_active,
+        )
+    });
     MatchReport {
         clients: views,
         checks,
         stats,
         frames: frame,
         dropped_actor_moved,
+        ladder,
     }
 }
 
@@ -1103,6 +1306,7 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
 /// plus the `NetMatch` ctor session.js L308) — verbatim the tr24 `build_side`
 /// helper (`match_link.rs` L822-849), now shared through
 /// [`inkwave_sim::net::matchbuild`].
+#[allow(clippy::too_many_arguments)] // the match config + tuning + zones seams + TR-38.1 ladder knob
 fn build_side(
     cfg: &StartCfg,
     s: &mut HSess,
@@ -1111,6 +1315,7 @@ fn build_side(
     tuning: &Tuning,
     zone_layout: Option<&inkwave_sim::geometry::ZoneLayout>,
     zones_tuning: Option<ZonesTuning>,
+    ladder: bool,
 ) -> (Match, Replication, usize) {
     let my = s.my_id().expect("my_id").to_string();
     let host = s.host_id().expect("host_id").to_string();
@@ -1126,9 +1331,26 @@ fn build_side(
     );
     let mut r = Replication::new(cfg, &my, &host);
     r.bind_match(&mut m);
+    let rung_diff = bot_difficulty(cfg, tuning);
     for (i, e) in cfg.roster.iter().enumerate() {
         if e.bot {
-            r.attach_bot(i, &m.actors[i], &tuning.difficulty.easy, seed);
+            // TR-38.1 ladder shape: the rung (team-1 bots, the 4-bot side)
+            // rides `cfg.difficulty`, the yardstick team (team-0 bots) is
+            // pinned to `hard` in all three runs. Two design facts:
+            //  - a full mirror makes bot-pool survival structurally
+            //    anti-monotone — every bot death is a bot kill, so a better
+            //    rung shortens *everyone's* lives and the axis measures the
+            //    exchange rate, not the ladder;
+            //  - an `easy` yardstick saturates the rung's survival at ~96 %
+            //    of Active time for every rung (measured: 1687 s / 1687 s /
+            //    1682 s — pure seed noise between rungs), so the constant
+            //    threat must be lethal for the axis to discriminate.
+            let diff = if ladder && e.team == 0 {
+                &tuning.difficulty.hard
+            } else {
+                rung_diff
+            };
+            r.attach_bot(i, &m.actors[i], diff, seed);
         }
     }
     let members: Vec<String> = s.member_ids();

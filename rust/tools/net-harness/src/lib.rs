@@ -30,7 +30,9 @@
 
 pub mod match_e2e;
 
-pub use match_e2e::{DropAt, MatchOpts, MatchReport, run_match};
+pub use match_e2e::{
+    DropAt, LADDER_DIFFS, LadderOutcome, LadderStats, MatchOpts, MatchReport, run_ladder, run_match,
+};
 
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
