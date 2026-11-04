@@ -34,13 +34,17 @@
 //!
 //! # M2 scope deviations (documented, per tasks.md Notes)
 //!
-//! - **No Boss Battle.** `mode` accepts `'turf'` and `'zones'` (Task 36
-//!   batch 3); [`NetSession::set_settings`] still refuses `'boss'` and a
-//!   guest that receives a `start` cfg with `mode == "boss"` fails and
-//!   leaves — JS accepts it (L373 has no mode check) but the boss sim is not
-//!   ported, so the refusal is a declared deviation. The JS boss branches
-//!   (`bossFallbackMap`, one-squad roster) stay unreachable; the zones
-//!   branches (`ZONES.duration` at L292) are ported.
+//! - **Boss Battle lobby semantics (Task 44 batch D).** `mode` accepts
+//!   `'turf'`, `'zones'` and `'boss'` (L244); the MAPS rule flags drive the
+//!   stage rules verbatim — a boss room on a `noBoss` stage falls back to a
+//!   boss-eligible stage (L248), a `noBots` stage forces bots off (L249) and
+//!   blocks the start without 2+ humans one a side (L258, `noBotsStartBlock`
+//!   config.js L539-545). `start()` builds the one-squad roster (all team 0,
+//!   bots fill to `TEAM * 2 = 8`, L274-292) and a guest `_begin`s a boss cfg
+//!   like JS (L373 has no mode check). The online boss *playback* (the tick
+//!   `B` snapshot, `'bhit'`, `['bm']`/`['bc']`, host migration, res boss
+//!   shape) lands with Task 45 — until then a guest's follower match simply
+//!   runs without the boss entity stepping.
 //! - **`style`/`sub`/`special` pass through uninterpreted** — the Rust port
 //!   only models the Spritzer placeholder, so `style` is an opaque [`JVal`]
 //!   and, unlike JS `randomStyle()`, locally-created players and roster bots
@@ -173,10 +177,12 @@ pub const BOT_NAMES: &[&str] = &[
     "Kelp", "Drip", "Tako", "Sprinkle", "Bubbles", "Moxie", "Juno", "Wasabi", "Fizz", "Loop",
 ];
 
-/// `MAPS` ids with their `noBots` flag (config.js L515-524). M2 is Turf
-/// War only, so `noBoss`/`onlineOnly` are not modelled; `noBots` drives the
-/// lobby default, `setSettings` and `startBlock` (session.js L62/L249/L270,
-/// `noBotsStartBlock` config.js L539-545).
+/// `MAPS` ids in JS array order (config.js L515-524). The full rule flags
+/// (`noBots` / `noBoss` / `onlineOnly`) live in the embedded tuning's
+/// [`crate::tuning::MapFlags`] table (Task 44 batch A, schema v6); this
+/// array is the validation set for `setSettings`' map id check (L238).
+/// `noBots` drives the lobby default, `setSettings` and `startBlock`
+/// (session.js L62/L249/L270, `noBotsStartBlock` config.js L539-545).
 pub const MAP_IDS: &[&str] = &[
     "tidewater",
     "kelpline",
@@ -224,6 +230,15 @@ fn js_slice16(s: &str) -> String {
 fn zones_duration() -> i64 {
     static D: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     i64::from(*D.get_or_init(|| crate::embedded_tuning().zones.duration))
+}
+
+/// The `MAPS` rule flags from the embedded tuning (Task 44 batch A, schema
+/// v6) — D-T35-2 pattern: a `OnceLock` over the embedded artifact so the
+/// lobby's stage-rule checks (`setSettings`, `start`) never re-parse the
+/// tuning JSON.
+fn embedded_maps() -> &'static [crate::tuning::MapFlags] {
+    static M: std::sync::OnceLock<Vec<crate::tuning::MapFlags>> = std::sync::OnceLock::new();
+    M.get_or_init(|| crate::embedded_tuning().maps)
 }
 
 // ---------------------------------------------------------------------------
@@ -422,8 +437,8 @@ pub struct MeChange {
 }
 
 /// `setSettings(s)`'s argument (session.js L235-251). `mode` is validated to
-/// `turf`/`zones` (`boss` refused — deviation, see module docs); `None`
-/// fields are left unchanged.
+/// `turf`/`zones`/`boss` (L244, Task 44 batch D); `None` fields are left
+/// unchanged.
 #[derive(Debug, Clone, Default)]
 pub struct SettingsPatch {
     pub map: Option<String>,
@@ -1278,13 +1293,17 @@ impl<T: Transport, F: FnMut() -> T> NetSession<T, F> {
         self.broadcast_lobby();
     }
 
-    /// `setSettings(s)` (L235-251). Deviation: `mode` accepts `'turf'` and
-    /// `'zones'` but refuses `'boss'` (L244 also allows it; the boss sim is
-    /// not ported).
+    /// `setSettings(s)` (L235-251). Task 44 batch D: `mode` accepts
+    /// `'turf'`, `'zones'` and `'boss'` (L244); a boss room on a `noBoss`
+    /// stage falls back to a boss-eligible stage (L248); a `noBots` stage
+    /// forces bots off (L249).
     pub fn set_settings(&mut self, s: SettingsPatch) {
         if !self.is_host() {
             return;
         }
+        // JS L237: `wasMap = l.map` captured before any field change — the
+        // boss fallback (L248) prefers the stage the room was on.
+        let was_map = self.lobby.map.clone();
         let l = &mut self.lobby;
         if let Some(m) = &s.map
             && map_exists(m)
@@ -1316,12 +1335,23 @@ impl<T: Transport, F: FnMut() -> T> NetSession<T, F> {
                 l.palette = p as usize;
             }
         }
-        if matches!(s.mode.as_deref(), Some("turf") | Some("zones")) {
+        // L244: the three modes are all accepted; the stage rules below
+        // keep the lobby consistent (a `noBoss` stage in boss mode falls
+        // back, a `noBots` stage forces bots off).
+        if matches!(
+            s.mode.as_deref(),
+            Some("turf") | Some("zones") | Some("boss")
+        ) {
             l.mode = s.mode.clone().expect("matched above");
         }
-        // Stage rules (L249): a noBots stage forces bots off; the host's
-        // own preference comes back on the next stage. (The boss-mode map
-        // fallback of L248 is unreachable while `boss` is refused above.)
+        // L245-248: a Boss Battle never runs on a `noBoss` stage — switch
+        // the room to a boss-eligible stage (preferring the one the room
+        // was on before this patch).
+        if l.mode == "boss" && !crate::tuning::map_boss_ok(embedded_maps(), &l.map) {
+            l.map = crate::tuning::boss_fallback_map(embedded_maps(), &was_map);
+        }
+        // L249: a `noBots` stage forces bots off; the host's own preference
+        // comes back on the next stage.
         let pref = self.bots_pref;
         l.bots = if map_no_bots(&l.map) {
             false
@@ -1382,8 +1412,8 @@ impl<T: Transport, F: FnMut() -> T> NetSession<T, F> {
 
     // ------------------------------------------------------------------ match orchestration
 
-    /// `start()` (L267-297) — host only, turf / zones modes (boss is
-    /// refused upstream in [`Self::set_settings`]).
+    /// `start()` (L267-297) — host only, turf / zones / boss modes
+    /// (Task 44 batch D: a boss match builds the one-squad roster, L274-292).
     pub fn start(&mut self) -> bool {
         if !self.is_host()
             || self.state != SessionState::Lobby
@@ -1408,24 +1438,36 @@ impl<T: Transport, F: FnMut() -> T> NetSession<T, F> {
             )
         };
         let host = self.my_id.clone().expect("is_host");
+        // L274: `boss = l.mode === 'boss' && mapBossOk(l.map)` — one squad
+        // of up to 8 (all team 0), bots fill the rest. `setSettings` keeps
+        // the lobby boss-eligible (L248), so this holds in practice; the
+        // guard mirrors JS verbatim.
+        let boss = mode == "boss" && crate::tuning::map_boss_ok(embedded_maps(), &map);
         let mut roster: Vec<RosterEntry> = Vec::new();
         let mut nid = 0u8;
         let mut names = self.shuffled(BOT_NAMES);
-        for team in 0..2u8 {
+        // L275: `for (let team = 0; team < (boss ? 1 : 2); team++)`.
+        for team in 0..(if boss { 1u8 } else { 2u8 }) {
             // L277: the weapon shuffle happens *per team* — each side draws
             // its own order (one shared shuffle would collapse both teams'
             // bot weapon sets).
             let weapons = self.shuffled(WEAPON_ORDER);
-            let humans: Vec<&LobbyPlayer> = players
-                .iter()
-                .filter(|p| {
-                    if team == 0 {
-                        p.team == TeamSel::Zero
-                    } else {
-                        p.team == TeamSel::One
-                    }
-                })
-                .collect();
+            // L276: a boss squad takes every lobby player; turf/zones split
+            // by team.
+            let humans: Vec<&LobbyPlayer> = if boss {
+                players.iter().collect()
+            } else {
+                players
+                    .iter()
+                    .filter(|p| {
+                        if team == 0 {
+                            p.team == TeamSel::Zero
+                        } else {
+                            p.team == TeamSel::One
+                        }
+                    })
+                    .collect()
+            };
             let mut slot = 0u8;
             for p in humans {
                 roster.push(RosterEntry {
@@ -1444,7 +1486,9 @@ impl<T: Transport, F: FnMut() -> T> NetSession<T, F> {
                 slot += 1;
             }
             if bots {
-                while (slot as usize) < TEAM_SIZE {
+                // L281: a boss squad fills to `TEAM * 2` (8) slots, the two
+                // turf/zones sides to `TEAM` (4) each.
+                while (slot as usize) < if boss { TEAM_SIZE * 2 } else { TEAM_SIZE } {
                     // `weapons.find(w => !used.has(w)) || weapons[slot % len]`
                     // (L282-283).
                     let used: Vec<String> = roster
@@ -1498,10 +1542,13 @@ impl<T: Transport, F: FnMut() -> T> NetSession<T, F> {
         }
         let id = self.base36_id();
         // L292: `duration: !boss && l.mode === 'zones' ? ZONES.duration :
-        // l.duration` (boss is refused upstream, so `!boss` always holds);
-        // `mode: boss ? 'boss' : l.mode === 'zones' ? 'zones' : 'turf'`
-        // collapses to the lobby mode, which is only ever turf/zones here.
-        let zones = mode == "zones";
+        // l.duration` — a boss match runs the lobby's own clock; a zones
+        // match runs the embedded `ZONES.duration` (300 s); turf runs the
+        // lobby clock. `mode: boss ? 'boss' : l.mode === 'zones' ? 'zones'
+        // : 'turf'` — a boss request on a non-boss-eligible stage (the
+        // `setSettings` fallback keeps this unreachable in practice) falls
+        // through to turf.
+        let zones = mode == "zones" && !boss;
         let cfg = StartCfg {
             roster,
             map,
@@ -1509,7 +1556,9 @@ impl<T: Transport, F: FnMut() -> T> NetSession<T, F> {
             duration: if zones { zones_duration() } else { duration },
             difficulty,
             palette,
-            mode: if zones {
+            mode: if boss {
+                "boss".to_string()
+            } else if zones {
                 "zones".to_string()
             } else {
                 "turf".to_string()
@@ -1744,8 +1793,7 @@ impl<T: Transport, F: FnMut() -> T> NetSession<T, F> {
                 }
                 // L364 verbatim: `l.mode === 'boss' || l.mode === 'zones' ?
                 // l.mode : 'turf'` — the lobby keeps whatever mode the host
-                // names (a boss lobby still reaches `start`, where the Rust
-                // guest refuses — deviation, module docs).
+                // names, boss included (Task 44 batch D).
                 self.lobby.mode = match l.mode.as_str() {
                     "boss" | "zones" => l.mode.clone(),
                     _ => "turf".to_string(),
@@ -1790,13 +1838,11 @@ impl<T: Transport, F: FnMut() -> T> NetSession<T, F> {
                 let Some(cfg) = decode_start(&v) else {
                     return;
                 };
-                // Deviation: JS `_begin`s any cfg (L373 has no mode check);
-                // the Rust port still refuses `boss` — error + leave.
-                if cfg.mode == "boss" {
-                    self.fail("Unsupported game mode");
-                    self.leave(false);
-                    return;
-                }
+                // L373: `_begin(cfg)` for any mode (Task 44 batch D: a boss
+                // cfg is accepted). The online boss *playback* (tick `B`,
+                // `'bhit'`, `['bm']`/`['bc']`) lands with Task 45; until
+                // then the guest's follower match runs without the boss
+                // entity stepping (module docs).
                 self.begin(cfg);
             }
             Some("ready") => {
@@ -2451,7 +2497,7 @@ mod tests {
             mode: Some("boss".into()),
             ..Default::default()
         });
-        assert_eq!(h.lobby().mode, "zones", "deviation: boss still refused");
+        assert_eq!(h.lobby().mode, "boss", "Task 44: boss accepted (L244)");
         h.set_settings(SettingsPatch {
             mode: Some("turf".into()),
             ..Default::default()
@@ -2856,11 +2902,11 @@ mod tests {
     }
 
     #[test]
-    fn guest_refuses_a_boss_start() {
-        // A legacy/malicious host broadcasts the fixture `start` with
-        // mode=boss. Deviation: JS `_begin`s any mode (L373); the Rust guest
-        // fails with the player-facing text and leaves (module docs — the
-        // boss sim is not ported).
+    fn guest_accepts_a_boss_start() {
+        // Task 44 batch D: JS `_begin`s any mode (L373 has no mode check) —
+        // a boss cfg puts the guest in Starting with the cfg retained. The
+        // online boss *playback* (tick `B`, `'bhit'`, `['bm']`/`['bc']`)
+        // lands with Task 45; the session layer no longer refuses the mode.
         let relay = FakeRelay::new();
         let mut boss = relay.transport(None, 7);
         boss.connect("BCDE2", "boss", true);
@@ -2883,9 +2929,14 @@ mod tests {
                 break;
             }
         }
-        assert_eq!(g.error(), Some("Unsupported game mode"));
-        assert_eq!(g.state(), SessionState::Offline, "error then leave");
-        assert!(g.transport_mut().is_none());
+        assert_eq!(g.state(), SessionState::Starting, "guest `_begin`s boss");
+        assert!(g.error().is_none(), "no failure for a boss cfg");
+        assert!(g.transport_mut().is_some(), "guest stays in the room");
+        assert_eq!(
+            g.start_cfg().expect("boss cfg retained").mode,
+            "boss",
+            "the wire cfg keeps the boss mode"
+        );
     }
 
     #[test]
@@ -2936,6 +2987,162 @@ mod tests {
             "zones",
             "the wire cfg keeps the mode"
         );
+    }
+
+    #[test]
+    fn set_settings_accepts_boss_and_falls_back() {
+        // Task 44 batch D (L244-249): boss mode is accepted; a `noBoss`
+        // stage under boss falls back to a boss-eligible stage (L248,
+        // `bossFallbackMap` prefers the stage the room was on); a `noBots`
+        // stage forces bots off and the host's preference returns on a
+        // bots-eligible stage (L249).
+        let relay = FakeRelay::new();
+        let (mut h, _g, _) = host_and_guest(&relay);
+        // A `noBots` stage under turf forces bots off (L249) — the stage
+        // stays (no boss fallback while the mode is turf).
+        h.set_settings(SettingsPatch {
+            map: Some("cargo".into()),
+            ..Default::default()
+        });
+        assert_eq!(h.lobby().map, "cargo", "turf keeps a noBoss stage");
+        assert!(!h.lobby().bots, "noBots forces bots off (L249)");
+        // Switching the room to boss moves it off the `noBoss` stage (L248):
+        // `wasMap` (cargo) is itself noBoss, so `bossFallbackMap` picks the
+        // first boss-eligible, host-reachable stage — tidewater. The bots
+        // preference returns with the stage (L249).
+        h.set_settings(SettingsPatch {
+            mode: Some("boss".into()),
+            ..Default::default()
+        });
+        assert_eq!(h.lobby().mode, "boss", "boss accepted (L244)");
+        assert_eq!(h.lobby().map, "tidewater", "noBoss stage falls back (L248)");
+        assert!(
+            h.lobby().bots,
+            "bots pref returns on a bots-eligible stage (L249)"
+        );
+        // A boss-eligible stage keeps its map.
+        h.set_settings(SettingsPatch {
+            map: Some("kelpline".into()),
+            ..Default::default()
+        });
+        assert_eq!(h.lobby().map, "kelpline", "boss-ok stage stays (L248)");
+    }
+
+    #[test]
+    fn start_boss_roster_single_team_eight_slots() {
+        // Task 44 batch D (L274-292): a boss start builds ONE squad — every
+        // lobby player on team 0, bots filling to `TEAM * 2 = 8` (L281) —
+        // and the cfg carries `mode: 'boss'` with the LOBBY clock (L292,
+        // not the ZONES clock).
+        let relay = FakeRelay::new();
+        let (mut h, mut g, _code) = host_and_guest(&relay);
+        h.set_settings(SettingsPatch {
+            mode: Some("boss".into()),
+            ..Default::default()
+        });
+        g.set_me(MeChange {
+            ready: Some(true),
+            ..Default::default()
+        });
+        for _ in 0..50 {
+            step2(&mut h, &mut g, 1.0);
+            if h.can_start() {
+                break;
+            }
+        }
+        assert!(h.can_start());
+        assert!(h.start());
+        let cfg = h.start_cfg().expect("host cfg").clone();
+        assert_eq!(cfg.mode, "boss");
+        assert_eq!(
+            cfg.duration,
+            h.lobby().duration,
+            "boss runs the lobby clock (L292)"
+        );
+        assert_eq!(
+            cfg.roster.len(),
+            TEAM_SIZE * 2,
+            "bots fill the squad to TEAM*2 (L281)"
+        );
+        assert!(
+            cfg.roster.iter().all(|r| r.team == 0),
+            "one squad: every entry on team 0 (L275-276)"
+        );
+        let humans = cfg.roster.iter().filter(|r| !r.bot).count();
+        assert_eq!(humans, 2, "both lobby players are in the squad");
+        // Weapon dedup within the squad (L283-289): every bot's weapon is
+        // unique within the team (humans may share, but bots pick the first
+        // unused one in the team's shuffle order).
+        let mut seen = std::collections::HashSet::new();
+        for r in cfg.roster.iter().filter(|r| r.bot) {
+            assert!(seen.insert(&r.weapon), "bot weapon dedup: {}", r.weapon);
+        }
+    }
+
+    #[test]
+    fn no_bots_stage_needs_one_player_per_team() {
+        // `noBotsStartBlock` (config.js L539-545, session.js L258): on a
+        // `noBots` stage the start needs 2+ humans with one on each side —
+        // two players on the SAME team block ("Needs a player on each
+        // team"), one per side passes.
+        let relay = FakeRelay::new();
+        let (mut h, mut g, _code) = host_and_guest(&relay);
+        h.set_me(MeChange {
+            team: Some(TeamSel::Zero),
+            ..Default::default()
+        });
+        g.set_me(MeChange {
+            team: Some(TeamSel::Zero),
+            ..Default::default()
+        });
+        for _ in 0..50 {
+            step2(&mut h, &mut g, 1.0);
+            if h.lobby().players.iter().any(|p| p.team == TeamSel::Zero)
+                && h.lobby()
+                    .players
+                    .iter()
+                    .filter(|p| p.team == TeamSel::Zero)
+                    .count()
+                    == 2
+            {
+                break;
+            }
+        }
+        h.set_settings(SettingsPatch {
+            map: Some("cargo".into()),
+            ..Default::default()
+        });
+        assert_eq!(
+            h.start_block(),
+            Some("Needs a player on each team"),
+            "same-team 2 players blocked (config.js L540-543)"
+        );
+        assert!(!h.start(), "blocked");
+        // Split one a side → the gate passes.
+        g.set_me(MeChange {
+            team: Some(TeamSel::One),
+            ..Default::default()
+        });
+        for _ in 0..50 {
+            step2(&mut h, &mut g, 1.0);
+            let zero = h
+                .lobby()
+                .players
+                .iter()
+                .filter(|p| p.team == TeamSel::Zero)
+                .count();
+            let one = h
+                .lobby()
+                .players
+                .iter()
+                .filter(|p| p.team == TeamSel::One)
+                .count();
+            if zero == 1 && one == 1 {
+                break;
+            }
+        }
+        assert_eq!(h.start_block(), None, "one per side passes (L544-545)");
+        assert!(h.start(), "start succeeds");
     }
 
     #[test]

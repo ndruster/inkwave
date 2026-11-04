@@ -164,6 +164,61 @@ pub enum BotMode {
     Fight,
     Refill,
     Retreat,
+    /// JS `'boss'` — the Boss Battle brain (`_bossTick`, bots.js L1874;
+    /// Task 44 batch C). Only ever live while [`BotCtx::boss`] is `Some`.
+    Boss,
+}
+
+/// JS `this.bTgt` (bots.js L1888 / L1990 / L2012): the current Boss-Battle
+/// shoot target — a hit shape of the boss (`idx` indexes `tuning::Boss::hit`;
+/// its world position is read live every frame, like the JS model socket) or
+/// a crablet (position frozen at perceive time, like the JS target object).
+#[derive(Debug, Clone, Copy)]
+pub enum BBotTgt {
+    Shape {
+        idx: usize,
+        rad: f32,
+        weak: bool,
+        dist: f32,
+        los: bool,
+    },
+    Crab {
+        id: u32,
+        pos: Vec3,
+        dist: f32,
+        los: bool,
+    },
+}
+
+impl BBotTgt {
+    /// JS `T.crab` — the crablet flag.
+    #[must_use]
+    fn is_crab(self) -> bool {
+        matches!(self, Self::Crab { .. })
+    }
+
+    /// JS `T.dist` / `T.los` (the crab `rad` is the constant `0.5`, L1990).
+    #[must_use]
+    fn dist(self) -> f32 {
+        match self {
+            Self::Shape { dist, .. } | Self::Crab { dist, .. } => dist,
+        }
+    }
+
+    #[must_use]
+    fn los(self) -> bool {
+        match self {
+            Self::Shape { los, .. } | Self::Crab { los, .. } => los,
+        }
+    }
+
+    #[must_use]
+    fn rad(self) -> f32 {
+        match self {
+            Self::Shape { rad, .. } => rad,
+            Self::Crab { .. } => 0.5,
+        }
+    }
 }
 
 /// A teammate brain's target memory, for the Cutlass target bias (JS reads
@@ -234,6 +289,10 @@ pub struct BotCtx<'a> {
     pub zones: Option<&'a crate::bot::zones::ZonePlan>,
     /// The live Zone Control rules state (JS `G.zones`).
     pub zctl: Option<&'a crate::match_::zones::ZoneControl>,
+    /// The live HULLBREAKER — `Some` only in a Boss Battle (JS `G.boss`,
+    /// bots.js L345; Task 44 batch C). `step` short-circuits into
+    /// [`Bot::boss_tick`] whenever this is set.
+    pub boss: Option<&'a crate::boss::Boss<'a>>,
 }
 
 impl<'a> BotCtx<'a> {
@@ -458,6 +517,25 @@ pub struct Bot {
     z_bomb: Option<ZoneBomb>,
     /// JS `this.zBombScan`.
     z_bomb_scan: f32,
+    // ---- Boss Battle scratch (Task 44 batch C; JS `_bossTick` family)
+    /// JS `this.bTgt` (bots.js L1888).
+    b_tgt: Option<BBotTgt>,
+    /// JS `this._th` (L1880) — this frame's threat read, post reaction gate.
+    th: crate::boss::Threat,
+    /// JS `this.thSeen` (L1883; `None` ≡ JS `undefined`).
+    th_seen: Option<f32>,
+    /// JS `this.hopMiss` (L1883).
+    hop_miss: bool,
+    /// JS `this.evadeT` (L1879 / L1893; `(evadeT || 0) - dt` → init `0`).
+    evade_t: f32,
+    /// JS `this._wasEvading` (L1894-1895).
+    was_evading: bool,
+    /// JS `this._rushing` (L1898 / L2030).
+    rushing: bool,
+    /// JS `this._pump` (L1945, the brolly trigger pump).
+    pump: bool,
+    /// JS `this.shapeT` (L1995; `(shapeT || 0) - 0.2` → init `0`).
+    shape_t: f32,
     pub stats: BotStats,
     last_pos: Vec3,
 }
@@ -573,6 +651,15 @@ impl Bot {
             z_face: 0.0,
             z_bomb: None,
             z_bomb_scan: 0.0,
+            b_tgt: None,
+            th: crate::boss::Threat::default(),
+            th_seen: None,
+            hop_miss: false,
+            evade_t: 0.0,
+            was_evading: false,
+            rushing: false,
+            pump: false,
+            shape_t: 0.0,
             stats: BotStats::default(),
             last_pos: a.pos,
         }
@@ -643,6 +730,13 @@ impl Bot {
         self.dodge_cd -= dt;
         self.acq_t += dt;
         self.t_time += dt;
+
+        // ---- Boss Battle (JS L345): a different job — the whole normal
+        // pipeline below (perception / mode / goal / fight / paint) is
+        // skipped; `boss_tick` owns the frame (Task 44 batch C).
+        if let Some(boss) = ctx.boss {
+            return self.boss_tick(dt, a, ctx, boss);
+        }
 
         // ---- perception (JS L348-351)
         if self.think <= 0.0 {
@@ -719,6 +813,10 @@ impl Bot {
                     self.pick_paint_goal(a, ctx);
                 }
             }
+            // The boss short-circuit (JS L345) returns before mode selection,
+            // so `Boss` never reaches this match — JS's normal update has no
+            // 'boss' arm either.
+            BotMode::Boss => {}
         }
 
         // ---- steering (JS L409-412)
@@ -3702,6 +3800,7 @@ fn paint_pitch(kind: WeaponKind) -> f32 {
     }
 }
 
+pub mod boss;
 pub mod zones;
 
 #[cfg(test)]

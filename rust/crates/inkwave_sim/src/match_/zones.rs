@@ -245,7 +245,7 @@ fn zone_cells(
     (cells, center, reach)
 }
 
-/// Match mode selector (JS `match.mode`, match.js L20; the boss / practice /
+/// Match mode selector (JS `match.mode`, match.js L20; the practice /
 /// attract modes stay out of scope for the sim).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum MatchMode {
@@ -254,6 +254,10 @@ pub enum MatchMode {
     Turf,
     /// Zone Control (this module).
     Zones,
+    /// Boss Battle (Task 44; JS `match.mode === 'boss'`, match.js L20 — one
+    /// squad on team 0 against HULLBREAKER, `bossMode` driven by the caller
+    /// through [`crate::boss::BossMode`]).
+    Boss,
 }
 
 /// JS `d.kind` (L112-113): `'center'` | `'side'`.

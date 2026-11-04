@@ -1032,6 +1032,7 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
                 tp,
                 ws,
                 sb,
+                None,
             );
             let rest = rep[i].update(
                 FIXED_DT,

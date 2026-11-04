@@ -88,7 +88,7 @@
 - **P2-5 ✅（无差异）** follow 死亡分支 fizzle 与 dead 赋值顺序相反——`hz_fizzle` 不读 dead/killer，无观测差异。
 
 ## Task 44: BossMode 规则 + 离线完整局 + boss bots
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 43
 - **Description**:
@@ -100,6 +100,13 @@
   - `rule` TR-44.1: 离线无头完整局 win + lose 双分支（固定种子，autopilot 驱动）；结算形态字段逐项（bossDmg/weakHits 对账）。
   - `rule` TR-44.2: boss bots 行为断言（威胁响应/集火/crablet 清除）；turf/zones 既有测试不破；noBoss/noBots 旗标路径。
 - **Notes**: 完成后离线 Boss 战端到端可玩（体块占位档）。
+- **Evidence**:
+  - 新增文件：`boss/mode.rs`（212 行 BossMode 规则）、`bot/boss.rs`（1088 行 bot boss 段 + 4 测试）
+  - 改动文件：`boss/hazards.rs`、`boss/mod.rs`、`bot.rs`、`autopilot.rs`（run_boss 驱动 + Report boss_dmg/weak_hits 对账）、`match_.rs`（boss 分支）、`net.rs`/`net/session.rs`/`net/matchbuild.rs`/`net/replication.rs`（session 放行 + matchbuild boss + step 增参）、`tuning.rs`（MAPS schema v6 旗标）、`ui/mod.rs`（lobby MODE 三值 cycle）、`ink_render.rs`（step 签名适配）、`tools/extract/extract-tuning.mjs`（MAPS 旗标提取）、`tools/net-harness/src/match_e2e.rs`、`tools/verify/boss-hitpos-crosscheck.mjs`、`assets/tuning.json`、`assets/tuning.schema.md`、`spec.md`
+  - 测试：TR-44.1×2（autopilot/tests.rs win+lose 双分支 + bossDmg 对账）、TR-44.2×4（bot/boss.rs crablet 感知/refill 门/slam 反应/集火选形）、session boss×3（guest 放行/set_settings 回退/start 名册）、tuning 锚点×2、mode hp×1；inkwave_sim 560→572 passed（+12）
+  - 门禁：`task44-gates-*.log` 全绿（TRUNK DEGRADED 同 D-T40-1 先例）
+  - 偏差注记：离线 Play 菜单模式选择推迟 Task 46（D-T44-5）；splatling 分支省略（D-T44-3）；matchbuild boss 单队构造留驱动层（D-T44-6）；guest boss cfg 放行不步进（D-T44-8）
+  - 评审：P0=0；P1-1 已修（D-T44-9）；P1-2/P2-1/P2-6 误报；P1-3/4/5 由 §8 覆盖；其余 P2 留档
 
 ## Task 45: Boss 联网——快照播放/上行/迁移 + e2e + scenario E
 - **Status**: `pending`

@@ -143,6 +143,7 @@ fn ctx_of<'a>(
         mate_minds: &f.mate_minds,
         zones: None,
         zctl: None,
+        boss: None,
     }
 }
 
@@ -1380,6 +1381,7 @@ fn zone_matrix_run(
         crate::match_::MatchMode::Zones,
         layout.zones.as_ref(),
         Some(tuning.zones),
+        None,
     );
     assert!(m.zones.is_some(), "zones mode must be live");
     m.kinds = loadouts.iter().map(|l| l.0).collect();
@@ -1436,6 +1438,7 @@ fn zone_matrix_run(
                 mate_minds: &mate_minds,
                 zones: zone_plan.as_ref(),
                 zctl: m.zones.as_ref(),
+                boss: None,
             };
             inputs[i] = bots[i].step(DT, &mut m.actors[i], &ctx);
         }
@@ -1446,6 +1449,7 @@ fn zone_matrix_run(
             &tuning.player,
             &tuning.weapons,
             &tuning.subs,
+            None,
         );
     }
 }

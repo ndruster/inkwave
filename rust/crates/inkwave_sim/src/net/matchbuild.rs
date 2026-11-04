@@ -129,6 +129,13 @@ fn embedded_zones_tuning() -> ZonesTuning {
     *ZT.get_or_init(|| crate::embedded_tuning().zones)
 }
 
+/// JS `BOSS_MODE` rules slice for the net builder (Task 44 batch D) — the
+/// same `OnceLock` pattern as [`embedded_zones_tuning`].
+fn embedded_boss_rules() -> crate::tuning::BossModeRules {
+    static BR: std::sync::OnceLock<crate::tuning::BossModeRules> = std::sync::OnceLock::new();
+    *BR.get_or_init(|| crate::embedded_tuning().boss.mode)
+}
+
 /// JS `new Match({roster: cfg.roster, …})` + `setup()` (match.js `_setupRoster`
 /// L107-113, placement L85-91): one actor per roster entry **in roster order**
 /// (the contract that keeps the replication layer's parallel arrays aligned),
@@ -147,6 +154,14 @@ fn embedded_zones_tuning() -> ZonesTuning {
 /// net-harness shortens `overtime_max` so a sudden-death scenario settles in
 /// bounded time, ≡ the duration shortening convention); the app passes `None`
 /// and gets the embedded tuning.
+///
+/// Task 44 batch D: `cfg.mode == "boss"` builds through
+/// [`Match::with_roster_mode`] with [`MatchMode::Boss`] and the embedded
+/// `BOSS_MODE` rules slice (JS match.js L20/L100/L132). The
+/// [`crate::boss::BossMode`] wrapper stays in the driver layer (Task 44 §2) —
+/// the net app does not step a boss entity until Task 45 wires the online
+/// playback, so a follower's match is boss-shaped (one squad, the boss
+/// intro/finish clocks) without the entity.
 #[must_use]
 pub fn build_net_match(
     cfg: &StartCfg,
@@ -157,6 +172,7 @@ pub fn build_net_match(
     zone_layout: Option<&ZoneLayout>,
     zones_tuning: Option<ZonesTuning>,
 ) -> Match {
+    let boss = cfg.mode == "boss";
     let mut m = if cfg.mode == "zones" {
         Match::with_roster_mode(
             cfg.duration.max(1) as f32,
@@ -168,9 +184,33 @@ pub fn build_net_match(
             MatchMode::Zones,
             zone_layout,
             Some(zones_tuning.unwrap_or_else(embedded_zones_tuning)),
+            None,
+        )
+    } else if boss {
+        Match::with_roster_mode(
+            cfg.duration.max(1) as f32,
+            seed,
+            sim,
+            t,
+            mc,
+            mc.team_size.max(1) as usize,
+            MatchMode::Boss,
+            None,
+            None,
+            Some(embedded_boss_rules()),
         )
     } else {
         Match::new(cfg.duration.max(1) as f32, seed, sim, t, mc)
+    };
+    // JS match.js L87: the spawn ring divides by `boss ? squad : 4` with
+    // `rr = boss ? 1.7 : 1.2` (match_.rs pub constants).
+    let (ring_n, rr) = if boss {
+        (
+            embedded_boss_rules().squad.max(1) as f32,
+            crate::match_::BOSS_SPAWN_RING_R,
+        )
+    } else {
+        (SPAWN_RING_N, SPAWN_RING_R)
     };
     m.actors = cfg
         .roster
@@ -179,12 +219,8 @@ pub fn build_net_match(
             let mut a = Actor::new(r.team as usize, r.slot as usize, t);
             // match_.rs L74-78 pub constants, verbatim `place_on_pad`.
             let pad = sim.spawn_pads[a.team];
-            let ang = (a.slot as f32 / SPAWN_RING_N) * std::f32::consts::TAU + SPAWN_RING_PHI;
-            let p = glam::vec3(
-                pad.x + ang.cos() * SPAWN_RING_R,
-                pad.y,
-                pad.z + ang.sin() * SPAWN_RING_R,
-            );
+            let ang = (a.slot as f32 / ring_n) * std::f32::consts::TAU + SPAWN_RING_PHI;
+            let p = glam::vec3(pad.x + ang.cos() * rr, pad.y, pad.z + ang.sin() * rr);
             let yaw = if a.team == 0 {
                 0.0
             } else {

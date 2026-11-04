@@ -282,6 +282,7 @@ impl DemoSim {
                     // plan is never live here (Task 38 batch 3).
                     zones: None,
                     zctl: None,
+                    boss: None,
                 };
                 self.inputs[i] = self.bots[i].step(FIXED_DT, &mut self.m.actors[i], &ctx);
             }
@@ -290,8 +291,15 @@ impl DemoSim {
                 self.inputs[i] = self.bots[i].hold(&self.m.actors[i]);
             }
         }
-        self.m
-            .step(FIXED_DT, &self.inputs, &sim, &t.player, &t.weapons, &t.subs);
+        self.m.step(
+            FIXED_DT,
+            &self.inputs,
+            &sim,
+            &t.player,
+            &t.weapons,
+            &t.subs,
+            None,
+        );
         // Task 13: no auto-restart — the UI shows the results screen when the
         // match reaches `Phase::End` and replays on demand (`replay`).
     }

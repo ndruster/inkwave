@@ -159,8 +159,9 @@ pub enum OnlineAction {
     /// Task 39: `setMe({special})` (session.js L203) — cycle over
     /// `SPECIAL_IDS` with a NONE stop.
     SpecialCycle,
-    /// Task 39: host `hostSet({mode})` toggle (session.js L244, turf ⇄
-    /// zones; `boss` is out of M3 scope). Host-only guard in `run_cmd`.
+    /// Task 39: host `hostSet({mode})` toggle (session.js L244; Task 44
+    /// batch D cycles turf → zones → boss → turf). Host-only guard in
+    /// `run_cmd`.
     ModeToggle,
     /// `askLeave` two-step (L3026, deviation ⑦).
     Leave,
@@ -1576,13 +1577,12 @@ fn handle_online_action(st: &mut UiState, oa: OnlineAction, os: &mut OnlineSessi
             run_cmd(&mut os.sess, &mut os.flags, SessionCmd::SetSpecial(next));
         }
         OnlineAction::ModeToggle => {
-            // `hostSet({mode})` (session.js L244): turf ⇄ zones; anything
-            // else (incl. a stray `boss`) normalises to zones. Host-only
-            // guard in `run_cmd`.
-            let next = if os.sess.lobby().mode == "zones" {
-                "turf"
-            } else {
-                "zones"
+            // `hostSet({mode})` (session.js L244): Task 44 batch D cycles
+            // turf → zones → boss → turf. Host-only guard in `run_cmd`.
+            let next = match os.sess.lobby().mode.as_str() {
+                "turf" => "zones",
+                "zones" => "boss",
+                _ => "turf",
             };
             run_cmd(
                 &mut os.sess,
@@ -1930,6 +1930,7 @@ mod tests {
             points: [0.0; 2],
             elapsed: 180.0,
             zones: None,
+            boss: None,
         };
         let names = ["Alpha".to_string(), "Bravo".to_string()];
         let (t, a, b) = results_text(&r, &names);
@@ -1956,6 +1957,7 @@ mod tests {
                 overtime: true,
                 log: Vec::new(),
             }),
+            boss: None,
         };
         let (t, a, b) = results_text(&r, &names);
         assert_eq!(t, "BRAVO WINS! · OVERTIME LIMIT");
@@ -2093,6 +2095,7 @@ mod tests {
                 points: [0.0; 2],
                 elapsed: 90.0,
                 zones: None,
+                boss: None,
             });
         }
         app.update();

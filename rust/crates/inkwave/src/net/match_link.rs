@@ -384,6 +384,7 @@ pub fn net_tick(
                     &t.player,
                     &t.weapons,
                     &t.subs,
+                    None,
                 );
                 let Some(tr) = os.sess.transport_mut() else {
                     break; // link gone; the session will emit `Aborted`
@@ -726,6 +727,7 @@ mod tests {
                 tp,
                 ws,
                 sb,
+                None,
             );
             let rest = hrep.update(
                 FIXED_DT,
@@ -754,6 +756,7 @@ mod tests {
                 tp,
                 ws,
                 sb,
+                None,
             );
             let rest = grep.update(
                 FIXED_DT,
@@ -796,6 +799,7 @@ mod tests {
             tp,
             ws,
             sb,
+            None,
         );
         assert!(hm.result.is_some(), "the host judged the match");
         hrep.send_result(&hm, h.transport_mut().unwrap());

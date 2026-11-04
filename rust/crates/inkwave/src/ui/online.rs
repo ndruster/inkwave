@@ -252,8 +252,8 @@ pub enum SessionCmd {
     SetBots(bool),
     /// `hostSet({difficulty})` (L2850).
     SetDifficulty(String),
-    /// `hostSet({mode})` applied at session.js L244 (turf/zones; the Rust UI
-    /// never sends `boss` — out of M3 scope). Host-only.
+    /// `hostSet({mode})` applied at session.js L244 (turf/zones/boss —
+    /// Task 44 batch D). Host-only.
     SetMode(String),
     /// `tryStart` (L3060-3072).
     Start,

@@ -536,6 +536,10 @@ pub struct Actor {
     /// stood on / aimed into the live Zone Control objective.
     #[serde(default)]
     pub zone_turf: f32,
+    /// JS `stats.bossKill` (bossMode.js L41 `onDefeat`): this actor landed
+    /// the killing blow on HULLBREAKER (Task 44; `1` once, else `0`).
+    #[serde(default)]
+    pub boss_kill: u32,
     /// JS `stats.splats`: enemies this actor splatted.
     pub splats: u32,
     /// JS `netTp` (actor.js L169): teleport counter bumped by every
@@ -703,6 +707,7 @@ impl Actor {
             deaths: 0,
             turf: 0.0,
             zone_turf: 0.0,
+            boss_kill: 0,
             splats: 0,
             net_tp: 0,
             dodge_vel: None,

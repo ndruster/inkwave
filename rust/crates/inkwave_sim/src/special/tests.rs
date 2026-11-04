@@ -469,7 +469,7 @@ fn tr35_2_host_drain_rewrites_op2_gid_to_the_nid_form() {
     r.attach_bot(2, &m.actors[2], &f.tuning.difficulty.easy, 7);
     r.bind_match(&mut m);
     for _ in 0..(crate::match_::INTRO_TIME * 60.0) as usize + 2 {
-        m.step_masked(FIXED_DT, &[], Some(r.remote_mask()), &sim, t, w, sb);
+        m.step_masked(FIXED_DT, &[], Some(r.remote_mask()), &sim, t, w, sb, None);
     }
     assert!(m.playing());
 
@@ -986,14 +986,14 @@ fn tr35_slam_phase_machine() {
         special: true,
         ..ActorInput::default()
     }];
-    m.step(FIXED_DT, &press, &sim, t, w, sb);
+    m.step(FIXED_DT, &press, &sim, t, w, sb, None);
     let mut frames = 0;
     while !m
         .events
         .iter()
         .any(|e| matches!(e, MatchEvent::SpecialSlam { .. }))
     {
-        m.step(FIXED_DT, &[], &sim, t, w, sb);
+        m.step(FIXED_DT, &[], &sim, t, w, sb, None);
         frames += 1;
         assert!(
             frames < 300,
@@ -1106,11 +1106,11 @@ fn tr35_storm_throw_and_glide() {
         special: true,
         ..ActorInput::default()
     }];
-    m.step(FIXED_DT, &press, &sim, t, w, sb);
+    m.step(FIXED_DT, &press, &sim, t, w, sb, None);
     assert_eq!(m.projectiles.bombs.len(), 1, "the press threw the bomb");
     let mut frames = 0;
     while m.specials.world.is_empty() {
-        m.step(FIXED_DT, &[], &sim, t, w, sb);
+        m.step(FIXED_DT, &[], &sim, t, w, sb, None);
         frames += 1;
         assert!(
             frames < 200,
@@ -1134,7 +1134,7 @@ fn tr35_storm_throw_and_glide() {
     );
     let (z0, x0) = (obj.pos.z, obj.pos.x);
     for _ in 0..10 {
-        m.step(FIXED_DT, &[], &sim, t, w, sb);
+        m.step(FIXED_DT, &[], &sim, t, w, sb, None);
     }
     let obj = &m.specials.world[0];
     let want = specials().storm.drift_speed * FIXED_DT * 10.0;
@@ -1387,8 +1387,8 @@ fn tr35_determinism_two_matches_same_seed() {
     let mut inputs = vec![ActorInput::default(); m1.actors.len()];
     let mut guard = 0;
     while !m1.playing() {
-        m1.step(FIXED_DT, &inputs, &sim, t, w, sb);
-        m2.step(FIXED_DT, &inputs, &sim, t, w, sb);
+        m1.step(FIXED_DT, &inputs, &sim, t, w, sb, None);
+        m2.step(FIXED_DT, &inputs, &sim, t, w, sb, None);
         guard += 1;
         assert!(guard < 1000, "the intro must end");
     }
@@ -1396,12 +1396,12 @@ fn tr35_determinism_two_matches_same_seed() {
     m1.actors[0].special = m1.actors[0].special_cost;
     m2.actors[0].special = m2.actors[0].special_cost;
     inputs[0].special = true;
-    m1.step(FIXED_DT, &inputs, &sim, t, w, sb);
-    m2.step(FIXED_DT, &inputs, &sim, t, w, sb);
+    m1.step(FIXED_DT, &inputs, &sim, t, w, sb, None);
+    m2.step(FIXED_DT, &inputs, &sim, t, w, sb, None);
     inputs[0].special = false;
     for _ in 0..300 {
-        m1.step(FIXED_DT, &inputs, &sim, t, w, sb);
-        m2.step(FIXED_DT, &inputs, &sim, t, w, sb);
+        m1.step(FIXED_DT, &inputs, &sim, t, w, sb, None);
+        m2.step(FIXED_DT, &inputs, &sim, t, w, sb, None);
     }
     assert_eq!(m1.events, m2.events, "the event buses must agree");
     assert!(
@@ -1432,7 +1432,7 @@ fn tr35_match(f: &Fix, seed: u64, team_size: usize) -> Match {
     let mut m = Match::with_roster(60.0, seed, &sim, t, &f.tuning.match_config, team_size);
     let mut guard = 0;
     while !m.playing() {
-        m.step(FIXED_DT, &[], &sim, t, w, sb);
+        m.step(FIXED_DT, &[], &sim, t, w, sb, None);
         guard += 1;
         assert!(guard < 1000, "the intro must end");
     }
@@ -1984,8 +1984,8 @@ fn tr35_b2_sonar_slow_and_ink_burn() {
         fire: true,
         ..ActorInput::default()
     }];
-    ma.step(FIXED_DT, &fire, &sim, t, w, sb);
-    mb.step(FIXED_DT, &fire, &sim, t, w, sb);
+    ma.step(FIXED_DT, &fire, &sim, t, w, sb, None);
+    mb.step(FIXED_DT, &fire, &sim, t, w, sb, None);
     let spent_a = 100.0 - ma.actors[0].ink;
     assert!(spent_a > 0.0, "the shooter paid ink on the press frame");
     assert!(

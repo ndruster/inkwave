@@ -40,10 +40,12 @@ use self::nav::BossNav;
 
 pub mod brain;
 pub mod hazards;
+pub mod mode;
 pub mod nav;
 
 pub use self::brain::BossBrain;
 pub use self::hazards::{MoveId, Threat};
+pub use self::mode::{BossMode, BossOutcome, squad_units};
 
 // JS src/boss/boss.js L496-497: `Math.round(x * 100) / 100` etc., in f64.
 #[inline]

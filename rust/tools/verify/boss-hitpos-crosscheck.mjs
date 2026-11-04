@@ -1,5 +1,5 @@
 // Task 42 batch A — independent evidence chain for `boss.hit[].pos` in
-// rust/assets/tuning.json (schema inkwave.tuning.v5).
+// rust/assets/tuning.json (schema inkwave.tuning.v6).
 //
 // extract-tuning.mjs derives hitPos through a static shortcut: the rest bone
 // chain is pure translation, so the socket world point collapses to the
@@ -38,7 +38,7 @@ function assertContains(src, needle, where) {
 const geoSrc = readFileSync(resolve(repoRoot, 'src/boss/bossModelGeo.js'), 'utf8');
 const modelSrc = readFileSync(resolve(repoRoot, 'src/boss/bossModel.js'), 'utf8');
 const tuning = JSON.parse(readFileSync(resolve(repoRoot, 'rust/assets/tuning.json'), 'utf8'));
-if (tuning.schema !== 'inkwave.tuning.v5') throw new Error(`tuning.json schema ${tuning.schema} != inkwave.tuning.v5`);
+if (tuning.schema !== 'inkwave.tuning.v6') throw new Error(`tuning.json schema ${tuning.schema} != inkwave.tuning.v6`);
 
 // The sockets table (src/boss/bossModelGeo.js L822-829) is local to
 // buildParts(); eval it against the REAL module exports (V3/cont/ARMS/HEAD/

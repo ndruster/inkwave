@@ -1,4 +1,4 @@
-# tuning.json — 字段模式（schema `inkwave.tuning.v5`）
+# tuning.json — 字段模式（schema `inkwave.tuning.v6`）
 
 由 `rust/tools/extract/extract-tuning.mjs` 从上游 `src/config.js` 提取（v3 起另含 `src/boss/*.js`
 的 boss 数据表，切源+eval 方式，不经 ESM import），**不要手改**。
@@ -17,13 +17,15 @@ v3→v4（Task 42 批次 A）：`boss.nav` 新增 `planWall` `planFloor` `stride
 `src/boss/*.js` glob 已覆盖之。
 v4→v5（Task 43 批次 A）：`boss.brain` 新增 `pref` 字段（JS `PREF`，brain 对各阶段"与目标保持
 的偏好距离"，见下）；其余各节数值不变。
+v5→v6（Task 44 批次 A）：新增顶层 `maps` 节（`MAPS` 8 项规则旗标，config.js L515-525 字面块
+切源 eval，见下）；其余各节数值不变。
 权威数值以本 JSON 为准（本文档只描述字段与语义，逐值锚定见 `inkwave_sim` 单测）。
 
 ## 顶层
 
 | 字段 | 含义 |
 | --- | --- |
-| `schema` | 模式标识 `inkwave.tuning.v5`，Rust 侧由单测 `schema_and_provenance` 精确断言 |
+| `schema` | 模式标识 `inkwave.tuning.v6`，Rust 侧由单测 `schema_and_provenance` 精确断言 |
 | `source.commit` / `source.path` | 数据出处（git commit 与 JS 文件），用于上游同步审查 |
 | `player` | `PLAYER`（config.js L21-90）：角色物理/手感全部常量，见下 |
 | `weaponOrder` | `WEAPON_ORDER`（L303）：12 武器出场顺序 |
@@ -37,6 +39,7 @@ v4→v5（Task 43 批次 A）：`boss.brain` 新增 `pref` 字段（JS `PREF`，
 | `match` | `MATCH`（L472-482）：涂地比赛参数 |
 | `teamPalettes` | `TEAM_PALETTES`（L8-14）：5 套队伍墨色（hex），a=Alpha，b=Bravo |
 | `difficulty` | `DIFFICULTY`（L503-508）：easy/normal/hard 三档 bot 参数，见下 |
+| `maps` | `MAPS`（L515-525）规则旗标（Task 44 批次 A，v6 新增）：8 项 `{id, onlineOnly, noBots, noBoss}`，见下 |
 | `boss` | HULLBREAKER boss 全数据表（Task 41，v3 新增）：`src/boss/*.js` 切源 eval，见下 |
 
 ## player（src/config.js `PLAYER`）
@@ -221,6 +224,23 @@ JSON 键为蛇形（`barrage_sticky` 等），Rust 侧显式 rename。
 | easy | Chill | 0.55 | 0.11 | 0.55 | 16 | 9 | 7 |
 | normal | Fresh | 0.32 | 0.06 | 0.8 | 21 | 13 | 10 |
 | hard | Fierce | 0.17 | 0.03 | 0.95 | 26 | 18 | 14 |
+
+## maps（src/config.js `MAPS` L515-525 规则旗标，Task 44 批次 A 新增）
+
+数组，顺序即 JS `MAPS` 数组序（8 项）；每项仅含模拟侧需要的规则旗标
+`{id, onlineOnly, noBots, noBoss}`（缺省=false，对应 JS `!!m.flag` 读法 L532-534）。
+展示字段 `name/blurb/theme/times` 不进入产物（theme 归 Task 48）。旗标语义（config.js L527-530）：
+
+| 旗标 | 含义 |
+| --- | --- |
+| `onlineOnly` | 仅在线大厅可选，离线 Play 流程永不出现 |
+| `noBots` | 纯人类局：禁 bot 补位、开局需 2+ 人且两队各一、中途离场不转 bot |
+| `noBoss` | 永不作为 Boss Battle 场地（boss 房会换图） |
+
+仅 `cargo`（L524）三旗标全真，其余 7 图全假；`tidewater` 首位（`bossFallbackMap` 兜底即它）。
+Rust 侧纯函数 `map_by_id/map_no_bots/map_boss_ok/map_offline_ok/boss_fallback_map` ≡
+config.js L531-537，置于 `inkwave_sim::tuning`；逐值锚定见单测 `maps_flags_values`、
+`map_flag_functions`。
 
 ## boss（Task 41 新增，src/boss/*.js 切源 eval）
 

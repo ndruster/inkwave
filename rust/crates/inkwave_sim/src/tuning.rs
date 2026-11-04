@@ -1,10 +1,11 @@
 //! Gameplay tuning constants, extracted from upstream `src/config.js` into
-//! `assets/tuning.json` (schema `inkwave.tuning.v5`) by the Task 3 pipeline,
+//! `assets/tuning.json` (schema `inkwave.tuning.v6`) by the Task 3 pipeline,
 //! extended to the full M3 content set by Task 28 (12 weapons / 15 subs /
 //! 19 specials / zones / three difficulties), with the HULLBREAKER boss
 //! data tables by Task 41 (slice+eval of `src/boss/*.js`) and the boss hit
 //! sphere rest positions + nav plan constants by Task 42 batch A (v3 → v4),
-//! plus the brain `pref` table by Task 43 batch A (v4 → v5).
+//! the brain `pref` table by Task 43 batch A (v4 → v5), plus the MAPS stage
+//! rule flags by Task 44 batch A (v5 → v6).
 //!
 //! Units: metres / seconds / m·s⁻¹ / m·s⁻²; HP and ink are points. Weapon
 //! spread / arc / fan / leap-angle fields are degrees; every other angle is
@@ -45,6 +46,10 @@ pub struct Tuning {
     #[serde(rename = "teamPalettes")]
     pub team_palettes: Vec<TeamPalette>,
     pub difficulty: DifficultySet,
+    /// `MAPS` (config.js L515-525) — the eight stages with their rule flags
+    /// (Task 44 batch A, schema v6), in JS array order. The display fields
+    /// (`name` / `blurb` / `theme` / `times`) stay upstream (theme is Task 48).
+    pub maps: Vec<MapFlags>,
     /// HULLBREAKER boss data tables (Task 41, extended by Task 42 batch A
     /// and Task 43 batch A, schema v5): `BOSS`, `BOSS_MODE`, `MOVES` /
     /// `PACE` / `HZ` / … , `HIT` (with rest `pos`), brain + nav arrays
@@ -60,6 +65,20 @@ pub struct Source {
     pub commit: String,
     /// Source JS file (relative to repo root).
     pub path: String,
+}
+
+/// One `MAPS` entry's rule flags (config.js L515-530, Task 44 batch A): the
+/// stage id plus the three lobby-enforced booleans (absent in JS ⇒ false).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MapFlags {
+    pub id: String,
+    /// `onlineOnly` (config.js L527): online lobby only, never offline Play.
+    pub online_only: bool,
+    /// `noBots` (config.js L528): humans-only stage.
+    pub no_bots: bool,
+    /// `noBoss` (config.js L530): never a Boss Battle stage.
+    pub no_boss: bool,
 }
 
 /// All of upstream PLAYER: physics + feel constants consumed by the Task 5
@@ -1597,6 +1616,47 @@ pub struct BossHitSocket {
     pub pos: [f32; 3],
 }
 
+/// `mapById` (config.js L531): the `MAPS` entry with this id, or None.
+#[must_use]
+pub fn map_by_id<'a>(maps: &'a [MapFlags], id: &str) -> Option<&'a MapFlags> {
+    maps.iter().find(|m| m.id == id)
+}
+
+/// `mapNoBots` (config.js L532): `!!mapById(id)?.noBots` — unknown id ⇒ false.
+#[must_use]
+pub fn map_no_bots(maps: &[MapFlags], id: &str) -> bool {
+    map_by_id(maps, id).is_some_and(|m| m.no_bots)
+}
+
+/// `mapBossOk` (config.js L533): the stage exists and is not `noBoss`.
+#[must_use]
+pub fn map_boss_ok(maps: &[MapFlags], id: &str) -> bool {
+    map_by_id(maps, id).is_some_and(|m| !m.no_boss)
+}
+
+/// `mapOfflineOk` (config.js L534): the stage exists and is not `onlineOnly`.
+#[must_use]
+pub fn map_offline_ok(maps: &[MapFlags], id: &str) -> bool {
+    map_by_id(maps, id).is_some_and(|m| !m.online_only)
+}
+
+/// `bossFallbackMap` (config.js L537): a boss-eligible stage to fall back to —
+/// `prefer` itself when it qualifies, else the first stage that is neither
+/// `noBoss` nor `onlineOnly`, else the first `MAPS` entry (JS `|| MAPS[0]`).
+/// An empty table has no JS counterpart; it yields `""` (never happens with
+/// the embedded tuning).
+#[must_use]
+pub fn boss_fallback_map(maps: &[MapFlags], prefer: &str) -> String {
+    if map_boss_ok(maps, prefer) {
+        return prefer.to_string();
+    }
+    maps.iter()
+        .find(|m| !m.no_boss && !m.online_only)
+        .or_else(|| maps.first())
+        .map(|m| m.id.clone())
+        .unwrap_or_default()
+}
+
 /// Parse a tuning document from JSON.
 pub fn tuning_from_str(s: &str) -> Result<Tuning, serde_json::Error> {
     serde_json::from_str(s)
@@ -1685,7 +1745,7 @@ mod tests {
     #[test]
     fn schema_and_provenance() {
         let t = tuning();
-        assert_eq!(t.schema, "inkwave.tuning.v5");
+        assert_eq!(t.schema, "inkwave.tuning.v6");
         assert_eq!(t.source.path, "src/config.js + src/boss/*.js");
         assert_eq!(t.source.commit.len(), 40, "commit must be a full sha");
     }
@@ -2858,5 +2918,69 @@ mod tests {
                 );
             }
         }
+    }
+
+    // Task 44 batch A: MAPS stage rule flags (config.js L515-525) — eight
+    // stages in JS array order, tidewater first; only cargo (L524) carries the
+    // three flags, every other stage is plain.
+    #[test]
+    fn maps_flags_values() {
+        let maps = &tuning().maps;
+        assert_eq!(maps.len(), 8); // JS config.js L515-525
+        let ids: Vec<&str> = maps.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "tidewater",
+                "kelpline",
+                "halyard",
+                "saltpan",
+                "crossmarket",
+                "lockgate",
+                "terraces",
+                "cargo",
+            ]
+        );
+        assert_eq!(maps[0].id, "tidewater"); // JS config.js L516 — MAPS[0]
+        for m in maps {
+            // JS config.js L524: cargo is onlineOnly + noBots + noBoss; the
+            // other seven entries set none of the flags (defaults false).
+            let cargo = m.id == "cargo";
+            assert_eq!(m.online_only, cargo, "{}.onlineOnly", m.id);
+            assert_eq!(m.no_bots, cargo, "{}.noBots", m.id);
+            assert_eq!(m.no_boss, cargo, "{}.noBoss", m.id);
+        }
+    }
+
+    // Task 44 batch A: the pure flag helpers, pinned to the config.js
+    // L531-537 semantics on the embedded table.
+    #[test]
+    fn map_flag_functions() {
+        let maps = &tuning().maps;
+        // mapById (config.js L531)
+        assert_eq!(
+            map_by_id(maps, "cargo").map(|m| m.id.as_str()),
+            Some("cargo")
+        );
+        assert!(map_by_id(maps, "nope").is_none());
+        // mapNoBots (config.js L532)
+        assert!(map_no_bots(maps, "cargo"));
+        assert!(!map_no_bots(maps, "tidewater"));
+        assert!(!map_no_bots(maps, "nope"));
+        // mapBossOk (config.js L533)
+        assert!(map_boss_ok(maps, "tidewater"));
+        assert!(map_boss_ok(maps, "terraces"));
+        assert!(!map_boss_ok(maps, "cargo"));
+        assert!(!map_boss_ok(maps, "nope"));
+        // mapOfflineOk (config.js L534)
+        assert!(map_offline_ok(maps, "kelpline"));
+        assert!(!map_offline_ok(maps, "cargo"));
+        assert!(!map_offline_ok(maps, "nope"));
+        // bossFallbackMap (config.js L537): a qualifying prefer wins, else the
+        // first !noBoss && !onlineOnly stage (tidewater), incl. unknown ids.
+        assert_eq!(boss_fallback_map(maps, "kelpline"), "kelpline");
+        assert_eq!(boss_fallback_map(maps, "tidewater"), "tidewater");
+        assert_eq!(boss_fallback_map(maps, "cargo"), "tidewater");
+        assert_eq!(boss_fallback_map(maps, "nope"), "tidewater");
     }
 }

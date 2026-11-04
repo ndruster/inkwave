@@ -64,6 +64,7 @@ fn main() {
                     mate_minds: &mate_minds,
                     zones: None,
                     zctl: None,
+                    boss: None,
                 };
                 inputs[i] = bots[i].step(FIXED_DT, &mut m.actors[i], &ctx);
             }
@@ -79,6 +80,7 @@ fn main() {
             &tuning.player,
             &tuning.weapons,
             &tuning.subs,
+            None,
         );
         steps += 1;
 

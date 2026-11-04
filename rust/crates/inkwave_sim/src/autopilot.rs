@@ -80,6 +80,18 @@ pub struct Report {
     pub stalls: u32,
     /// Whether the run settled before the step budget expired.
     pub settled: bool,
+    /// Boss Battle settlement when the run drove a Boss Battle (Task 44;
+    /// `None` for turf / zones runs).
+    #[serde(default)]
+    pub boss: Option<crate::boss::BossOutcome>,
+    /// Aggregated boss damage dealt by all attackers (TR-44.1 reconciliation:
+    /// `boss_dmg + boss.hp ≈ max_hp` on lose, `boss_dmg ≈ max_hp` on win —
+    /// tolerance 0.51 for the `Math.round` on `hp`).
+    #[serde(default)]
+    pub boss_dmg: f32,
+    /// Aggregated weak hits on the boss (TR-44.1 reconciliation).
+    #[serde(default)]
+    pub weak_hits: u32,
 }
 
 /// Run one full match. `duration` is the match clock; the intro/finish
@@ -150,6 +162,7 @@ pub fn run(
                         mate_minds: &mate_minds,
                         zones: zone_plan.as_ref(),
                         zctl: m.zones.as_ref(),
+                        boss: None,
                     };
                     inputs[i] = bots[i].step(FIXED_DT, &mut m.actors[i], &ctx);
                 }
@@ -173,6 +186,7 @@ pub fn run(
             &tuning.player,
             &tuning.weapons,
             &tuning.subs,
+            None,
         );
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -218,6 +232,209 @@ pub fn run(
         max_stall,
         stalls,
         settled,
+        boss: None,
+        boss_dmg: 0.0,
+        weak_hits: 0,
+    }
+}
+
+/// Driver knobs for [`run_boss`] (Task 44 batch B smoke driver — the JS
+/// equivalent is the `startMatch({mode:'boss', …})` opts, match.js L19-21).
+#[derive(Debug, Clone, Copy)]
+pub struct BossRunOpts<'d> {
+    /// Match clock; `<= 0` takes `BOSS_MODE.duration` (JS match.js L21).
+    pub duration: f32,
+    /// Difficulty string driving the HP / damage tables (JS
+    /// `opts.difficulty`, bossMode.js L22-23; `""` = `'normal'`).
+    pub difficulty: &'d str,
+    /// Test hook for the win branch: once the elapsed clock reaches this,
+    /// inject a lethal hit on the boss (JS routes it through the weapon hit
+    /// path; the sim driver applies it directly). `None` = the squad never
+    /// lands the kill.
+    pub kill_at: Option<f32>,
+}
+
+/// Run one full Boss Battle with bot brains (the offline analogue of
+/// `startMatch({mode:'boss'})`, match.js L55-100 / bossMode.js). The match
+/// carries the [`crate::tuning::BossModeRules`] slice; the [`crate::boss::BossMode`]
+/// wrapper is owned here in the driver (Task 44 §2) and handed to
+/// [`Match::step`] every frame, with the bots targeting it through
+/// [`BotCtx::boss`].
+#[must_use]
+pub fn run_boss(
+    seed: u64,
+    layout: &StageLayout,
+    collision: &CollisionWorld,
+    tuning: &Tuning,
+    opts: BossRunOpts<'_>,
+) -> Report {
+    let sim = SimWorld::new(collision, layout);
+    let nav = NavGraph::new(collision, layout, &tuning.player);
+    let bnav = crate::boss::nav::BossNav::new(&sim, &tuning.boss.nav);
+    let rules = tuning.boss.mode;
+    let squad = rules.squad.max(1) as usize;
+    // JS bossMode.js L21: `units = squadUnits(team-0 actors)` — slot 0 counts
+    // as the local human, the rest as bots.
+    let units = crate::boss::squad_units(1, squad - 1, &tuning.boss.squad_units);
+    let duration = if opts.duration <= 0.0 {
+        rules.duration as f32
+    } else {
+        opts.duration
+    };
+    let mut m = Match::with_roster_mode(
+        duration,
+        seed,
+        &sim,
+        &tuning.player,
+        &tuning.match_config,
+        squad,
+        crate::match_::MatchMode::Boss,
+        None,
+        None,
+        Some(rules),
+    );
+    // JS L23: `sim: !match.follower` — the offline driver is always the host.
+    let mut bm = crate::boss::BossMode::new(
+        &sim,
+        &bnav,
+        &tuning.boss,
+        units,
+        opts.difficulty,
+        true,
+        seed,
+    );
+    let n = m.actors.len();
+    let mut bots: Vec<Bot> = m
+        .actors
+        .iter()
+        .enumerate()
+        .map(|(i, a)| Bot::new(a, &tuning.difficulty.easy, seed, i))
+        .collect();
+    let mut inputs = vec![ActorInput::default(); n];
+    let mut mate_goals = vec![None; n];
+    #[cfg(not(target_arch = "wasm32"))]
+    let mut ft_samples: Vec<f64> = Vec::new();
+
+    // Budget: boss intro + clock + the longer of the two finish windows.
+    let max_steps =
+        ((rules.intro + duration + rules.finish_win.max(rules.finish_lose)) * 60.0) as usize + 60;
+    let mut settled = false;
+    for _ in 0..max_steps {
+        #[cfg(not(target_arch = "wasm32"))]
+        let t0 = std::time::Instant::now();
+
+        if m.phase == Phase::Active {
+            let snap = m.actors.clone();
+            for (i, b) in bots.iter().enumerate() {
+                mate_goals[i] = b.goal_node();
+            }
+            let mate_minds = bots.iter().map(|b| Some(b.mind())).collect::<Vec<_>>();
+            for i in 0..n {
+                let ctx = BotCtx {
+                    actors: &snap,
+                    nav: &nav,
+                    paint: &m.paint,
+                    world: &sim,
+                    t: &tuning.player,
+                    weapons: &tuning.weapons,
+                    weapon_range: &tuning.weapon_range,
+                    kinds: &m.kinds,
+                    runners: &m.runners,
+                    mate_goals: &mate_goals,
+                    subs: &m.subs,
+                    mate_minds: &mate_minds,
+                    zones: None,
+                    zctl: None,
+                    // JS `G.boss` (bots.js L345): the brains fight the boss.
+                    boss: Some(&bm.boss),
+                };
+                inputs[i] = bots[i].step(FIXED_DT, &mut m.actors[i], &ctx);
+            }
+        } else {
+            // JS `BotBrain.update` L342: brains early-exit outside `playing`.
+            for i in 0..n {
+                inputs[i] = bots[i].hold(&m.actors[i]);
+            }
+        }
+
+        let ka = opts.kill_at.unwrap_or(f32::INFINITY);
+        if m.phase == Phase::Active && !bm.boss.dead && m.elapsed() >= ka {
+            // The kill rides the regular damage path so `killer` /
+            // `boss_kill` bookkeeping matches JS `onDefeat`.
+            bm.boss.state = m.phase;
+            let hp = bm.boss.hp;
+            bm.boss.apply_damage(
+                Some(crate::boss::BossAttacker {
+                    nid: 0,
+                    is_remote: false,
+                    is_local: true,
+                    has_nid: true,
+                }),
+                hp,
+                false,
+                None,
+            );
+        }
+        m.step(
+            FIXED_DT,
+            &inputs,
+            &sim,
+            &tuning.player,
+            &tuning.weapons,
+            &tuning.subs,
+            Some(&mut bm),
+        );
+
+        #[cfg(not(target_arch = "wasm32"))]
+        ft_samples.push(t0.elapsed().as_secs_f64() * 1e3);
+
+        if m.phase == Phase::End {
+            settled = true;
+            break;
+        }
+    }
+
+    let cov = m.paint.coverage();
+    let area = m.paint.turf_area;
+    let bots_rep: Vec<BotReport> = bots
+        .iter()
+        .map(|b| BotReport {
+            team: b.team,
+            slot: b.slot,
+            stats: b.stats,
+        })
+        .collect();
+    let max_stall = bots
+        .iter()
+        .map(|b| b.stats.max_stall)
+        .fold(0.0f32, f32::max);
+    let stalls: u32 = bots.iter().map(|b| b.stats.stalls).sum();
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let frame_times = Some(summarize(&ft_samples));
+    #[cfg(target_arch = "wasm32")]
+    let frame_times = None;
+
+    let boss = m.result.as_ref().and_then(|r| r.boss.clone());
+    // TR-44.1 reconciliation: Σ stats_by_nid.{boss_dmg,weak_hits}.
+    let boss_dmg: f32 = bm.boss.stats_by_nid.values().map(|s| s.boss_dmg).sum();
+    let weak_hits: u32 = bm.boss.stats_by_nid.values().map(|s| s.weak_hits).sum();
+    Report {
+        seed,
+        duration,
+        map: layout.stage.id.clone(),
+        autopilot: true,
+        result: m.result,
+        kills: m.kills.len() as u32,
+        turf_m2: [cov[0] * area, cov[1] * area],
+        bots: bots_rep,
+        frame_times,
+        max_stall,
+        stalls,
+        settled,
+        boss,
+        boss_dmg,
+        weak_hits,
     }
 }
 

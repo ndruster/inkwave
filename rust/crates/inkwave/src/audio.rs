@@ -612,6 +612,7 @@ mod tests {
             points: [0.0, 0.0],
             elapsed: 90.0,
             zones: None,
+            boss: None,
         };
         let lose = MatchResult {
             winner: 1,

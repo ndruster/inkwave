@@ -133,3 +133,92 @@ fn idle_control_run_makes_no_progress() {
     );
     assert_eq!(r.turf_m2, [0.0, 0.0]);
 }
+
+// ---------------------------------------------------- Task 44 batch B
+/// TR-44.1 (smoke): one full Boss Battle through the driver.
+fn boss_run(seed: u64, duration: f32, kill_at: Option<f32>) -> Report {
+    let e = env();
+    super::run_boss(
+        seed,
+        &e.layout,
+        &e.collision,
+        &e.tuning,
+        BossRunOpts {
+            duration,
+            difficulty: "normal",
+            kill_at,
+        },
+    )
+}
+
+#[test]
+fn run_boss_lose_branch() {
+    // Clock runs out with the boss alive: finish 3.2 s, winner 1.
+    let r = boss_run(0xB05_1234, 40.0, None);
+    assert!(r.settled, "the boss run must reach End inside the budget");
+    let res = r.result.clone().expect("boss match settles with a result");
+    let b = res
+        .boss
+        .clone()
+        .expect("boss outcome folded into the result");
+    assert_eq!(b.name, "HULLBREAKER");
+    assert!(!b.win);
+    assert_eq!(res.winner, 1, "survived clock = squad loses");
+    assert!(b.hp > 0.0, "boss survived: hp {}", b.hp);
+    assert_eq!(b.max_hp, 93_600.0, "round(18000 × 5.2 × 1)");
+    assert_eq!(res.points, [0.0, 0.0], "JS boss result has no points line");
+    assert!(r.boss.as_ref() == Some(&b));
+    // TR-44.1 reconciliation: Σ stats_by_nid boss damage + surviving HP
+    // accounts for the full pool (0.51 tolerance = the result's `Math.round`).
+    assert!(
+        (r.boss_dmg + b.hp - b.max_hp).abs() <= 0.51,
+        "bossDmg reconciliation: dmg {} + hp {} vs maxHp {}",
+        r.boss_dmg,
+        b.hp,
+        b.max_hp
+    );
+    // TR-44.1 determinism: same seed twice → byte-identical settlement.
+    let r2 = boss_run(0xB05_1234, 40.0, None);
+    assert_eq!(
+        serde_json::to_string(&r.result).unwrap(),
+        serde_json::to_string(&r2.result).unwrap()
+    );
+    assert_eq!(r.boss_dmg, r2.boss_dmg);
+    assert_eq!(r.weak_hits, r2.weak_hits);
+    println!(
+        "TR-44.1 lose: hp={:.0}/{:.0} t={:.1}",
+        b.hp, b.max_hp, b.time
+    );
+}
+
+#[test]
+fn run_boss_win_branch() {
+    // Lethal hit injected at elapsed 20 s: finish 5.2 s, winner 0.
+    let r = boss_run(0xB05_9999, 40.0, Some(20.0));
+    assert!(r.settled);
+    let res = r.result.clone().expect("boss match settles with a result");
+    let b = res
+        .boss
+        .clone()
+        .expect("boss outcome folded into the result");
+    assert!(b.win, "the injected kill must land");
+    assert_eq!(res.winner, 0);
+    assert_eq!(b.hp, 0.0);
+    assert_eq!(b.max_hp, 93_600.0);
+    // JS killT = duration - time at the kill ≈ 40 - 20 = 20.0 (round1).
+    assert!(
+        (b.time - 20.0).abs() < 0.1,
+        "kill clock should be ~20.0: {}",
+        b.time
+    );
+    // TR-44.1 reconciliation: the boss died, so every HP point was accounted
+    // — Σ stats_by_nid boss_dmg equals the full pool (the injected lethal
+    // routes through `apply_damage`, so it lands in the same table).
+    assert!(
+        (r.boss_dmg - b.max_hp).abs() <= 0.51,
+        "win-branch dmg reconciliation: {} vs {}",
+        r.boss_dmg,
+        b.max_hp
+    );
+    println!("TR-44.1 win: t={:.1} phase={}", b.time, b.phase);
+}

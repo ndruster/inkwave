@@ -1133,7 +1133,7 @@ mod tests {
         let mut inputs = vec![crate::actor::ActorInput::default(); 4];
         for _ in 0..340 {
             inputs[0].fire = m.playing();
-            m.step(crate::actor::FIXED_DT, &inputs, &sim, t, w, sb);
+            m.step(crate::actor::FIXED_DT, &inputs, &sim, t, w, sb, None);
         }
         let mut firing_seen = 0;
         for (i, (a, wr)) in m.actors.iter().zip(&m.runners).enumerate() {

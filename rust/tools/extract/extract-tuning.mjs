@@ -2,16 +2,19 @@
 // extended by Task 41 with the HULLBREAKER boss data tables (schema v3, TR-41.1),
 // extended by Task 42 batch A with the boss nav plan constants and the
 // boss.hit rest-model-space sphere positions (schema v4),
-// extended by Task 43 batch A with the brain PREF table (schema v5).
+// extended by Task 43 batch A with the brain PREF table (schema v5),
+// extended by Task 44 batch A with the MAPS stage rule flags (schema v6).
 //
 // Imports the upstream tuning module verbatim (src/config.js — never modified,
 // AC-1/TR-2.4) and emits the full gameplay tuning set into
-// rust/assets/tuning.json (schema inkwave.tuning.v5):
+// rust/assets/tuning.json (schema inkwave.tuning.v6):
 //   PLAYER, WEAPONS (the 12 roster weapons per WEAPON_ORDER — the retired
 //   dualies/slosher/splatling defs are NOT emitted, TR-28.2), WEAPON_ORDER,
 //   weaponRange() evaluated per weapon, SUBS (15, per SUB_ORDER),
 //   SPECIALS (19, per SPECIAL_ORDER), ZONES, MATCH, TEAM_PALETTES,
-//   DIFFICULTY (easy/normal/hard), BOSS (the Task 41 boss section).
+//   DIFFICULTY (easy/normal/hard), BOSS (the Task 41 boss section),
+//   MAPS rule flags (the Task 44 section — id + onlineOnly/noBots/noBoss;
+//   the display fields name/blurb/theme/times stay in JS, theme is Task 48).
 // The retired M1 `spritzer` top-level alias was removed in Task 29 — the
 // consumers read `weapons.shooter` directly.
 //
@@ -267,8 +270,28 @@ const boss = {
   }),
 };
 
+// --- Task 44 batch A: MAPS stage rule flags (config.js L515-525) ------------
+// config.js is imported above, but the MAPS array is sliced + eval'd like the
+// boss tables: the artifact must pin the exact literal block, so an upstream
+// edit of the flags (or a rename of the stage ids) fails the pipeline through
+// the assertContains anchors instead of flowing through silently.
+const configJsSrc = readFileSync(resolve(repoRoot, 'src/config.js'), 'utf8');
+const srcMAPS = sliceBlock(configJsSrc, 'config.js', 'MAPS', 'export const MAPS = [', '];');
+assertContains(srcMAPS, "{ id: 'tidewater', name: 'Tidewater Plaza',", 'config.js MAPS');
+assertContains(srcMAPS, "{ id: 'cargo', name: 'Cargo Terminal',", 'config.js MAPS');
+assertContains(srcMAPS, 'onlineOnly: true, noBots: true, noBoss: true', 'config.js MAPS');
+const MAPS = new Function(`${deExport(srcMAPS)}\nreturn MAPS;`)();
+// Only the rule flags (config.js L527-530) reach the artifact; missing flags
+// default to false, matching the JS `!!m.flag` reads (L532-534).
+const maps = MAPS.map((m) => ({
+  id: m.id,
+  onlineOnly: !!m.onlineOnly,
+  noBots: !!m.noBots,
+  noBoss: !!m.noBoss,
+}));
+
 const tuning = {
-  schema: 'inkwave.tuning.v5',
+  schema: 'inkwave.tuning.v6',
   source: { commit, path: 'src/config.js + src/boss/*.js' },
   player: PLAYER,
   weaponOrder: WEAPON_ORDER,
@@ -282,6 +305,7 @@ const tuning = {
   match: MATCH,
   teamPalettes: TEAM_PALETTES,
   difficulty: DIFFICULTY,
+  maps,
   boss,
 };
 
@@ -289,5 +313,5 @@ mkdirSync(dirname(outPath), { recursive: true });
 writeFileSync(outPath, stableStringify(tuning));
 console.log(
   `tuning.json <- src/config.js + src/boss/*.js @ ${commit} ` +
-  `(${WEAPON_ORDER.length} weapons, ${SUB_ORDER.length} subs, ${SPECIAL_ORDER.length} specials, boss)`,
+  `(${WEAPON_ORDER.length} weapons, ${SUB_ORDER.length} subs, ${SPECIAL_ORDER.length} specials, ${maps.length} maps, boss)`,
 );

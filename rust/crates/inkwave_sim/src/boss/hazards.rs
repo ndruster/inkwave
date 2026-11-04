@@ -690,6 +690,17 @@ impl<'a> Boss<'a> {
         if let Some(reach) = &self.hz_cache(t0).reach {
             return reach.clone(); // JS L204
         }
+        let out = self.hz_reach_calc(x, z, r);
+        self.hz_cache(t0).reach = Some(out.clone()); // JS L212
+        out
+    }
+
+    /// The pure probe loop of [`Self::hz_reach`] (JS bossHazards.js L206-210),
+    /// without the per-move cache — read-only so the bot threat read
+    /// ([`Self::threat`], which bots hold as `&Boss`) can use it. Values are
+    /// identical; only the caching differs (perf-only deviation, D-T43-9
+    /// precedent).
+    fn hz_reach_calc(&self, x: f64, z: f64, r: f64) -> Vec<f32> {
         let n = self.tb.reach_n as usize; // JS L36 `REACH_N`
         let mut out = vec![0.0f32; n];
         for (k, o) in out.iter_mut().enumerate() {
@@ -706,19 +717,32 @@ impl<'a> Boss<'a> {
             }
             *o = rr.min(r) as f32; // JS L210 (Float32Array store)
         }
-        self.hz_cache(t0).reach = Some(out.clone()); // JS L212
         out
     }
 
     /// JS `reachAt(m, x, z, px, pz, R)` (bossHazards.js L214-217): the reach
     /// along the heading from `(x, z)` to `(px, pz)`.
     pub fn hz_reach_at(&mut self, m: &JVal, x: f64, z: f64, px: f64, pz: f64, r: f64) -> f32 {
+        let k = self.reach_bucket(x, z, px, pz);
+        self.hz_reach(m, x, z, r)[k] // JS L216
+    }
+
+    /// Read-only [`Self::hz_reach_at`] (JS bossHazards.js L214-217): same
+    /// heading bucket, but recomputes the reach through
+    /// [`Self::hz_reach_calc`] instead of the per-move cache, so it works on
+    /// `&self`. Used by [`Self::threat`]; values identical.
+    fn hz_reach_at_ro(&self, x: f64, z: f64, px: f64, pz: f64, r: f64) -> f32 {
+        let k = self.reach_bucket(x, z, px, pz);
+        self.hz_reach_calc(x, z, r)[k] // JS L216
+    }
+
+    /// The heading-bucket index of JS L215: `floor(atan2(px-x, pz-z) / TAU * N)`.
+    fn reach_bucket(&self, x: f64, z: f64, px: f64, pz: f64) -> usize {
         let n = self.tb.reach_n as usize;
         // JS L215.
         let a = (px - x).atan2(pz - z);
         let a = if a < 0.0 { a + TAU } else { a };
-        let k = (a / TAU * n as f64).floor() as usize % n;
-        self.hz_reach(m, x, z, r)[k] // JS L216
+        (a / TAU * n as f64).floor() as usize % n
     }
 
     /// JS `beamLen(m, ang)` (bossHazards.js L220-230): where the sweep beam
@@ -931,7 +955,12 @@ impl<'a> Boss<'a> {
 
     /// JS `threat(x, y, z, horizon = 1.2)` (bossHazards.js L294-349): what
     /// bots read to step out of circles, hop rings and take cover.
-    pub fn threat(&mut self, x: f64, y: f64, z: f64, horizon: f64) -> Threat {
+    ///
+    /// Takes `&self` (the JS is a pure read of the move records): the bot
+    /// brain holds the boss immutably through [`crate::bot::BotCtx::boss`].
+    /// The slam-ring reach probe therefore recomputes without the per-move
+    /// cache ([`Self::hz_reach_at_ro`]) — perf-only, values identical.
+    pub fn threat(&self, x: f64, y: f64, z: f64, horizon: f64) -> Threat {
         let mut out = Threat::default(); // JS L295-296
         let bt = f64::from(self.bt); // JS L295
         // JS L302.
@@ -965,7 +994,7 @@ impl<'a> Boss<'a> {
                             f64::from(hz.ring_r0) + f64::from(hz.ring_speed) * (u - (tele + delay));
                         let t_in = (d - f64::from(hz.ring_w) - r) / f64::from(hz.ring_speed);
                         // JS L312.
-                        if d > f64::from(self.hz_reach_at(m, px, pz, x, z, f64::from(hz.ring_max)))
+                        if d > f64::from(self.hz_reach_at_ro(px, pz, x, z, f64::from(hz.ring_max)))
                             + 0.3
                             || (y - py).abs() > 0.8
                         {

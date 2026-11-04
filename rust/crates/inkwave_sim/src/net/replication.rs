@@ -1747,6 +1747,7 @@ impl Replication {
                 overtime: z.overtime,
                 log: z.log.clone(),
             }),
+            boss: None,
         });
         m.set_phase(Phase::End);
     }
@@ -1966,6 +1967,7 @@ impl Replication {
                     mate_minds: &mate_minds,
                     zones: zone_plan.as_ref(),
                     zctl: m.zones.as_ref(),
+                    boss: None,
                 };
                 inputs[i] = b.step(FIXED_DT, &mut m.actors[i], &ctx);
             } else {
@@ -2196,8 +2198,8 @@ mod tests {
 
         // Run both to Active.
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb, None);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
         }
         assert_eq!(mh.phase, Phase::Active);
 
@@ -2208,7 +2210,16 @@ mod tests {
         inputs[0].move_dir = vec3(0.0, 0.0, 1.0);
         inputs[1].move_dir = vec3(1.0, 0.0, 0.0);
         for _ in 0..30 {
-            mg.step_masked(FIXED_DT, &inputs, Some(rg.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(
+                FIXED_DT,
+                &inputs,
+                Some(rg.remote_mask()),
+                &sim,
+                t,
+                w,
+                sb,
+                None,
+            );
         }
         assert_eq!(
             mg.actors[0].pos, pinned,
@@ -2296,8 +2307,8 @@ mod tests {
         // Both to Active, then pin the victim 3 m down the shooter's aim
         // line (team0 faces +Z from its pad).
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb, None);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
         }
         assert_eq!(mh.phase, Phase::Active);
         let pad0 = sim.spawn_pads[0];
@@ -2324,7 +2335,16 @@ mod tests {
             mh.actors[0].pos = pad0;
             mh.actors[0].aim_yaw = 0.0;
             mh.actors[0].aim_pitch = 0.0;
-            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(
+                FIXED_DT,
+                &inputs,
+                Some(rh.remote_mask()),
+                &sim,
+                t,
+                w,
+                sb,
+                None,
+            );
             let hit = mh.events.iter().find_map(|e| match e {
                 MatchEvent::HitSend { damage, victim, .. } => Some((*victim, *damage)),
                 _ => None,
@@ -2371,8 +2391,17 @@ mod tests {
                 mh.actors[0].aim_yaw = 0.0;
                 mh.actors[0].aim_pitch = 0.0;
             }
-            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(
+                FIXED_DT,
+                &inputs,
+                Some(rh.remote_mask()),
+                &sim,
+                t,
+                w,
+                sb,
+                None,
+            );
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
             let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
             let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             trh.advance(16.0);
@@ -2399,8 +2428,8 @@ mod tests {
         );
         let mut followed = false;
         for _ in 0..120 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb, None);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
             let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
             let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             trh.advance(16.0);
@@ -2448,7 +2477,16 @@ mod tests {
                 &f.tuning.weapon_range,
                 &mut inputs,
             );
-            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(
+                FIXED_DT,
+                &inputs,
+                Some(rh.remote_mask()),
+                &sim,
+                t,
+                w,
+                sb,
+                None,
+            );
         }
         // The leave: the host stays host, so `host_changed = false`.
         rh.on_leave(g, false, &mut mh, &f.tuning.difficulty.easy, 5, &sim, t);
@@ -2473,7 +2511,16 @@ mod tests {
                 &f.tuning.weapon_range,
                 &mut inputs,
             );
-            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(
+                FIXED_DT,
+                &inputs,
+                Some(rh.remote_mask()),
+                &sim,
+                t,
+                w,
+                sb,
+                None,
+            );
         }
         assert_ne!(mh.actors[1].pos, before, "the adopted bot lives again");
     }
@@ -2515,10 +2562,10 @@ mod tests {
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
             let mut ih = vec![ActorInput::default(); 3];
             rh.drive_bots(&mut mh, &nav, &sim, t, w, &f.tuning.weapon_range, &mut ih);
-            mh.step_masked(FIXED_DT, &ih, Some(rh.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(FIXED_DT, &ih, Some(rh.remote_mask()), &sim, t, w, sb, None);
             let mut ig = vec![ActorInput::default(); 3];
             ig[1].move_dir = vec3(0.0, 0.0, -1.0);
-            mg.step_masked(FIXED_DT, &ig, Some(rg.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &ig, Some(rg.remote_mask()), &sim, t, w, sb, None);
             let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
             let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             trh.advance(16.0);
@@ -2569,7 +2616,7 @@ mod tests {
         for _ in 0..max {
             let mut ig = vec![ActorInput::default(); 3];
             rg.drive_bots(&mut mg, &nav, &sim, t, w, &f.tuning.weapon_range, &mut ig);
-            mg.step_masked(FIXED_DT, &ig, Some(rg.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &ig, Some(rg.remote_mask()), &sim, t, w, sb, None);
             let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             drain_msgs(&mut trg);
             trg.advance(16.0);
@@ -2663,7 +2710,16 @@ mod tests {
                 &f.tuning.weapon_range,
                 &mut inputs,
             );
-            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(
+                FIXED_DT,
+                &inputs,
+                Some(rh.remote_mask()),
+                &sim,
+                t,
+                w,
+                sb,
+                None,
+            );
         }
         assert_eq!(mh.actors.len(), 2);
     }
@@ -2680,7 +2736,7 @@ mod tests {
         let mut rg = Replication::new(&cfg, "GUEST", "HOST");
         rg.bind_match(&mut mg);
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
         }
         assert_eq!(mg.phase, Phase::Active);
         mg.time = 100.0;
@@ -2731,7 +2787,7 @@ mod tests {
         // …but a follower never judges on its own (L216): Finish + follower
         // must not settle even past the window.
         for _ in 0..(FINISH_TIME * 60.0) as usize + 10 {
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
         }
         assert_eq!(mg.phase, Phase::Finish, "the follower waits for res");
         assert!(mg.result.is_none());
@@ -2927,9 +2983,9 @@ mod tests {
                 let t0 = Instant::now();
                 let mut ih = vec![ActorInput::default(); 3];
                 rh.drive_bots(&mut mh, &nav, &sim, t, w, &f.tuning.weapon_range, &mut ih);
-                mh.step_masked(FIXED_DT, &ih, Some(rh.remote_mask()), &sim, t, w, sb);
+                mh.step_masked(FIXED_DT, &ih, Some(rh.remote_mask()), &sim, t, w, sb, None);
                 let ig = vec![ActorInput::default(); 3];
-                mg.step_masked(FIXED_DT, &ig, Some(rg.remote_mask()), &sim, t, w, sb);
+                mg.step_masked(FIXED_DT, &ig, Some(rg.remote_mask()), &sim, t, w, sb, None);
                 match arm {
                     0 => {}
                     1 => {
@@ -3089,8 +3145,8 @@ mod tests {
         rh.bind_match(&mut mh);
         rg.bind_match(&mut mg);
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb, None);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
         }
         assert_eq!(mh.phase, Phase::Active);
         assert!(
@@ -3123,8 +3179,8 @@ mod tests {
         let mut guest_splat_records = 0;
         let mut settled = false;
         for _ in 0..600 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb, None);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
             let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
             let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             trh.advance(16.0);
@@ -3185,8 +3241,8 @@ mod tests {
         rh.bind_match(&mut mh);
         rg.bind_match(&mut mg);
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb, None);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
         }
         assert_eq!(mh.phase, Phase::Active);
 
@@ -3207,8 +3263,8 @@ mod tests {
         let mut guest_splat_records = 0;
         let mut settled = false;
         for _ in 0..600 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb, None);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
             let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
             let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             // Render layer drains *after* the replicator recorded / replayed.
@@ -3260,8 +3316,8 @@ mod tests {
         mg.paint.splat(sim.collision, c2, 2.0, 1, &opts);
         let mut converged = false;
         for _ in 0..600 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb, None);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
             let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
             let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             mh.paint.drain_ink();
@@ -3309,8 +3365,8 @@ mod tests {
         rh.bind_match(&mut mh);
         rg.bind_match(&mut mg);
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb, None);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
         }
         let pad0 = sim.spawn_pads[0];
         let victim_p = vec3(pad0.x, pad0.y, pad0.z + 3.0);
@@ -3339,8 +3395,17 @@ mod tests {
             mh.actors[0].pos = pad0;
             mh.actors[0].aim_yaw = 0.0;
             mh.actors[0].aim_pitch = 0.0;
-            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(
+                FIXED_DT,
+                &inputs,
+                Some(rh.remote_mask()),
+                &sim,
+                t,
+                w,
+                sb,
+                None,
+            );
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
             if dmg.is_none() {
                 dmg = mh.events.iter().find_map(|e| match e {
                     MatchEvent::HitSend { damage, .. } => Some(*damage),
@@ -3406,8 +3471,8 @@ mod tests {
         rh.bind_match(&mut mh);
         rg.bind_match(&mut mg);
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb, None);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
         }
         let pad0 = sim.spawn_pads[0];
         let stand = vec3(pad0.x, pad0.y, pad0.z + 2.0);
@@ -3427,8 +3492,17 @@ mod tests {
             mh.actors[0].pos = stand;
             mh.actors[0].aim_pitch = -1.4;
             mg.actors[0].pos = stand;
-            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(
+                FIXED_DT,
+                &inputs,
+                Some(rh.remote_mask()),
+                &sim,
+                t,
+                w,
+                sb,
+                None,
+            );
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
             let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
             let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             if host_at.is_none() && !mh.paint.ink_stream().is_empty() {
@@ -3532,8 +3606,8 @@ mod tests {
         let mut rech = Rec::default();
         let mut recg = Rec::default();
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb, None);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
         }
         assert_eq!(mh.phase, Phase::Active);
 
@@ -3548,8 +3622,26 @@ mod tests {
             inputs[0].jump = frame == 10;
             inputs[1].fire = true;
             inputs[2].fire = true;
-            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
-            mg.step_masked(FIXED_DT, &inputs, Some(rg.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(
+                FIXED_DT,
+                &inputs,
+                Some(rh.remote_mask()),
+                &sim,
+                t,
+                w,
+                sb,
+                None,
+            );
+            mg.step_masked(
+                FIXED_DT,
+                &inputs,
+                Some(rg.remote_mask()),
+                &sim,
+                t,
+                w,
+                sb,
+                None,
+            );
             // `dodge_vel` is read *before* `try_dodge` (JS order, match_.rs
             // L505-509), so the roll shows from the frame after the tap.
             if (10..28).contains(&frame) && mh.actors[0].dodge_vel.is_some() {
@@ -3594,7 +3686,16 @@ mod tests {
         // fresh Ready pose open=0, grow=1, hp full → ks = 7<<6 | 31<<9 = 16320.
         inputs[2].fire = false;
         for _ in 0..15 {
-            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(
+                FIXED_DT,
+                &inputs,
+                Some(rh.remote_mask()),
+                &sim,
+                t,
+                w,
+                sb,
+                None,
+            );
             let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut rech);
         }
         let s2 = &latest_samples(&rech)
@@ -3624,7 +3725,7 @@ mod tests {
         let mut rg = Replication::new(&cfg, g, h);
         rg.bind_match(&mut mg);
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
         }
         assert_eq!(mg.phase, Phase::Active);
         let mut rec = Rec::default();
@@ -3658,7 +3759,7 @@ mod tests {
             t,
         );
         for _ in 0..30 {
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
             let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec);
         }
         assert!(
@@ -3706,7 +3807,16 @@ mod tests {
             if inputs[1].fire {
                 fired = true;
             }
-            mg.step_masked(FIXED_DT, &inputs, Some(rg.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(
+                FIXED_DT,
+                &inputs,
+                Some(rg.remote_mask()),
+                &sim,
+                t,
+                w,
+                sb,
+                None,
+            );
             let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec);
             if spawned.is_none() && !mg.launched.is_empty() {
                 let c = &mg.launched[0];
@@ -3776,8 +3886,8 @@ mod tests {
         rh.bind_match(&mut mh);
         rg.bind_match(&mut mg);
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb, None);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
         }
         assert_eq!(mh.phase, Phase::Active);
 
@@ -3807,8 +3917,26 @@ mod tests {
                 m.aim_pitch = 0.0;
                 m.invuln = 0.0;
             }
-            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
-            mg.step_masked(FIXED_DT, &inputs, Some(rg.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(
+                FIXED_DT,
+                &inputs,
+                Some(rh.remote_mask()),
+                &sim,
+                t,
+                w,
+                sb,
+                None,
+            );
+            mg.step_masked(
+                FIXED_DT,
+                &inputs,
+                Some(rg.remote_mask()),
+                &sim,
+                t,
+                w,
+                sb,
+                None,
+            );
             let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
             let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             trh.advance(16.0);
@@ -3858,8 +3986,26 @@ mod tests {
             mh.actors[0].aim_yaw = 0.0;
             mg.actors[1].pos = front;
             mg.actors[1].aim_yaw = std::f32::consts::PI;
-            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
-            mg.step_masked(FIXED_DT, &inputs, Some(rg.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(
+                FIXED_DT,
+                &inputs,
+                Some(rh.remote_mask()),
+                &sim,
+                t,
+                w,
+                sb,
+                None,
+            );
+            mg.step_masked(
+                FIXED_DT,
+                &inputs,
+                Some(rg.remote_mask()),
+                &sim,
+                t,
+                w,
+                sb,
+                None,
+            );
             let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
             let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             trh.advance(16.0);
@@ -3890,8 +4036,26 @@ mod tests {
             mh.actors[0].aim_yaw = 0.0;
             mg.actors[1].pos = front;
             mg.actors[1].aim_yaw = std::f32::consts::PI;
-            mh.step_masked(FIXED_DT, &inputs, Some(rh.remote_mask()), &sim, t, w, sb);
-            mg.step_masked(FIXED_DT, &inputs, Some(rg.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(
+                FIXED_DT,
+                &inputs,
+                Some(rh.remote_mask()),
+                &sim,
+                t,
+                w,
+                sb,
+                None,
+            );
+            mg.step_masked(
+                FIXED_DT,
+                &inputs,
+                Some(rg.remote_mask()),
+                &sim,
+                t,
+                w,
+                sb,
+                None,
+            );
             let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
             let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
             trh.advance(16.0);
@@ -3934,8 +4098,8 @@ mod tests {
         rh.bind_match(&mut mh);
         rg.bind_match(&mut mg);
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb, None);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
         }
         assert_eq!(mh.phase, Phase::Active);
 
@@ -4078,7 +4242,7 @@ mod tests {
         let mut rg = Replication::new(&cfg, g, h);
         rg.bind_match(&mut mg);
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
         }
         assert_eq!(mg.phase, Phase::Active);
 
@@ -4111,7 +4275,7 @@ mod tests {
         for _ in 0..400 {
             mg.actors[1].pos = base;
             mg.actors[1].invuln = 0.0;
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
             let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec);
             if saw_ghost.is_none() && !mg.projectiles.bombs.is_empty() {
                 saw_ghost = Some(mg.projectiles.bombs[0].ghost);
@@ -4154,7 +4318,7 @@ mod tests {
         let mut rg = Replication::new(&cfg, g, h);
         rg.bind_match(&mut mg);
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
         }
         assert_eq!(mg.phase, Phase::Active);
         let mut rec = Rec::default();
@@ -4191,7 +4355,7 @@ mod tests {
             () => {{
                 mg.actors[1].pos = foe;
                 mg.actors[1].invuln = 0.0;
-                mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+                mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
                 let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec);
                 if echo(mg.subs.drain_events()) {
                     echo_seen = true;
@@ -4366,8 +4530,8 @@ mod tests {
         rh.bind_match(&mut mh);
         rg.bind_match(&mut mg);
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb, None);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
         }
         assert_eq!(mh.phase, Phase::Active);
 
@@ -4389,8 +4553,8 @@ mod tests {
                 // (config.js L378) while the `'dh'` exchange runs.
                 mh.actors[1].pos = far_a;
                 mh.actors[2].pos = far_b;
-                mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
-                mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+                mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb, None);
+                mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
                 let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
                 let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
                 trh.advance(16.0);
@@ -4514,7 +4678,7 @@ mod tests {
             hp_full - 40.0,
             "the owner applied the second hit"
         );
-        mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb);
+        mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb, None);
         let end = mh
             .kit_out
             .iter()
@@ -4591,7 +4755,7 @@ mod tests {
         let mut rg = Replication::new(&cfg, g, h);
         rg.bind_match(&mut mg);
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
-            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+            mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
         }
         assert_eq!(mg.phase, Phase::Active);
         let mut rec = Rec::default();
@@ -4627,7 +4791,7 @@ mod tests {
             () => {{
                 mg.actors[1].pos = foe;
                 mg.actors[1].invuln = 0.0;
-                mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb);
+                mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
                 let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec);
                 let evs = mg.subs.drain_events();
                 if echo(evs.clone()) {

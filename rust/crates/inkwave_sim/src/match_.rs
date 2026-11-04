@@ -90,6 +90,8 @@ pub const SPAWN_RING_PHI: f32 = 0.6;
 pub const SPAWN_RING_N: f32 = 4.0;
 /// JS soft-push separation radius factor (match.js L236: `PLAYER.radius * 1.7`).
 pub const SOFT_PUSH_R: f32 = 1.7;
+/// JS spawn ring radius on the pad in Boss Battle (match.js L87: `rr = 1.7`).
+pub const BOSS_SPAWN_RING_R: f32 = 1.7;
 /// JS soft-push vertical gate (match.js L237: `Math.abs(dy) < 1.2`).
 pub const SOFT_PUSH_DY: f32 = 1.2;
 /// JS soft-push equal-share weights (match.js L239: offline all-local → 0.5).
@@ -144,6 +146,11 @@ pub struct MatchResult {
     /// in, match.js L254-257); `None` in turf mode.
     #[serde(default)]
     pub zones: Option<ZoneOutcome>,
+    /// Boss Battle settlement (JS boss-mode `_judge` → `BossMode.result()`'s
+    /// nested `boss` payload, match.js L262-267 / bossMode.js L48-51); `None`
+    /// outside [`MatchMode::Boss`] (Task 44, same fold as [`MatchResult::zones`]).
+    #[serde(default)]
+    pub boss: Option<crate::boss::BossOutcome>,
 }
 
 /// One splat record (JS `match.events` entry, match.js L185; identity only).
@@ -404,6 +411,13 @@ pub struct Match {
     /// autopilot driver, reticked every frame. Task 38 batch 3.
     #[serde(skip, default)]
     pub zone_plan: Option<crate::bot::zones::ZonePlan>,
+    /// Boss Battle rules (JS `BOSS_MODE`, bossMode.js L7-13; Task 44 §2):
+    /// kept as the `Copy` data slice (same pattern as [`Match::zones_tuning`])
+    /// because [`crate::boss::Boss`] borrows the nav grid / world and the
+    /// *driver layer* owns the [`crate::boss::BossMode`] wrapper, handing it
+    /// to [`Match::step`] frame by frame. `Some` ⇔ [`MatchMode::Boss`].
+    #[serde(skip, default)]
+    pub boss_rules: Option<crate::tuning::BossModeRules>,
 }
 
 impl Match {
@@ -443,15 +457,18 @@ impl Match {
             MatchMode::Turf,
             None,
             None,
+            None,
         )
     }
 
     /// [`Match::with_roster`] with the mode selector (Task 36; JS `opts.mode
-    /// === 'zones'` + `new ZoneControl(this)`, match.js L20/L96-99).
-    /// `duration <= 0` in Zones mode takes `ZONES.duration` (JS
-    /// `opts.duration || ZONES.duration`, match.js L21). A Zones request
-    /// without `zones_tuning` degrades to Turf (the sim has no ambient
-    /// `ZONES` config; D-T36-1).
+    /// === 'zones'` + `new ZoneControl(this)`, match.js L20/L96-99; Task 44
+    /// adds `opts.mode === 'boss'`, match.js L20/L55-100).
+    /// `duration <= 0` in Zones mode takes `ZONES.duration`, in Boss mode
+    /// `BOSS_MODE.duration` (JS `opts.duration || …`, match.js L21). A Zones
+    /// request without `zones_tuning` degrades to Turf (the sim has no
+    /// ambient `ZONES` config; D-T36-1), and a Boss request without
+    /// `boss_rules` degrades the same way (Task 44, same precedent).
     #[must_use]
     #[allow(clippy::too_many_arguments)]
     pub fn with_roster_mode(
@@ -464,27 +481,51 @@ impl Match {
         mode: MatchMode,
         zone_layout: Option<&ZoneLayout>,
         zones_tuning: Option<ZonesTuning>,
+        boss_rules: Option<crate::tuning::BossModeRules>,
     ) -> Self {
-        let (mode, zones_tuning) = match (mode, zones_tuning) {
-            (MatchMode::Zones, Some(zt)) => (MatchMode::Zones, Some(zt)),
-            (MatchMode::Zones, None) => (MatchMode::Turf, None),
-            (m, zt) => (m, zt),
+        let (mode, zones_tuning, boss_rules) = match (mode, zones_tuning, boss_rules) {
+            (MatchMode::Zones, Some(zt), _) => (MatchMode::Zones, Some(zt), None),
+            (MatchMode::Zones, None, _) => (MatchMode::Turf, None, None),
+            (MatchMode::Boss, _, Some(br)) => (MatchMode::Boss, None, Some(br)),
+            (MatchMode::Boss, _, None) => (MatchMode::Turf, None, None),
+            (m, zt, br) => (m, zt, br),
         };
         let duration = if mode == MatchMode::Zones && duration <= 0.0 {
             zones_tuning
                 .expect("Zones mode carries tuning after the guard")
                 .duration as f32
+        } else if mode == MatchMode::Boss && duration <= 0.0 {
+            // JS match.js L21: `opts.duration || BOSS_MODE.duration`.
+            boss_rules
+                .expect("Boss mode carries rules after the guard")
+                .duration as f32
         } else {
             duration
         };
+        // JS setup() L59-62: boss is a single team-0 squad of `BOSS_MODE.squad`
+        // slots; the JS weapons line (L60-61, two `pickTeam` halves covering
+        // every kind) is a random loadout — the sim keeps the deterministic
+        // default loadout below (spec D-2, same as the turf path) and the net
+        // / driver builders overwrite `kinds` from their roster.
         let mut actors = Vec::with_capacity(team_size * 2);
-        for team in 0..2 {
-            for slot in 0..team_size {
-                let mut a = Actor::new(team, slot, t);
-                Self::place_on_pad(&mut a, world, t);
+        if mode == MatchMode::Boss {
+            let squad = boss_rules.expect("Boss mode carries rules").squad.max(1) as usize;
+            for slot in 0..squad {
+                let mut a = Actor::new(0, slot, t);
+                // JS match.js L87: boss ring `(slot / squad)·τ + 0.6`, `rr = 1.7`.
+                Self::place_on_pad(&mut a, world, t, squad as f32, BOSS_SPAWN_RING_R);
                 actors.push(a);
             }
+        } else {
+            for team in 0..2 {
+                for slot in 0..team_size {
+                    let mut a = Actor::new(team, slot, t);
+                    Self::place_on_pad(&mut a, world, t, SPAWN_RING_N, SPAWN_RING_R);
+                    actors.push(a);
+                }
+            }
         }
+        let n = actors.len();
         let mut m = Self {
             // JS constructor starts in `init`; `start()` moves to `intro`.
             phase: Phase::Init,
@@ -493,10 +534,10 @@ impl Match {
             time: duration,
             paused: false,
             actors,
-            runners: (0..team_size * 2).map(|_| WeaponRunner::new()).collect(),
+            runners: (0..n).map(|_| WeaponRunner::new()).collect(),
             // Spec D-2: the default loadout is the Spritzer; the net builder
             // overwrites this from the roster weapon strings.
-            kinds: vec![WeaponKind::Shooter; team_size * 2],
+            kinds: vec![WeaponKind::Shooter; n],
             launched: Vec::new(),
             waves: Vec::new(),
             arrows: Vec::new(),
@@ -524,6 +565,7 @@ impl Match {
             zone_layout: zone_layout.cloned(),
             zones_tuning,
             zone_plan: None,
+            boss_rules,
         };
         // JS setup() L96-99: `if (this.mode === 'zones') this.zones = new
         // ZoneControl(this)` — built after the roster/paint exist, before
@@ -548,14 +590,13 @@ impl Match {
     /// JS `setup()` placement (match.js L85-91): spawn-ring offset around the
     /// team pad, facing the arena, then `invuln = 0` (the match clears the
     /// spawn invulnerability `spawn_at` grants — the intro is the protection).
-    fn place_on_pad(a: &mut Actor, world: &SimWorld, t: &PlayerTuning) {
+    /// `ring_n` / `rr` parameterise the JS L87 divisor / radius (turf:
+    /// `(4, 1.2)`, boss: `(squad, 1.7)` — the caller passes the match's
+    /// choice).
+    fn place_on_pad(a: &mut Actor, world: &SimWorld, t: &PlayerTuning, ring_n: f32, rr: f32) {
         let pad = world.spawn_pads[a.team];
-        let ang = (a.slot as f32 / SPAWN_RING_N) * std::f32::consts::TAU + SPAWN_RING_PHI;
-        let p = vec3(
-            pad.x + ang.cos() * SPAWN_RING_R,
-            pad.y,
-            pad.z + ang.sin() * SPAWN_RING_R,
-        );
+        let ang = (a.slot as f32 / ring_n) * std::f32::consts::TAU + SPAWN_RING_PHI;
+        let p = vec3(pad.x + ang.cos() * rr, pad.y, pad.z + ang.sin() * rr);
         let yaw = if a.team == 0 {
             0.0
         } else {
@@ -684,6 +725,18 @@ impl Match {
         // world-object list and the gid counter in place.
         self.specials.world.clear();
         self.specials.gid_seq = 0;
+        // Boss Battle keeps its wide spawn ring across restarts (JS rebuilds
+        // the whole match, match.js L87); the BossMode itself is the driver's
+        // to rebuild (Task 44 §2, declared deviation).
+        let (ring_n, rr) = if self.mode == MatchMode::Boss {
+            (
+                self.boss_rules
+                    .map_or(SPAWN_RING_N, |r| r.squad.max(1) as f32),
+                BOSS_SPAWN_RING_R,
+            )
+        } else {
+            (SPAWN_RING_N, SPAWN_RING_R)
+        };
         for (a, r) in self.actors.iter_mut().zip(self.runners.iter_mut()) {
             r.reset();
             a.reset(t);
@@ -693,7 +746,8 @@ impl Match {
             a.splats = 0;
             a.deaths = 0;
             a.zone_turf = 0.0;
-            Self::place_on_pad(a, world, t);
+            a.boss_kill = 0;
+            Self::place_on_pad(a, world, t, ring_n, rr);
         }
         self.set_phase(Phase::Intro);
     }
@@ -702,7 +756,10 @@ impl Match {
     /// steps, weapon runners, soft push, projectile step and the scoring
     /// drains. `inputs` aligns with [`Match::actors`] (Task 9 bots / the
     /// local player supply them); outside [`Phase::Active`] every intent is
-    /// zeroed like JS L220-226.
+    /// zeroed like JS L220-226. `boss` is the [`crate::boss::BossMode`] the
+    /// driver owns for a Boss Battle (JS `match.bossMode`, match.js L100 —
+    /// the match cannot hold it, Task 44 §2); `None` everywhere else.
+    #[allow(clippy::too_many_arguments)] // Task 44: `boss` arg, same precedent as `step_masked`
     pub fn step(
         &mut self,
         dt: f32,
@@ -711,8 +768,9 @@ impl Match {
         t: &PlayerTuning,
         w: &WeaponSet,
         sb: &SubSet,
+        boss: Option<&mut crate::boss::BossMode<'_>>,
     ) {
-        self.step_masked(dt, inputs, None, world, t, w, sb);
+        self.step_masked(dt, inputs, None, world, t, w, sb, boss);
     }
 
     /// [`Self::step`] with the online ownership mask (Task 21 replication,
@@ -731,6 +789,7 @@ impl Match {
         t: &PlayerTuning,
         w: &WeaponSet,
         sb: &SubSet,
+        mut boss: Option<&mut crate::boss::BossMode<'_>>,
     ) {
         // JS runs the whole match once per 60 Hz frame; variable dt would
         // desync the clock, timers and the fixed-step contract.
@@ -751,7 +810,9 @@ impl Match {
         match self.phase {
             Phase::Init => {}
             Phase::Intro => {
-                if self.state_t > INTRO_TIME {
+                // JS L193: a boss match sweeps the arena longer (7.2 s).
+                let intro_len = self.boss_rules.map_or(INTRO_TIME, |r| r.intro);
+                if self.state_t > intro_len {
                     self.set_phase(Phase::Active);
                 }
             }
@@ -839,9 +900,22 @@ impl Match {
             }
             Phase::Finish => {
                 // JS L216: `stateT > 2.6 && !follower && !result` — the
-                // judge runs once, on the host only.
-                if self.state_t > FINISH_TIME && !self.follower && self.result.is_none() {
-                    self.judge();
+                // judge runs once, on the host only. A boss match settles on
+                // the dying boss (5.2 s) or the survived clock (3.2 s) —
+                // read live off the driver's handle, like JS reads
+                // `bossMode.boss.dead` (match.js L216).
+                let finish_len = match (self.boss_rules, boss.as_deref()) {
+                    (Some(r), Some(bm)) => {
+                        if bm.boss.dead {
+                            r.finish_win
+                        } else {
+                            r.finish_lose
+                        }
+                    }
+                    _ => FINISH_TIME,
+                };
+                if self.state_t > finish_len && !self.follower && self.result.is_none() {
+                    self.judge(boss.as_deref());
                 }
             }
             Phase::End => {}
@@ -1332,6 +1406,41 @@ impl Match {
             // special ends — the release needs the registry, so the match
             // drains the actor's `sp_let` here.
             crate::special::blower::drain_let(&mut self.actors[i], &mut self.specials);
+        }
+
+        // ---- Boss Battle (JS match.js L229 `bossMode?.update(dt)`: after
+        // the actor steps L228, before the soft push L231). The squad view
+        // is built fresh here (JS hazards read `G.actors` live): ids carry
+        // the `nid ?? slot` semantics (bossHazards.js L119-194) — offline the
+        // roster index *is* the slot id.
+        if let Some(bm) = boss.as_mut() {
+            let n = self.actors.len();
+            let ids: Vec<i32> = (0..n).map(|i| i as i32).collect();
+            let remote_flags: Vec<bool> = (0..n)
+                .map(|i| remote.is_some_and(|m| m.get(i).copied().unwrap_or(false)))
+                .collect();
+            // JS `Boss` consults `match.state` live (boss.js L97/L105):
+            // mirror the phase into the entity before the step.
+            bm.boss.state = self.phase;
+            let remaining = self.duration - self.time;
+            let dead = {
+                // Split-borrow the roster for the squad (zones precedent,
+                // see the `Phase::Active` arm above).
+                let Self { actors, .. } = self;
+                let mut squad = crate::boss::BossSquad {
+                    actors,
+                    ids: &ids,
+                    remote: &remote_flags,
+                    player: t,
+                };
+                bm.update(dt, &mut squad, remaining)
+            };
+            // JS bossMode.js L34: the sim side (`!follower`) calls the finish
+            // when the boss dies mid-play; the guests follow the host's
+            // state line (Task 45).
+            if dead && !self.follower && self.phase == Phase::Active {
+                self.set_phase(Phase::Finish);
+            }
         }
 
         // ---- soft push between actors (JS match.js L231-244; offline every
@@ -1908,8 +2017,33 @@ impl Match {
     }
 
     /// JS `_judge`: coverage → winner (seeded tie-break) → `judge` phase.
-    fn judge(&mut self) {
+    /// `boss` is the driver's Boss Battle handle for the settlement
+    /// (JS `this.bossMode.result()`, match.js L262-267); the boss branch runs
+    /// before the zones branch per the task spec — the two modes are
+    /// mutually exclusive, so the order is cosmetic.
+    fn judge(&mut self, boss: Option<&crate::boss::BossMode>) {
         let cov = self.paint.coverage();
+        if self.mode == MatchMode::Boss {
+            // JS L262-267: the boss rules own the settlement. A boss match
+            // without a driver handle (a follower guest — the host's result
+            // arrives over the net, Task 45) falls through to the turf
+            // settlement so the match still resolves offline-safe.
+            if let Some(bm) = boss {
+                let outcome = bm.result(self.duration - self.time);
+                self.result = Some(MatchResult {
+                    coverage: cov,
+                    // JS bossMode.js L49: `winner: win ? 0 : 1` (squad vs
+                    // boss); no points line (turf is secondary display).
+                    winner: if outcome.win { 0 } else { 1 },
+                    points: [0.0, 0.0],
+                    elapsed: self.elapsed(),
+                    zones: None,
+                    boss: Some(outcome),
+                });
+                self.set_phase(Phase::End);
+                return;
+            }
+        }
         if let Some(z) = &self.zones {
             // JS L254-260: the zones rules own the settlement; an undecided
             // winner (`Z.winner ?? …`) rolls on the seeded RNG stream.
@@ -1938,6 +2072,7 @@ impl Match {
                 points: [0.0, 0.0],
                 elapsed: self.elapsed(),
                 zones: Some(outcome),
+                boss: None,
             });
             self.set_phase(Phase::End);
             return;
@@ -1961,6 +2096,7 @@ impl Match {
             points,
             elapsed: self.elapsed(),
             zones: None,
+            boss: None,
         });
         self.set_phase(Phase::End);
     }
@@ -2024,7 +2160,10 @@ impl Match {
         sb: &SubSet,
     ) {
         while !self.paused && self.elapsed() < target && self.phase != Phase::End {
-            self.step(crate::actor::FIXED_DT, inputs, world, t, w, sb);
+            // Task 44: the fixed-step driver stays turf/zones-only — a Boss
+            // Battle needs per-frame driver control (the `BossMode` handle),
+            // so its drivers call [`Match::step`] directly.
+            self.step(crate::actor::FIXED_DT, inputs, world, t, w, sb, None);
         }
     }
 }

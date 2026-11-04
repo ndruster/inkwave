@@ -335,6 +335,56 @@
       "reaction": 0.32
     }
   },
+  "maps": [
+    {
+      "id": "tidewater",
+      "noBoss": false,
+      "noBots": false,
+      "onlineOnly": false
+    },
+    {
+      "id": "kelpline",
+      "noBoss": false,
+      "noBots": false,
+      "onlineOnly": false
+    },
+    {
+      "id": "halyard",
+      "noBoss": false,
+      "noBots": false,
+      "onlineOnly": false
+    },
+    {
+      "id": "saltpan",
+      "noBoss": false,
+      "noBots": false,
+      "onlineOnly": false
+    },
+    {
+      "id": "crossmarket",
+      "noBoss": false,
+      "noBots": false,
+      "onlineOnly": false
+    },
+    {
+      "id": "lockgate",
+      "noBoss": false,
+      "noBots": false,
+      "onlineOnly": false
+    },
+    {
+      "id": "terraces",
+      "noBoss": false,
+      "noBots": false,
+      "onlineOnly": false
+    },
+    {
+      "id": "cargo",
+      "noBoss": true,
+      "noBots": true,
+      "onlineOnly": true
+    }
+  ],
   "match": {
     "deathMarkFade": 1.3,
     "deathMarkLife": 5,
@@ -440,9 +490,9 @@
     "turnRateSlow": 1.5,
     "waterY": -1.6
   },
-  "schema": "inkwave.tuning.v5",
+  "schema": "inkwave.tuning.v6",
   "source": {
-    "commit": "26dea5e83f4a692dcedbe992e449d2b413528bec",
+    "commit": "70e0c8029b7d05a0bd72044c0a3ee62eb34c612a",
     "path": "src/config.js + src/boss/*.js"
   },
   "specialOrder": [
