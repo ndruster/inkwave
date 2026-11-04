@@ -292,7 +292,7 @@ pub struct BotCtx<'a> {
     /// The live HULLBREAKER — `Some` only in a Boss Battle (JS `G.boss`,
     /// bots.js L345; Task 44 batch C). `step` short-circuits into
     /// [`Bot::boss_tick`] whenever this is set.
-    pub boss: Option<&'a crate::boss::Boss<'a>>,
+    pub boss: Option<&'a crate::boss::Boss>,
 }
 
 impl<'a> BotCtx<'a> {

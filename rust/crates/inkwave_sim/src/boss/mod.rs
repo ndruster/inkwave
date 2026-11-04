@@ -30,6 +30,7 @@ use std::collections::{HashMap, HashSet};
 use glam::{Vec3, vec3};
 
 use crate::actor::{Actor, SimWorld};
+use crate::collision::CollisionWorld;
 use crate::match_::Phase;
 use crate::net::wire::{self, JVal};
 use crate::net::{BossCrab, BossSnap, DirectMsg};
@@ -396,7 +397,14 @@ pub struct BossConfig<'d> {
 }
 
 /// HULLBREAKER (JS `class Boss`, boss.js L30-494).
-pub struct Boss<'a> {
+///
+/// D-T45-9: fully owned (no lifetime) so the app layer can keep it across
+/// frames (a Bevy `Resource` needs `'static`). JS `this.nav` / `this.tb` are
+/// plain fields too; the world queries only ever go through
+/// `world.collision.*` (verified across mod / hazards / brain), so the
+/// smallest honest owned set is the [`CollisionWorld`] itself — cloned once
+/// per boss match (the grid is static stage geometry).
+pub struct Boss {
     /// JS `match.state` (Task 44 drives it; `'playing'` ≡ [`Phase::Active`],
     /// `'judge'`/`'results'` both map onto [`Phase::End`]).
     pub state: Phase,
@@ -474,11 +482,16 @@ pub struct Boss<'a> {
     /// Non-killed crab bursts raised outside [`Boss::update`] (no squad at
     /// hand): drained by the next update (JS applies them inline, L396).
     crab_burst_pending: Vec<[f32; 3]>,
-    /// Navigation grid (JS `this.nav`, L37 — shared, built once per level).
-    pub nav: &'a BossNav,
-    /// The `boss` tuning section (JS `BOSS` / `HZ` / `FLOOR_BODY` tables).
-    pub tb: &'a tuning::Boss,
-    pub world: &'a SimWorld<'a>,
+    /// Navigation grid (JS `this.nav`, L37 — shared, built once per level;
+    /// D-T45-9 owned so the entity is `'static`).
+    pub nav: BossNav,
+    /// The `boss` tuning section (JS `BOSS` / `HZ` / `FLOOR_BODY` tables;
+    /// D-T45-9 owned clone).
+    pub tb: tuning::Boss,
+    /// The static stage collision geometry (D-T45-9: replaces the borrowed
+    /// `world` — every world query the boss makes goes through
+    /// `world.collision`, verified across mod / hazards / brain).
+    pub collision: CollisionWorld,
     /// Seeded rng replacing the host's `Math.random()` draws (L400 splat
     /// seed; Task 43 brain rolls).
     rng: Rng,
@@ -492,15 +505,12 @@ pub struct Boss<'a> {
     ev: EvState,
 }
 
-impl<'a> Boss<'a> {
+impl Boss {
     /// JS constructor (boss.js L31-72), minus the render objects (model /
     /// hazards / brain / scene / event subscriptions — see the module docs).
-    pub fn new(
-        world: &'a SimWorld<'a>,
-        nav: &'a BossNav,
-        tb: &'a tuning::Boss,
-        cfg: BossConfig<'_>,
-    ) -> Self {
+    /// D-T45-9: `nav` / `tb` are moved in, `collision` cloned from the
+    /// borrowed world the caller built the nav from.
+    pub fn new(world: &SimWorld, nav: BossNav, tb: tuning::Boss, cfg: BossConfig<'_>) -> Self {
         // JS L36: `BOSS.dmgDiff[difficulty] ?? 1`.
         let dmg_mul = match cfg.difficulty {
             "easy" => tb.boss.dmg_diff.easy,
@@ -554,7 +564,7 @@ impl<'a> Boss<'a> {
             crab_burst_pending: Vec::new(),
             nav,
             tb,
-            world,
+            collision: world.collision.clone(),
             rng: Rng::new(cfg.seed),
             rain: Vec::new(),
             rain_t: 0.0,
@@ -584,13 +594,14 @@ impl<'a> Boss<'a> {
     /// Spawn: the roomiest floor near the middle of its home ground, facing
     /// down the stage toward the squad (JS `_spawnPoint`, L75-93).
     fn spawn_point(&mut self) {
-        let nav = self.nav;
-        let ids = nav.plan_ids();
+        // D-T45-9: `nav` is owned now — copy the id list (one pass per match
+        // construction) so no borrow of `self` spans the field writes below.
+        let ids: Vec<i32> = self.nav.plan_ids().to_vec();
         // JS L77-79: centroid of the plan region (f64).
         let mut sx = 0.0f64;
         let mut sz = 0.0f64;
-        for &i in ids {
-            let (x, z) = nav.xz(i);
+        for &i in &ids {
+            let (x, z) = self.nav.xz(i);
             sx += f64::from(x);
             sz += f64::from(z);
         }
@@ -600,9 +611,10 @@ impl<'a> Boss<'a> {
         // JS L80-85: score each plan cell.
         let mut best = -1i32;
         let mut bs = f64::NEG_INFINITY;
-        for &i in ids {
-            let (x, z) = nav.xz(i);
-            let s = f64::from(nav.dw_at(i)).min(6.0) * 1.5 + f64::from(nav.dv_at(i)).min(5.0)
+        for &i in &ids {
+            let (x, z) = self.nav.xz(i);
+            let s = f64::from(self.nav.dw_at(i)).min(6.0) * 1.5
+                + f64::from(self.nav.dv_at(i)).min(5.0)
                 - (f64::from(x) - cx).hypot(f64::from(z) - cz) * 0.25;
             if s > bs {
                 bs = s;
@@ -610,18 +622,23 @@ impl<'a> Boss<'a> {
             }
         }
         // JS L86-89.
-        let (x, z) = if best >= 0 { nav.xz(best) } else { (0.0, 0.0) };
-        let (pad_x, pad_z) = nav.pad_center(0);
-        self.pos = vec3(x, nav.floor_at(x, z), z);
+        let (x, z) = if best >= 0 {
+            self.nav.xz(best)
+        } else {
+            (0.0, 0.0)
+        };
+        let (pad_x, pad_z) = self.nav.pad_center(0);
+        let fy = self.nav.floor_at(x, z);
         let mut yaw = (f64::from(pad_x) - f64::from(x)).atan2(f64::from(pad_z) - f64::from(z));
         // JS L91: the facing may not fit here (a pier): take the nearest
         // heading that does.
         for k in 0..24 {
-            if nav.turn_ok(x, z, yaw as f32) {
+            if self.nav.turn_ok(x, z, yaw as f32) {
                 break;
             }
             yaw += (if k % 2 == 1 { 1.0 } else { -1.0 }) * (k as f64) * 0.13;
         }
+        self.pos = vec3(x, fy, z);
         self.yaw = yaw as f32;
         self.home = Some([x, z]);
     }
@@ -1326,7 +1343,7 @@ impl<'a> Boss<'a> {
         let t = (f64::from(br) / f64::from(br).max(dist)).min(0.9);
         let b = bp.lerp(c, t as f32); // THREE `Vector3.lerp` (f64 components;
         // computed in f32 here — sub-ulp)
-        if !self.world.collision.los(a, b) {
+        if !self.collision.los(a, b) {
             return;
         }
         // JS L320.
@@ -1595,7 +1612,7 @@ impl<'a> Boss<'a> {
         if self.sim {
             // JS L397-400: painted once, by the host (`!G.netm || isHost` —
             // sim implies host/offline here).
-            let g = self.world.collision.ground_height(x, z, y + 0.8, false);
+            let g = self.collision.ground_height(x, z, y + 0.8, false);
             if g > -5.0 && !self.nav.in_pad(x, z, 0.3) {
                 self.events.push(BossEvent::Splat {
                     pos: vec3(x, g + 0.1, z),
@@ -1938,7 +1955,7 @@ mod tests {
         seed: u64,
         max_hp: f32,
         diff: &str,
-        f: impl FnOnce(&mut Boss<'_>, &BossNav, &tuning::Boss, &CollisionWorld) -> T,
+        f: impl FnOnce(&mut Boss, &BossNav, &tuning::Boss, &CollisionWorld) -> T,
     ) -> T {
         let layout = crate::embedded_tidewater();
         let collision = CollisionWorld::from_layout(&layout);
@@ -1947,8 +1964,8 @@ mod tests {
         let nav = BossNav::new(&world, &tuning.boss.nav);
         let mut boss = Boss::new(
             &world,
-            &nav,
-            &tuning.boss,
+            nav.clone(),
+            tuning.boss.clone(),
             BossConfig {
                 max_hp,
                 difficulty: diff,
@@ -2251,7 +2268,7 @@ mod tests {
             assert_eq!(b.hp, 18000.0 - 75.0 - 93.75 - 312.5);
             b.stunned = false;
             // every weapon-table key, no weak / stun bonus
-            let expect = |wid: &str, mul: f32, b: &mut Boss<'_>| {
+            let expect = |wid: &str, mul: f32, b: &mut Boss| {
                 let before = b.hp;
                 b.hit(atk, 1000.0, HitTarget::None, wid, None);
                 assert_eq!(before - b.hp, 1000.0 * mul, "weapon {wid}");
@@ -2425,11 +2442,7 @@ mod tests {
             let bp = vec3(b.pos.x, b.pos.y + 2.2, b.pos.z + 2.3);
             let c = vec3(bp.x, bp.y, bp.z + 1.5);
             // bd = 1.5 − 1.05 = 0.45 → 100 + (50 − 100) × 0.45/2 = 88.75
-            assert!(
-                b.world
-                    .collision
-                    .los(vec3(c.x, c.y + 0.3, c.z), bp.lerp(c, 0.7))
-            );
+            assert!(b.collision.los(vec3(c.x, c.y + 0.3, c.z), bp.lerp(c, 0.7)));
             b.splash(
                 Some(BossAttacker {
                     nid: 1,
@@ -2877,5 +2890,273 @@ mod tests {
             b.crab_pop(id, true, None);
             assert!(b.drain_events().is_empty());
         });
+    }
+}
+
+/// Batch A task 2: the weapons → boss call chain (JS `G.boss.segHit` /
+/// `hit` / `splash` / `rain` from `Projectiles._step` L1621 / `_bossImpact`
+/// L1651 / the charger beam L1262 / the storm cloud L1781). These pin the
+/// wiring through the real projectile pipeline with a live boss.
+#[cfg(test)]
+mod weapon_wiring_tests {
+    use super::*;
+    use crate::weapon::{DropSpec, ProjectileSim, RoundSpec};
+    use glam::vec3;
+
+    const DT: f32 = 1.0 / 60.0;
+
+    /// A full-HP normal-difficulty Tidewater boss pinned at the origin (the
+    /// `with_boss` harness, entity-only).
+    fn wired_boss() -> (Boss, CollisionWorld) {
+        let layout = crate::embedded_tidewater();
+        let collision = CollisionWorld::from_layout(&layout);
+        let tuning = crate::embedded_tuning();
+        let world = SimWorld::new(&collision, &layout);
+        let nav = BossNav::new(&world, &tuning.boss.nav);
+        let mut boss = Boss::new(
+            &world,
+            nav,
+            tuning.boss.clone(),
+            BossConfig {
+                max_hp: 18000.0,
+                difficulty: "normal",
+                sim: true,
+                seed: 11,
+            },
+        );
+        boss.pos = Vec3::ZERO;
+        // Past the intro: the hit spheres are live and damage lands (a fresh
+        // boss is invulnerable / invisible / still in `Intro`).
+        boss.visible = true;
+        boss.invuln = false;
+        boss.state = Phase::Active;
+        (boss, collision)
+    }
+
+    fn straight_spec(damage: f32) -> RoundSpec {
+        RoundSpec {
+            proj_speed: 20.0,
+            straight_time: 2.0,
+            range: 100.0,
+            grav: 0.0,
+            drag: 0.0,
+            size: 0.15,
+            life: 3.0,
+            impact_radius: 0.5,
+            damage,
+            trail_every: 0.0,
+            trail_radius: 0.0,
+            trail_start: 0.0,
+            burst: None,
+        }
+    }
+
+    /// JS `_step` L1621-1624 + `_bossImpact` L1651-1665: a round flying into
+    /// the weak eye sphere (clear line from behind; the body spheres don't
+    /// cover it) dies on the boss for damage × 2.5.
+    #[test]
+    fn round_hits_the_weak_sphere_2_5x() {
+        let (mut boss, collision) = wired_boss();
+        let tuning = crate::embedded_tuning();
+        let layout = crate::embedded_tidewater();
+        let sw = SimWorld::new(&collision, &layout);
+        let mut a = Actor::new(0, 0, &tuning.player);
+        // eye height 1.05 puts the muzzle on the weak-eye line y = 3.74.
+        a.spawn_at(vec3(0.65, 2.69, -20.0), 0.0, &sw, &tuning.player);
+        let mut actors = vec![a];
+        let mut paint = crate::paint::PaintGrid::new(&collision);
+        let mut ps = ProjectileSim::new(5);
+        ps.fire_round(&actors[0], &straight_spec(30.0), 0.0, None);
+        for _ in 0..150 {
+            ps.step(
+                DT,
+                &collision,
+                &mut actors,
+                &mut paint,
+                &tuning.player,
+                &tuning.weapons,
+                &tuning.subs,
+                None,
+                Some(&mut boss),
+            );
+            if ps.list.is_empty() {
+                break;
+            }
+        }
+        assert!(ps.list.is_empty(), "the round is eaten by the boss");
+        let hits: Vec<(f32, bool)> = boss
+            .drain_events()
+            .iter()
+            .filter_map(|e| match e {
+                BossEvent::Hit { damage, weak, .. } => Some((*damage, *weak)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(hits.len(), 1, "exactly one boss:hit");
+        assert!(hits[0].1, "the eye sphere is the weak spot");
+        assert!((hits[0].0 - 75.0).abs() < 0.5, "30 × weak 2.5 = 75");
+        assert!((boss.hp - 17925.0).abs() < 0.5);
+    }
+
+    /// JS `_bossImpact` L1659: the second flick drop of the same sheet inside
+    /// the 0.3 s window chips (× 0.12) — the same pair fired 0.4 s apart
+    /// lands twice in full.
+    #[test]
+    fn flick_drop_sheet_dedups_within_0_3s() {
+        let drop = DropSpec {
+            life: 2.0,
+            straight: 2.0,
+            size: 0.2,
+            radius: 0.4,
+            damage: 40.0,
+            dmg_far: 40.0, // flat: isolates the flick factor from falloff
+            trail_start: 0.0,
+            trail_every: 0.0,
+            trail_radius: 0.0,
+            grav: 0.0,
+            drag: 0.0,
+            delay: 0.0,
+        };
+        let run = |gap_frames: usize| -> f32 {
+            let (mut boss, collision) = wired_boss();
+            let tuning = crate::embedded_tuning();
+            let layout = crate::embedded_tidewater();
+            let sw = SimWorld::new(&collision, &layout);
+            let mut a = Actor::new(0, 0, &tuning.player);
+            a.spawn_at(vec3(0.65, 2.69, -20.0), 0.0, &sw, &tuning.player);
+            let mut actors = vec![a];
+            let mut paint = crate::paint::PaintGrid::new(&collision);
+            let mut ps = ProjectileSim::new(9);
+            ps.push_drop(
+                &actors[0],
+                &drop,
+                vec3(0.65, 3.74, -18.0),
+                vec3(0.0, 0.0, 20.0),
+                0.5,
+            );
+            for f in 0..150 {
+                if f == gap_frames {
+                    ps.push_drop(
+                        &actors[0],
+                        &drop,
+                        vec3(0.65, 3.74, -18.0),
+                        vec3(0.0, 0.0, 20.0),
+                        0.5,
+                    );
+                }
+                ps.step(
+                    DT,
+                    &collision,
+                    &mut actors,
+                    &mut paint,
+                    &tuning.player,
+                    &tuning.weapons,
+                    &tuning.subs,
+                    None,
+                    Some(&mut boss),
+                );
+            }
+            18000.0 - boss.hp
+        };
+        let both = run(0); // same frame: full + 0.12 × full
+        let apart = run(24); // 0.4 s apart: full + full
+        assert!(both > 0.0 && apart > 0.0);
+        let ratio = both / apart;
+        assert!(
+            (ratio - 1.12 / 2.0).abs() < 0.01,
+            "same-sheet total = 1.12 × one full hit, got ratio {ratio}"
+        );
+    }
+
+    /// JS charger L1258-1263: the beam stops at the boss and lands the full
+    /// charge damage on the hit sphere.
+    #[test]
+    fn charger_beam_hurts_the_boss() {
+        let (mut boss, collision) = wired_boss();
+        let tuning = crate::embedded_tuning();
+        let layout = crate::embedded_tidewater();
+        let sw = SimWorld::new(&collision, &layout);
+        let mut a = Actor::new(0, 0, &tuning.player);
+        a.spawn_at(vec3(0.65, 2.69, -20.0), 0.0, &sw, &tuning.player);
+        let mut actors = vec![a];
+        let mut paint = crate::paint::PaintGrid::new(&collision);
+        let mut ps = ProjectileSim::new(3);
+        ps.fire_charger(
+            0,
+            0,
+            vec3(0.65, 3.74, -20.0),
+            vec3(0.0, 0.0, 1.0),
+            1.0,
+            &tuning.weapons.charger,
+            &collision,
+            &mut actors,
+            &mut paint,
+            &tuning.player,
+            &tuning.subs,
+            None,
+            None,
+            None,
+            Some(&mut boss),
+        );
+        let cw = &tuning.weapons.charger;
+        let hits: Vec<f32> = boss
+            .drain_events()
+            .iter()
+            .filter_map(|e| match e {
+                BossEvent::Hit { damage, .. } => Some(*damage),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(hits.len(), 1);
+        assert!(
+            (hits[0] - cw.damage_max * 2.5).abs() < 0.5,
+            "full charge × weak 2.5"
+        );
+    }
+
+    /// JS `segHit` crab branch: a round into a crablet hurts the crab, not
+    /// the boss body.
+    #[test]
+    fn round_flattens_a_crablet() {
+        let (mut boss, collision) = wired_boss();
+        // Crablet in front of the deck's low +Z faces (the arena has geometry
+        // at z ≈ 5.8 that would eat a ground-skimming round first).
+        let id = boss.spawn_crab(0.0, 0.35, 6.0, 0.0, 40.0);
+        let tuning = crate::embedded_tuning();
+        let layout = crate::embedded_tidewater();
+        let sw = SimWorld::new(&collision, &layout);
+        let mut a = Actor::new(0, 0, &tuning.player);
+        a.spawn_at(
+            vec3(0.0, 0.0, 6.5),
+            std::f32::consts::PI,
+            &sw,
+            &tuning.player,
+        );
+        a.aim_yaw = std::f32::consts::PI; // aim down -Z at the crab line
+        a.pos.y = -0.7; // muzzle lands on the crab line y = 0.35
+        let mut actors = vec![a];
+        let mut paint = crate::paint::PaintGrid::new(&collision);
+        let mut ps = ProjectileSim::new(5);
+        ps.fire_round(&actors[0], &straight_spec(30.0), 0.0, None);
+        for _ in 0..150 {
+            ps.step(
+                DT,
+                &collision,
+                &mut actors,
+                &mut paint,
+                &tuning.player,
+                &tuning.weapons,
+                &tuning.subs,
+                None,
+                Some(&mut boss),
+            );
+            if ps.list.is_empty() {
+                break;
+            }
+        }
+        assert!(ps.list.is_empty(), "the round died on the crab");
+        assert_eq!(boss.hp, 18000.0, "the body is untouched");
+        let crab = boss.crabs.iter().find(|c| c.id == id).unwrap();
+        assert!((crab.hp - 10.0).abs() < 0.5, "crab took the 30");
     }
 }

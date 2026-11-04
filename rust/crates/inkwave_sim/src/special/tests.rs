@@ -1641,6 +1641,7 @@ fn tr35_b2_storm_cloud_rain_dps_and_expiry() {
         &mut rng,
         Some(&remote[..]),
         t,
+        None,
     );
     // JS L1789: `damage(dps·dt)` — 34/60 this frame, local victim only.
     assert!(
@@ -1685,6 +1686,7 @@ fn tr35_b2_storm_cloud_rain_dps_and_expiry() {
         &mut rng,
         Some(&remote[..]),
         t,
+        None,
     );
     assert_eq!(actors[1].hp, hp, "JS L1771: no dps inside the 0.3 s tail");
     assert_eq!(
@@ -1704,6 +1706,7 @@ fn tr35_b2_storm_cloud_rain_dps_and_expiry() {
         &mut rng,
         Some(&remote[..]),
         t,
+        None,
     );
     assert!(objects.is_empty(), "JS L1793: `clouds.splice` at t ≥ dur");
     // A ghost cloud rains nothing (L1779 `!c.ghost` half of the guard) but
@@ -1731,6 +1734,7 @@ fn tr35_b2_storm_cloud_rain_dps_and_expiry() {
         &mut rng,
         None,
         t,
+        None,
     );
     assert_eq!(
         gactors[0].turf, 0.0,

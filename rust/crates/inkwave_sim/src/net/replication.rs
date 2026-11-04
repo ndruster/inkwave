@@ -528,7 +528,7 @@ impl Replication {
         w: &WeaponSet,
         sb: &SubSet,
         tr: &mut impl Transport,
-        mut boss: Option<&mut crate::boss::Boss<'_>>,
+        mut boss: Option<&mut crate::boss::Boss>,
     ) -> Vec<MatchEvent> {
         self.now += dt as f64;
 
@@ -1182,7 +1182,7 @@ impl Replication {
     /// `sim == false` branch of `Match::step`) consumes. The host never
     /// samples (its boss is authoritative). Runs after the actor samples and
     /// before `_playEvents` (JS L178 before L179).
-    fn sample_boss(&mut self, boss: Option<&mut crate::boss::Boss<'_>>, dt: f32) {
+    fn sample_boss(&mut self, boss: Option<&mut crate::boss::Boss>, dt: f32) {
         let Some(b) = boss else { return };
         if b.sim {
             return; // JS L506 `if (!b || b.sim) return`
@@ -1308,7 +1308,7 @@ impl Replication {
         t: &PlayerTuning,
         w: &WeaponSet,
         sb: &SubSet,
-        mut boss: Option<&mut crate::boss::Boss<'_>>,
+        mut boss: Option<&mut crate::boss::Boss>,
     ) {
         let due = self.playback.due_events();
         if due.is_empty() {
@@ -1784,7 +1784,7 @@ impl Replication {
         &mut self,
         m: &Match,
         tr: &mut impl Transport,
-        boss: Option<&mut crate::boss::Boss<'_>>,
+        boss: Option<&mut crate::boss::Boss>,
     ) {
         let ts = wire::r3(self.now) as f32;
         let mut actors = Vec::new();
@@ -1873,7 +1873,7 @@ impl Replication {
         payload: &str,
         m: &mut Match,
         t: &PlayerTuning,
-        boss: Option<&mut crate::boss::Boss<'_>>,
+        boss: Option<&mut crate::boss::Boss>,
     ) -> Option<ReplicationEvent> {
         let v = parse_json(payload)?;
         let k = v.field("k").and_then(JVal::as_str).unwrap_or("");
@@ -1994,7 +1994,7 @@ impl Replication {
         from: &str,
         v: &JVal,
         m: &mut Match,
-        boss: Option<&mut crate::boss::Boss<'_>>,
+        boss: Option<&mut crate::boss::Boss>,
     ) {
         let (tick, clock) = decode_tick(v);
         self.playback.on_tick(from, tick.ts as f64, self.now);
@@ -2174,7 +2174,7 @@ impl Replication {
     pub fn send_result(
         &self,
         m: &Match,
-        boss: Option<&crate::boss::Boss<'_>>,
+        boss: Option<&crate::boss::Boss>,
         tr: &mut impl Transport,
     ) {
         if !self.is_host() {
@@ -2260,7 +2260,7 @@ impl Replication {
         seed: u64,
         sim: &SimWorld,
         t: &PlayerTuning,
-        boss: Option<&mut crate::boss::Boss<'_>>,
+        boss: Option<&mut crate::boss::Boss>,
     ) {
         let new_owner = self.host_id.clone();
         // Iterate high→low: the noBots path prunes the parallel arrays.
@@ -2346,7 +2346,7 @@ impl Replication {
         ws: &WeaponSet,
         ranges: &HashMap<String, f32>,
         inputs: &mut [ActorInput],
-        boss: Option<&crate::boss::Boss<'_>>,
+        boss: Option<&crate::boss::Boss>,
     ) {
         if !self.bots.iter().any(|b| b.is_some()) {
             return;
@@ -5470,8 +5470,8 @@ mod tests {
         mg: &mut Match,
         rh: &mut Replication,
         rg: &mut Replication,
-        bmh: &mut crate::boss::BossMode<'_>,
-        bmg: &mut crate::boss::BossMode<'_>,
+        bmh: &mut crate::boss::BossMode,
+        bmg: &mut crate::boss::BossMode,
         sim: &SimWorld,
         t: &PlayerTuning,
         w: &WeaponSet,
@@ -5516,7 +5516,7 @@ mod tests {
     /// A point 3 m beside the boss — the boss's home ground is walkable by
     /// construction, and it is far outside the brain's pad keep-out
     /// (bossBrain.js L112), so the squidkid becomes a legal target there.
-    fn off_pad_target(boss: &crate::boss::Boss<'_>) -> Vec3 {
+    fn off_pad_target(boss: &crate::boss::Boss) -> Vec3 {
         vec3(boss.pos.x + 3.0, boss.pos.y + 0.2, boss.pos.z)
     }
 
@@ -5563,10 +5563,24 @@ mod tests {
         );
         // JS bossMode.js L21-23: two humans weigh 2 units; `sim` = !follower.
         let units = crate::boss::squad_units(2, 0, &f.tuning.boss.squad_units);
-        let mut bmh =
-            crate::boss::BossMode::new(&sim, &bnav, &f.tuning.boss, units, "normal", true, 45);
-        let mut bmg =
-            crate::boss::BossMode::new(&sim, &bnav, &f.tuning.boss, units, "normal", false, 46);
+        let mut bmh = crate::boss::BossMode::new(
+            &sim,
+            bnav.clone(),
+            f.tuning.boss.clone(),
+            units,
+            "normal",
+            true,
+            45,
+        );
+        let mut bmg = crate::boss::BossMode::new(
+            &sim,
+            bnav.clone(),
+            f.tuning.boss.clone(),
+            units,
+            "normal",
+            false,
+            46,
+        );
         let mut rh = Replication::new(&cfg, &h, &h);
         let mut rg = Replication::new(&cfg, &g, &h);
         rh.bind_match(&mut mh);
@@ -5702,10 +5716,24 @@ mod tests {
             Some(rules),
         );
         let units = crate::boss::squad_units(2, 0, &f.tuning.boss.squad_units);
-        let mut bmh =
-            crate::boss::BossMode::new(&sim, &bnav, &f.tuning.boss, units, "normal", true, 47);
-        let mut bmg =
-            crate::boss::BossMode::new(&sim, &bnav, &f.tuning.boss, units, "normal", false, 48);
+        let mut bmh = crate::boss::BossMode::new(
+            &sim,
+            bnav.clone(),
+            f.tuning.boss.clone(),
+            units,
+            "normal",
+            true,
+            47,
+        );
+        let mut bmg = crate::boss::BossMode::new(
+            &sim,
+            bnav.clone(),
+            f.tuning.boss.clone(),
+            units,
+            "normal",
+            false,
+            48,
+        );
         let mut rh = Replication::new(&cfg, &h, &h);
         let mut rg = Replication::new(&cfg, &g, &h);
         rh.bind_match(&mut mh);
@@ -5838,10 +5866,24 @@ mod tests {
             Some(rules),
         );
         let units = crate::boss::squad_units(2, 0, &f.tuning.boss.squad_units);
-        let mut bmh =
-            crate::boss::BossMode::new(&sim, &bnav, &f.tuning.boss, units, "normal", true, 49);
-        let mut bmg =
-            crate::boss::BossMode::new(&sim, &bnav, &f.tuning.boss, units, "normal", false, 50);
+        let mut bmh = crate::boss::BossMode::new(
+            &sim,
+            bnav.clone(),
+            f.tuning.boss.clone(),
+            units,
+            "normal",
+            true,
+            49,
+        );
+        let mut bmg = crate::boss::BossMode::new(
+            &sim,
+            bnav.clone(),
+            f.tuning.boss.clone(),
+            units,
+            "normal",
+            false,
+            50,
+        );
         let mut rh = Replication::new(&cfg, &h, &h);
         let mut rg = Replication::new(&cfg, &g, &h);
         rh.bind_match(&mut mh);
@@ -5971,10 +6013,24 @@ mod tests {
             Some(rules),
         );
         let units = crate::boss::squad_units(2, 0, &f.tuning.boss.squad_units);
-        let mut bmh =
-            crate::boss::BossMode::new(&sim, &bnav, &f.tuning.boss, units, "normal", true, 51);
-        let mut bmg =
-            crate::boss::BossMode::new(&sim, &bnav, &f.tuning.boss, units, "normal", false, 52);
+        let mut bmh = crate::boss::BossMode::new(
+            &sim,
+            bnav.clone(),
+            f.tuning.boss.clone(),
+            units,
+            "normal",
+            true,
+            51,
+        );
+        let mut bmg = crate::boss::BossMode::new(
+            &sim,
+            bnav.clone(),
+            f.tuning.boss.clone(),
+            units,
+            "normal",
+            false,
+            52,
+        );
         let mut rh = Replication::new(&cfg, &h, &h);
         let mut rg = Replication::new(&cfg, &g, &h);
         rh.bind_match(&mut mh);
@@ -6066,10 +6122,24 @@ mod tests {
             Some(rules),
         );
         let units = crate::boss::squad_units(2, 0, &f.tuning.boss.squad_units);
-        let mut bmh =
-            crate::boss::BossMode::new(&sim, &bnav, &f.tuning.boss, units, "normal", true, 53);
-        let mut bmg =
-            crate::boss::BossMode::new(&sim, &bnav, &f.tuning.boss, units, "normal", false, 54);
+        let mut bmh = crate::boss::BossMode::new(
+            &sim,
+            bnav.clone(),
+            f.tuning.boss.clone(),
+            units,
+            "normal",
+            true,
+            53,
+        );
+        let mut bmg = crate::boss::BossMode::new(
+            &sim,
+            bnav.clone(),
+            f.tuning.boss.clone(),
+            units,
+            "normal",
+            false,
+            54,
+        );
         let mut rh = Replication::new(&cfg, &h, &h);
         let mut rg = Replication::new(&cfg, &g, &h);
         rh.bind_match(&mut mh);

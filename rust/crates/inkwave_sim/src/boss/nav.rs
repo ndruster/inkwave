@@ -55,6 +55,11 @@ pub const KIND_DROP: u8 = 2;
 pub const KIND_PAD: u8 = 3;
 
 /// A 0.5 m navigation grid over the stage (JS `BossNav`, L18-234).
+///
+/// `Clone` (D-T45-9): the grid is pure derived data — the A* scratch buffers
+/// are transparent reuse, so a clone behaves identically. [`super::Boss`]
+/// owns one so it can be `'static` (a Bevy resource).
+#[derive(Clone)]
 pub struct BossNav {
     /// Grid step (m) — JS L21 hard-codes `0.5` (not a tuning constant).
     step: f32,

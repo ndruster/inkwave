@@ -3,10 +3,10 @@
 //! runs out (turf is shown, but secondary). The boss's HP scales with the
 //! squad (humans 1.0, bots 0.6) and difficulty.
 //!
-//! Ownership (Task 44 §2, key decision): [`crate::boss::Boss`] borrows the
-//! nav grid / world / tuning, so [`crate::match_::Match`] cannot hold it
-//! (self-referential). This [`BossMode`] wrapper lives in the *driver layer*
-//! (autopilot / nettest / the game loop) and is passed into
+//! Ownership (Task 44 §2, key decision; revised by D-T45-9): [`crate::boss::Boss`]
+//! owns its nav grid / collision / tuning outright, so this [`BossMode`]
+//! wrapper is `'static` — the driver layer (autopilot / nettest / the game
+//! loop) can hold it across frames (a Bevy `Resource`) and pass it into
 //! [`crate::match_::Match::step`] frame by frame; the match only keeps the
 //! [`crate::tuning::BossModeRules`] data slice.
 //!
@@ -70,15 +70,17 @@ pub struct BossOutcome {
 /// JS `class BossMode` (bossMode.js L17-55): owns the boss entity, the finish
 /// conditions and the result. The driver constructs it (with the boss HP
 /// scaled per L22) and hands it to [`crate::match_::Match::step`].
-pub struct BossMode<'a> {
-    pub boss: Boss<'a>,
+/// D-T45-9: no lifetime — [`Boss`] owns its nav / tuning / collision, so this
+/// wrapper is `'static` and the app layer can hold it across frames.
+pub struct BossMode {
+    pub boss: Boss,
     /// JS `this.won` (L25).
     won: bool,
     /// JS `this.killT` (L26): remaining clock at the kill, `-1` while alive.
     kill_t: f32,
 }
 
-impl<'a> BossMode<'a> {
+impl BossMode {
     /// JS constructor (bossMode.js L18-28), minus the `match` back-reference
     /// (the driver passes `remaining` into [`Self::update`] instead).
     /// `units` is the squad weight (JS L21 sums team 0 through L15);
@@ -88,9 +90,9 @@ impl<'a> BossMode<'a> {
     /// empty string to `'normal'`).
     #[must_use]
     pub fn new(
-        world: &'a SimWorld<'a>,
-        nav: &'a BossNav,
-        tb: &'a tuning::Boss,
+        world: &SimWorld,
+        nav: BossNav,
+        tb: tuning::Boss,
         units: f32,
         difficulty: &str,
         sim: bool,
@@ -202,11 +204,11 @@ mod tests {
             ("normal", 93_600.0),
             ("hard", 121_680.0),
         ] {
-            let bm = BossMode::new(&world, &nav, &tb.boss, units, diff, true, 1);
+            let bm = BossMode::new(&world, nav.clone(), tb.boss.clone(), units, diff, true, 1);
             assert_eq!(bm.boss.max_hp, want, "{diff} maxHp");
         }
         // Unknown difficulty: JS L22 `?? 1` fallback.
-        let bm = BossMode::new(&world, &nav, &tb.boss, units, "", true, 1);
+        let bm = BossMode::new(&world, nav.clone(), tb.boss.clone(), units, "", true, 1);
         assert_eq!(bm.boss.max_hp, 93_600.0);
     }
 }

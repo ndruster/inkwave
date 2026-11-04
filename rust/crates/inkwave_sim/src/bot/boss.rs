@@ -44,7 +44,7 @@ impl Bot {
         dt: f32,
         a: &mut Actor,
         ctx: &BotCtx<'_>,
-        boss: &Boss<'_>,
+        boss: &Boss,
     ) -> ActorInput {
         let mut it = ActorInput::default();
         let (kind, wr) = ctx.own(self.team, self.slot);
@@ -386,7 +386,7 @@ impl Bot {
     /// crablet that's closing in, else the part of the boss worth hitting
     /// that it can see (sticky pick; the open belly and, for chargers / the
     /// disciplined, the eyes score down).
-    fn boss_perceive(&mut self, a: &Actor, ctx: &BotCtx<'_>, boss: &Boss<'_>, kind: WeaponKind) {
+    fn boss_perceive(&mut self, a: &Actor, ctx: &BotCtx<'_>, boss: &Boss, kind: WeaponKind) {
         // JS L1983: the boss eye height is 1.2 (not the duel `EYE_Y`).
         let eye = Vec3::new(a.pos.x, a.pos.y + 1.2, a.pos.z);
         let col = ctx.world.collision;
@@ -518,7 +518,7 @@ impl Bot {
     /// weapon range off its flank (not in front: slams, sweeps and charges
     /// go that way), clear of the other bots, seeing it. When it's stunned
     /// everyone rushes the belly; rollers keep the squad's routes clean.
-    fn boss_goal(&mut self, a: &Actor, ctx: &BotCtx<'_>, boss: &Boss<'_>, kind: WeaponKind) {
+    fn boss_goal(&mut self, a: &Actor, ctx: &BotCtx<'_>, boss: &Boss, kind: WeaponKind) {
         let r = self.rng.next_f32();
         self.goal_timer = 2.4 + r * 2.0;
         // JS L2029: the phase-3 roll is only taken when it isn't stunned.
@@ -634,7 +634,7 @@ impl Bot {
     /// JS `_bossEvade(boss, th)` (bots.js L2070-2087): out of a telegraph —
     /// the reachable spot nearby with the least danger, biased along the
     /// escape direction.
-    fn boss_evade(&mut self, a: &Actor, ctx: &BotCtx<'_>, boss: &Boss<'_>, th: &Threat) {
+    fn boss_evade(&mut self, a: &Actor, ctx: &BotCtx<'_>, boss: &Boss, th: &Threat) {
         let mut best = usize::MAX;
         let mut bs = f64::NEG_INFINITY;
         for _ in 0..12 {
@@ -800,7 +800,7 @@ mod tests {
         paint: &'a PaintGrid,
         sim: &'a SimWorld<'a>,
         actors: &'a [Actor],
-        boss: Option<&'a Boss<'a>>,
+        boss: Option<&'a Boss>,
     ) -> BotCtx<'a> {
         BotCtx {
             t: &f.tuning.player,
@@ -878,8 +878,8 @@ mod tests {
         let bnav = BossNav::new(&sim, &f.tuning.boss.nav);
         let mut boss = Boss::new(
             &sim,
-            &bnav,
-            &f.tuning.boss,
+            bnav.clone(),
+            f.tuning.boss.clone(),
             BossConfig {
                 max_hp: 18000.0,
                 difficulty: "normal",
@@ -928,8 +928,8 @@ mod tests {
         let mk_boss = |with_crab: bool| {
             let mut boss = Boss::new(
                 &sim,
-                &bnav,
-                &f.tuning.boss,
+                bnav.clone(),
+                f.tuning.boss.clone(),
                 BossConfig {
                     max_hp: 18000.0,
                     difficulty: "normal",
@@ -991,8 +991,8 @@ mod tests {
         let bnav = BossNav::new(&sim, &f.tuning.boss.nav);
         let mut boss = Boss::new(
             &sim,
-            &bnav,
-            &f.tuning.boss,
+            bnav.clone(),
+            f.tuning.boss.clone(),
             BossConfig {
                 max_hp: 18000.0,
                 difficulty: "normal",
@@ -1055,8 +1055,8 @@ mod tests {
         let bnav = BossNav::new(&sim, &f.tuning.boss.nav);
         let mut boss = Boss::new(
             &sim,
-            &bnav,
-            &f.tuning.boss,
+            bnav.clone(),
+            f.tuning.boss.clone(),
             BossConfig {
                 max_hp: 18000.0,
                 difficulty: "normal",

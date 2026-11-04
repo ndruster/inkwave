@@ -397,3 +397,62 @@ Boss 联网语义全量接线（协议不改，Rust 对齐 JS）：host tick `ms
 - **D-T45-12 测试定标**：TR-45.1 ① 路径收敛取「近 120 帧最优差 <0.5m + 末帧 <6m」（播放延迟 85-300ms × boss 速度，12m 断线滑移准下 6m 可接受，评审 P2-4 在案）；② bhit 对账（log.recv/sent、recv_dmg/sent_dmg、host hp 差、stats_by_nid 归属）；③ 迁移无缝（sim/err/brain/follower/pos 连续/bt 推进六断言）；④ ['bm'] 重放逐条 (t0,id) 相等；⑤ res 结算逐项 + 时钟不钉零；NFR-M4-3 最坏满快照（8 小蟹+move_rec）tick <65536B。harness 注：guest actor 需传送至 boss 旁 3m + invuln（bossBrain L112 pad 排除会跳过蹲出生点的待机 actor，否则 boss 永不索敌）。
 - **D-T45-13 评审处置**：0 P0；P1-1 时序（drain 移 send_tick 后 + spec §2/§5 更正 + 注释重写）、P1-2 FX 回推——当场修复并复验；P2-1 本节回填、P2-2 net-smoke 注释更正、P2-3 注释行号 L544→L546-547、P2-4 门限在案（不改）。
 - **基线**：`inkwave_sim` 572→**578** passed（+6：tr45_1_1~5 + nfr_m4_3）；`inkwave` 69 passed；workspace 675 全绿；`cargo tree -p inkwave_sim` 依赖面不变；wire.rs/JS 树/server/ 零改动。
+
+## Task 46 实施设计（2026-11-04，实读锚点后定稿）
+
+### §0 目标
+Boss 呈现占位档（FR-M4-7）：bevy 体块剪影（集装箱壳/双钳/眼柄/步行腿，st 契约驱动）+ telegraph 标记（slam 环/barrage 目标圈+桶/sweep 扇形+光束/charge 车道/frenzy 圈）+ crablet 体块 + HUD boss 条（name/HP/phase notches/stun OPEN/伤害 chip）+ intro title card + 结算 boss 形态（VICTORY/DEFEAT/bossDmg/weakHits）+ bossAudio 占位。同时收口移交项：**D-T45-9**（app 层 boss 实体驱动——Boss owned 重构使 Bevy Resource 可跨帧持有）、**D-T44-5**（离线 Play 菜单 boss 选择）、**D-T43-8**（HazardFX 呈现档）、**D-T45-3**（boss FX 事件 app 消费）、**D-T45-11**（wasm seam guest 侧 boss 实体驱动探针）。只求「可玩且可读」；高保真模型 Non-Goal。
+
+### §1 JS 锚点（本窗口实读）
+- `bossModel.js` L71（st 契约初值形态：speed/turn/move/moveT/movePhase/phase/stunned/hurt/dead/aim）、L76-123（update：phase 变色/crack/enrage/dead 压平/hitShapes active 规则）、L175-242（Crablet：tumble 0.55s/三脚架腿/snap 钳/pop 0.14s 肿胀+闪+墨 burst）。
+- `bossHazards.js` L357-600（HazardFX.draw：slam tele 目标圈 `fx.mark(HZ.slamR, k=u/tele)` + 冲击环 `ringRadius(m,k,u)`/`ringStart` 逐 ring、reach 裁边；barrage 目标圈（`min(tele*0.4, b[3]-0.5)` 起、land 脉冲）+ 桶下落 `barrelPos(p,b,k)`；sweep 扇形 fan（lo→hi、radius=min(beamLen,reach)）+ 光束 `beamAngle(m,u)` 圆柱；charge 车道 plane（`chargeDist` 前移、`p.L+4.2-s` 长、5.0 宽）；frenzy 全圆 fan（frenzyR）+ 旋转喷射（粒子，占位档可省））。
+- `hud-boss.js` 全 524 行：S 状态机（`_fresh` L45-49：hp/shown/chip/chipHold/notch break/stunT/shieldT/introT 填充曲线 L300-314、chip 滞后排放 L311-313）、`_hp` L162-181（chip 新段条件 `chip<=shown+0.003`→hold 0.6s、notch 跨界 is-past/is-break）、`_writeBar` L336-346（量化 4000 档、pct ceil、low ≤0.2）、`_move` L183-195（tele/act/rec callout 生命周期）、`_stun` L232-241（openT=stunDur、OPEN!）、`_phase` L243-255（pips/shield 1.8s/phase3 cracked emblem/banner 文案 `PHASE 2!`/`SHELL CRACKED!`）、`_defeat` L257-266（SUNK! 1.3s 后 is-gone）、`_intro` L152-160（title card + shown 从 0 填充）、`_ending` L474-494（SUNK! / TIME'S UP!）、`prompt` L278-282、`squadTeams` L284-289。
+- `boss-art.js` L19-24（BOSS_NAME/BOSS_EPITHET/MOVE_LABELS：SLAM!/INCOMING!/SWEEP!/CHARGE!/BROOD!/FRENZY!/OPEN!）、L136-157（MOVE_ICONS 六招+open）。
+- `bossMode.js` L44-52（result boss 形态 `{name,win,time,hp,maxHp,phase}`——res 数据面 Task 45 已通）。
+- `bossAudio.js` L84-113（move×phase→SFX 全表：slam:tele→boss_tele、slam:act→+0.12s boss_slam、barrage:tele→boss_tele pitch1.12、barrage:act→n=3+rand3 组 whistle/barrel 链、sweep:tele→charge 循环、sweep:act/rec→loop 开关、charge:tele→tele+0.2s roar、charge:act/rec→gallop loop、crablets:tele→pitch1.25、crablets:act→chitter+0.3s、frenzy:tele→roar、frenzy:act/rec→frenzy loop）、L114-176（hit/crit 去重门 0.06/0.07/0.3、stun→crash+0.35s dizzy loop、phase→boss_phase+roar、defeat→duck+sunk 1.35s、foot/impact/fx bonk/hatch、crablet spawn/pop pitch killed?1.1:0.85）、L9（TRACK 表 1/2/3→boss/boss_2/boss_3）。
+- `weapons.js` L1650-1665（`_bossImpact`：volley 去重 key=crab|boss、drop 距离衰减 `lerp(dmg,dmgFar,d/7)`、roller flick 0.3s ×0.12、`G.boss.hit(owner,dmg,target,wid||type,at)`）+ L272/L616/L1262（roller/brush/charger 直连）+ splash 族调用点（weapons L1506/1708/1781、subs L566/582、specials L77、kits 各件）。
+
+### §2 设计
+- **D-1 Boss owned 重构（批次 A，解 D-T45-9）**：`Boss<'a>`→`Boss`：`nav: BossNav`/`tb: tuning::Boss`/`collision: CollisionWorld`+`layout: StageLayout`（方法内局部构 `SimWorld::new`）；`BossMode` 随之 'static。netmatch/autopilot/match_/bot.rs/tests 机械适配，行为零变化、578 基线钉死。app 层 `DemoSim`/`NetMatchState` 因此可持 `bm: Option<BossMode>`。
+- **D-2 弹丸→boss 接线（批次 A）**：武器管线接 `boss.hit/splash/rain` ≡ JS `_bossImpact` 语义（volley 去重/drop 衰减/flick 窗口逐式）+ roller/brush/charger 直连；boss None 时逐字节不变。难等价件如实登记顺延。
+- **D-3 app 层 boss 局驱动（批次 B）**：`DemoSim` 增 boss 模式——`replay_boss(opts)`：squad 8 建队（match 已支持 BossMode::with_roster_mode）+ `BossMode::new`（units=squad_units(1,7) ×hpDiff 公式 ≡ bossMode.js L21-22）；`step_once` 传 `Some(&mut bm)` + `BotCtx::boss Some`；boss 事件（`BossEvent` 流 + FX 回推 D-T45-3）导出到 `BossHudEvents` Resource 供 HUD/音频消费（每帧 drain）。离线 Play 菜单：mode cycle 第三档 boss → `replay_boss`（D-T44-5）。nettest wasm seam：host 侧 bm 驱动 + guest B 探针（D-T45-11 收口，沙箱 DEGRADED 口径不变）。
+- **D-4 呈现实体（批次 C，world.rs/新 boss_render.rs）**：体块剪影=集装箱壳（box）+双钳（box 组）+眼柄（柱+球×2）+步行腿（4-6 柱），变换读 `BossSt`（speed/turn 步频摆动、move/movePhase 钳举/俯冲、stunned 倾斜、dead 压平 ≡ bossModel.js L86-101 简化档）；位置=boss.pos/yaw。telegraph 标记=每帧读 `hz.moves` 活跃集（`hz_current` 等价查询）→ 平面 mesh（圈=Circle 描边档、环=按 ringRadius 缩放 Circle、扇形=triangle fan、车道=Rectangle、桶=小圆柱 barrelPos）；颜色 boss ink（team1）。crablet=体块（壳+腿简档）+ pop 0.14s 肿胀缩放 ≡ Crablet L222-234。
+- **D-5 HUD boss 条（批次 C）**：纯函数状态机 `BossHudState`（S 字段全表 ≡ hud-boss.js `_fresh`/`_hp`/update 缓动/chip 排放/notch/pips/stun/phase/intro 填充）+ 事件输入（BossEvent 流）→ 单测钉值（TR-46.1 纯函数档）；渲染=文本/矩形占位档（name/百分比/pips/stun OPEN!/callout 文案 MOVE_LABELS）；title card（BOSS_NAME 字卡 ~3.2s ≡ _titleCard）+ phase banner + SUNK!/TIME'S UP! ending；结算 boss 行（VICTORY/DEFEAT + bossDmg/weakHits chip，数据=res BossOutcome+stats）。
+- **D-6 bossAudio 占位（批次 C）**：M1 占位档风格——事件→SFX 名映射表 ≡ bossAudio.js 全表（含去重门/延迟链/loop 开关的触发计数），无真合成（Phase C Task 50 替换）；触发计数单测。
+
+### §3 实施批次（委派）
+- **批次 A**（sim）：D-1 + D-2。基线 578/69/675 全绿钉死。
+- **批次 B**（app 驱动）：D-3。依赖 A。headless 600 帧 boss 局不 panic。
+- **批次 C**（app 呈现）：D-4/D-5/D-6。依赖 B（事件流+状态面）。
+- 评审：独立 agent 对照 §1 锚全量核。门禁九段（TRUNK DEGRADED 口径）。
+
+### §4 测试
+- TR-46.1：无头冒烟（headless 600 帧 boss 局不 panic + 结算到达）+ wasm 加载冒烟；`BossHudState` 纯函数单测（hp 缓动/chip 排放/notch 跨界/pips/stun OPEN 时长/phase 门/intro 填充曲线逐值钉）；弹丸→boss 接线测试（批次 A 内）；bossAudio 事件→触发计数表测试。
+- TR-46.2：REVIEW_CHECKLIST 登记 GPU 视觉项（剪影轮廓/telegraph 可读性/HUD boss 条布局/title card/结算行/crablet pop）。
+
+### §5 风险
+- owned 重构波及面大（netmatch/autopilot/tests）——机械适配+基线钉死兜底。
+- 无 GPU：呈现实体只验「spawn 不 panic + 几何求值正确」，观感全走 REVIEW_CHECKLIST。
+- 弹丸接线若与 Rust 武器管线形态冲突（kits 各件），如实登记顺延不硬凑。
+- DemoSim boss 局确定性：boss 时钟 bt 与 match 时钟双轨（Task 45 res 停钟已处理），无头冒烟断言到达 finish。
+
+### §6 验收
+AC-M4-4（boss 呈现部分）：可玩（弹丸掉血/胜负可达）+ 可读（剪影/telegraph/HUD 条/结算）+ 双轨口径。
+
+### §8 实施后定案（2026-11-04，批次 A/B/C + 独立评审 0P0/4P1/4P2 全处置）
+- **D-T46-1 owned 重构（D-T45-9 解）**：`Boss`/`BossMode` 去生命周期——`nav: BossNav`/`tb: tuning::Boss`/`collision: CollisionWorld` 按值持有（`Boss::new(world,&nav,tb,cfg)` 构造时 clone），方法内局部构 `SimWorld::new`。适配 netmatch/autopilot/match_/bot.rs/tests/inkwave 全调用点，行为零变化（578 基线钉死）。Bevy Resource 可跨帧持有 BossMode。
+- **D-T46-2 弹丸→boss 接线**：管线注入 `BossRef = Option<&mut Boss>`（None=非 boss 局逐字节不变，578 基线背书）；接线点 ≡ JS 锚：step_one `seg_hit` 优先序（weapons.js L1621-1624）、`boss_impact` drop 衰减 `lerp(dmg,dmgFar,d/7)` + flick 0.3s×0.12（新字段 `Actor::flick_boss_t`，L1651-1665）、blast_burst `direct!=='boss'` 才 splash（L1708）、bomb 弹开+explode splash wid='bomb'（L1719-1727/L1506）、charger 光束截断（L1258-1263）、roller/brush 直连（L268-273/L612-617）、rain（world.js L1776）。**wid 坍缩**：Rust 弹丸无 `p.wid` → "blaster"/"drop"/"shot"（BOSS.weapon 表 boss.js L22 无此三键，倍率全 ×1，行为等价）。**未接线（顺延注记）**：subs/specials 直伤链（waddle/torpedo/shaker/sticky/seeker/burst——specials.js 链非 weapons.js 弹丸管线）、kits bow/mitts/brolly 近战直伤；`p.vol` volley 去重与 slosh-head 经评审核实不可达（`p.vol`/`head` 仅退役 slosher 设置，JS `_bossImpact` 对 bucket 本不去重）。新增 `weapon_wiring_tests` 4（weak ×2.5=75 钉值/flick 比值/charger 全额/crab 分支）。
+- **D-T46-3 DemoSim boss 面**：`bm: Mutex<Option<BossMode>>`（Mutex 非为竞争——`BossNav` 的 A* scratch `RefCell/Cell` 使 BossMode `Send` 非 `Sync`，Bevy Resource 需两者；恒单系统持锁）+ `boss_events: Vec<BossEvent>` 每帧 drain（≡ JS `emit('boss:*')` 总线，D-T45-3 收口）。`replay_boss`：roster 8 槽 + maxHp ≡ bossMode.js L21-22（`round(18000×(1+7×0.6)×hpDiff)`，三档钉 93,600/70,200/121,680）；`step_once` 锁内推进 + `BotCtx::boss Some`；turf 路径 bm None 逐帧不变（评审核实）。
+- **D-T46-4 离线菜单**：新增 MODE 按钮两档 cycle `turf→boss`（`Action::ModeCycle`）+ 难度固定 normal（bossMode.js L23 默认）。**两档声明**：JS 三卡含 zones（menus.js L954-963，boss 卡 beta+NEW!），但离线 zones demo 为 M3 起缺口（DemoSim 无 zones 路径），zones 卡随离线 zones demo 落地再开。
+- **D-T46-5 在线 boss 局**：`match_link::start_net_match` `cfg.mode=="boss"` 双端构造 BossMode（≡ netmatch.js L164-171；`sim: !m.follower` guest 纯跟随插值；units=`squad_units(humans,bots)`）；nettest guest 侧 `[nettest] boss B recv=<n>` 探针（**D-T45-11 收口**；JS smoke 未 grep 该行——tools/ 冻结，登记台账）。
+- **D-T46-6 剪影**：壳 `Cuboid(2.44,2.6,6.06)` 长轴沿 z（CONT hl=3.03 沿 z，bossModelGeo.js L274/L436——评审 P1-1 修正横放错误）+ pitch 绕 X；双钳 ARMS W（±2.02,1.05,4.3）；眼柄 stalk 柱（0.11,0.42）+ 眼球 r0.28（L311）；6 腿柱（feet z 3.55/0.3/−3.45、x ±3.4，L281-283）；st 驱动简档：speed 腿摆/turn 倾/tele 钳举/slam act 俯冲/stunned 垂/dead 压平 0.35/hurt 闪/phase≥3 红移（bossModel.js L86-101）。
+- **D-T46-7 telegraph 标记**：slam 圈（`slam_r`+tele 进度 k）/环带（`ring_start`/`ring_radius`/alpha 15-19 软边）；barrage 圈（`barrel_show`/`barrel_mark_k`）/桶（`barrel_pos`，Cylinder 0.42/0.475 ≡ L423）；sweep 扇（`sweep_span` fan 顶点，y=record `y`+0.05 地面——评审 P1-2 修正悬空；alpha `0.55+0.45·min(1,k·1.5)`——P1-4）/beam（`beam_angle`，长 3D hypot 含 `p.y+0.3−p.oy`——P1-3）；charge 车道（`charge_dist`、`max(0.5,L+4.2−s)`、宽 5.0）；frenzy 全圆（`frenzy_r`）。**占位简化声明**：环/扇无墙体裁边（`hz_reach`/`hz_beam_len` 需 `&mut` per-move 缓存，只读锁不可用；beamLen 常数 17）。
+- **D-T46-8 crablet 体块**：crabs→小壳+4 腿；pop 肿胀 `1+0.45u²`/0.14s 后隐藏（bossModel.js L222-234）。非 boss 局零实体（bm None 一次锁检查返回）。
+- **D-T46-9 BossHudState**：纯函数 S 机（ui/boss_hud.rs，零 Bevy）——JS `S` L45-49 全字段 1:1 + intro 填充/chip_hold 0.6s/notch [⅔,⅓] 下穿锁存/`_writeBar` 4000 档量化/OPEN! 倒计时/PHASE 2!·SHELL CRACKED! banner/title 3.2s/ending 5.2s/is-gone 1.3s/SUNK!。**Move callout 帧间边沿合成**（sim `Move` 每 move 一事件 ≠ JS per-phase——D-T43-5 预告落地）。未移植 DOM 效应：tele hover cue（L191）/`is-zero` 闪（L180），模块头声明。
+- **D-T46-10 BossAudioDirector**：占位档事件→`BossCue` 记录表 ≡ bossAudio.js L84-176（move×phase 15 行 + intro/hit·crit 三门 0.06/0.07/0.3/stun→crash+dizzy `at:0.35`（评审 P2-3 修）/phase/defeat duck+sunk 1.35s/crablet spawn·pop pitch killed?1.1:0.85/TRACK 1/2/3 + playing/ended 边沿 Music 切换）；barrage 随机用确定性 LCG；**dead 门**（L85/L115/L124，评审 P2-3 补）。未移植：foot/impact/fx cue（sim 未发对应事件）；loop maxDur 用 JS fallback 常数 2.7/2.3/3.3。
+- **D-T46-11 结算 boss 行**：results a 行加 PHASE；stats_rows boss 模式 per-player dmg/weak/splats 列 + `BOSS DMG Σ WEAK Σ` 总计行（≡ main.js L960-961 + menus.js L4031-4040；离线 nid==slot，match_.rs L1432）；非 boss 格式不变。VICTORY/DEFEAT ≡ bm.result()（bossMode.js L44-52）。
+- **D-T46-12 评审与处置**：独立评审 0 P0/4 P1/4 P2——P1 全修（壳长轴/sweep 扇悬空/beam 长 y 分量/alpha ×1.5 斜坡）、P2 全修（Cylinder 参数序 stalk/leg/barrel、head z 1.55、腿 z 引脚值、dizzy 0.35 延迟、dead 门、hover/is-zero 声明）；评审自核 volley/slosh 不可达声明属实、maxHp 三档钉值、_step 优先序、HUD 全时序公式、bossAudio 全表。
+- **D-T46-13 门禁复跑收口**：TRUNK 首跑 rc=1 实为真实编译错（震屏段 `elapsed_seconds`≠Bevy 0.19 `elapsed_secs`，E0599）——非 D-T40-1 的 wasm-bindgen SIGKILL，不适用 DEGRADED 口径；修复后 attempt 1 即成功。TEST 段暴露概率性 flake `run_boss_lose_branch`：`stats_by_nid` 为 `HashMap`，实例级随机种子使迭代序异 → f32 求和序异 → 同种子两跑 `boss_dmg` 差 0.004（逐玩家值确定，故 result JSON 比对先过）。修复=按 nid 排序后求和（autopilot.rs TR-44.1 对账段）；复验 30/30 + workspace 711 全绿。
+- **headless 冒烟**：`--headless --mode boss` 600 帧不 panic（bt≈10、hp 满、events≥3 含 Intro/Move——无玩家输入不掉血，符合预期）；turf 回归 exit 0。
+- **基线**：`inkwave_sim` 582（578+4 接线）/`inkwave` 101（74→+8 C1+19 C2）/workspace **711** passed 全绿；`cargo tree -p inkwave_sim` 依赖面不变；JS 树/wire.rs/PROTO/fixture 零改动。
+- **九段门禁**：`rust/tools/verify/logs/task46-gates-20261104T174853Z.log` — FMT/CLIPPY/TEST(**workspace 711 passed**=675+36，inkwave 101/inkwave_sim 582)/WASM/TREE/DETERM/XCHK(10/10)/TRUNK(**attempt 1 成功 rc=0**，D-T46-13 的 `elapsed_secs` 编译错修复后不再适用 D-T40-1 SIGKILL 口径)/HEADLESS(turf 600 帧 + boss 600 帧 双跑)/JS_TREE_CLEAN **全绿**。

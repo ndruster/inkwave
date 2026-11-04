@@ -334,7 +334,7 @@ fn push(out: &mut Threat, lvl: f64, dx: f64, dz: f64) {
 // impl Boss — the hazard bookkeeping + victim-side damage + host paint
 // ---------------------------------------------------------------------------
 
-impl<'a> Boss<'a> {
+impl Boss {
     /// JS `add(m)` (bossHazards.js L80-85): idempotent by `t0` (net replays,
     /// host migration); the move is logged for the audit.
     pub fn hz_add(&mut self, m: JVal) -> bool {
@@ -549,7 +549,7 @@ impl<'a> Boss<'a> {
                             && along < len + 0.4
                             && lat < f64::from(hz.beam_w) + player_radius
                             && apy < p_y + 2.4
-                            && self.world.collision.los(
+                            && self.collision.los(
                                 vec3(p_ox as f32, p_oy as f32, p_oz as f32),
                                 vec3(apx as f32, (apy + 0.9) as f32, apz as f32),
                             )
@@ -618,7 +618,7 @@ impl<'a> Boss<'a> {
                         // JS L181: the spray, cover-checked.
                         if h_dist(apx, apz, p_x, p_z) < f64::from(hz.frenzy_r)
                             && apy < p_y + 3.0
-                            && self.world.collision.los(
+                            && self.collision.los(
                                 vec3(p_x as f32, (p_y + 1.6) as f32, p_z as f32),
                                 vec3(apx as f32, (apy + 0.8) as f32, apz as f32),
                             )
@@ -757,7 +757,7 @@ impl<'a> Boss<'a> {
         let beam_len = f64::from(self.tb.hz.beam_len);
         // JS L224-226: raycast from the emitter, `skipGrates = true`.
         let a = f64::from(key) / 90.0;
-        let h = self.world.collision.raycast(
+        let h = self.collision.raycast(
             vec3(
                 rec_p_f64(m, "ox") as f32,
                 (rec_p_f64(m, "y") + 1.0) as f32,
@@ -931,7 +931,7 @@ impl<'a> Boss<'a> {
             return; // JS L237
         }
         // JS L238: `_v.set(x, y + 1.5, z)` DOWN 4, skipGrates = true.
-        let g = self.world.collision.raycast(
+        let g = self.collision.raycast(
             vec3(x as f32, (y + 1.5) as f32, z as f32),
             Vec3::NEG_Y,
             4.0,
@@ -1142,7 +1142,7 @@ mod tests {
 
     use super::super::{BossConfig, nav::BossNav};
 
-    fn with_boss<T>(f: impl FnOnce(&mut Boss<'_>) -> T) -> T {
+    fn with_boss<T>(f: impl FnOnce(&mut Boss) -> T) -> T {
         let layout = crate::embedded_tidewater();
         let collision = CollisionWorld::from_layout(&layout);
         let tuning = crate::embedded_tuning();
@@ -1150,8 +1150,8 @@ mod tests {
         let nav = BossNav::new(&world, &tuning.boss.nav);
         let mut boss = Boss::new(
             &world,
-            &nav,
-            &tuning.boss,
+            nav,
+            tuning.boss.clone(),
             BossConfig {
                 max_hp: 18000.0,
                 difficulty: "normal",
@@ -1333,7 +1333,7 @@ mod tests {
         }
     }
 
-    fn with_squad<T>(sim: bool, seed: u64, f: impl FnOnce(&mut Boss<'_>, &mut Kit) -> T) -> T {
+    fn with_squad<T>(sim: bool, seed: u64, f: impl FnOnce(&mut Boss, &mut Kit) -> T) -> T {
         let layout = crate::embedded_tidewater();
         let collision = CollisionWorld::from_layout(&layout);
         let tuning = crate::embedded_tuning();
@@ -1341,8 +1341,8 @@ mod tests {
         let nav = BossNav::new(&world, &tuning.boss.nav);
         let mut boss = Boss::new(
             &world,
-            &nav,
-            &tuning.boss,
+            nav,
+            tuning.boss.clone(),
             BossConfig {
                 max_hp: 18000.0,
                 difficulty: "normal",
@@ -1462,7 +1462,7 @@ mod tests {
 
     /// A heading from the home emitter where the beam runs long and the
     /// eye-line is clear (Tidewater-measured, not assumed).
-    fn open_beam_heading(boss: &mut Boss<'_>, hx: f64, hy: f64, hz: f64) -> f64 {
+    fn open_beam_heading(boss: &mut Boss, hx: f64, hy: f64, hz: f64) -> f64 {
         let probe = sweep_rec(-5.0, hx, hy + 2.3, hz, hy, 0.0, 0.0, 0.5, 1.0);
         for k in 0..48 {
             let a = f64::from(k) / 48.0 * TAU;
@@ -1470,7 +1470,7 @@ mod tests {
                 continue;
             }
             let (ax, az) = (hx + a.sin() * 6.0, hz + a.cos() * 6.0);
-            let ay = f64::from(boss.world.collision.ground_height(
+            let ay = f64::from(boss.collision.ground_height(
                 ax as f32,
                 az as f32,
                 (hy + 2.0) as f32,
@@ -1479,7 +1479,7 @@ mod tests {
             if !ay.is_finite() || (ay - hy).abs() > 0.7 {
                 continue;
             }
-            if boss.world.collision.los(
+            if boss.collision.los(
                 vec3(hx as f32, (hy + 2.3) as f32, hz as f32),
                 vec3(ax as f32, (ay + 0.9) as f32, az as f32),
             ) {
@@ -1489,7 +1489,7 @@ mod tests {
         panic!("no clear beam heading from the Tidewater home emitter");
     }
 
-    fn splat_count(boss: &mut Boss<'_>) -> usize {
+    fn splat_count(boss: &mut Boss) -> usize {
         boss.drain_events()
             .into_iter()
             .filter(|e| matches!(e, BossEvent::Splat { .. }))
@@ -1829,7 +1829,7 @@ mod tests {
                 for k in 0..64 {
                     let a = f64::from(k) / 64.0 * TAU;
                     let (ax, az) = (hx + a.sin() * d, hz + a.cos() * d);
-                    let ay = f64::from(boss.world.collision.ground_height(
+                    let ay = f64::from(boss.collision.ground_height(
                         ax as f32,
                         az as f32,
                         (hy + 2.0) as f32,
@@ -1838,7 +1838,7 @@ mod tests {
                     if !ay.is_finite() || (ay - hy).abs() > 1.5 {
                         continue;
                     }
-                    if boss.world.collision.los(
+                    if boss.collision.los(
                         vec3(hx as f32, (hy + 2.3) as f32, hz as f32),
                         vec3(ax as f32, (ay + 0.9) as f32, az as f32),
                     ) {
@@ -2000,8 +2000,8 @@ mod tests {
         let nav = BossNav::new(&world, &tb.boss.nav);
         let mut host = Boss::new(
             &world,
-            &nav,
-            &tb.boss,
+            nav.clone(),
+            tb.boss.clone(),
             BossConfig {
                 max_hp: 18000.0,
                 difficulty: "normal",
@@ -2011,8 +2011,8 @@ mod tests {
         );
         let mut guest = Boss::new(
             &world,
-            &nav,
-            &tb.boss,
+            nav,
+            tb.boss.clone(),
             BossConfig {
                 max_hp: 18000.0,
                 difficulty: "normal",
@@ -2127,7 +2127,7 @@ mod tests {
     fn paint_rejects_points_at_or_below_water() {
         with_squad(true, 7, |boss, kit| {
             // JS L239: no ground hit (open sea) → no splat.
-            let bx = f64::from(boss.world.collision.bounds.max_x);
+            let bx = f64::from(boss.collision.bounds.max_x);
             let (hx, hy, hz) = (
                 f64::from(boss.pos.x),
                 f64::from(boss.pos.y),

@@ -154,10 +154,11 @@ pub fn parse_query(search: &str) -> Option<NetTestCfg> {
             "netmode" => {
                 // Task 45: boss passes through too (session.js L244 `hostSet`
                 // accepts the three modes; the session already lets a guest
-                // join a boss room without rejecting — D-T44-8). The boss
-                // *entity* driving lands with Task 46 (app-layer BossMode);
-                // until then a boss room runs the boss-shaped match without
-                // the entity stepping.
+                // join a boss room without rejecting — D-T44-8). Task 46
+                // batch B wired the entity driving: the app layer now owns
+                // the `BossMode` across frames (D-T45-9 resolved by batch A's
+                // owned refactor — `start_net_match` constructs it, `net_tick`
+                // feeds `step_masked` / `drive_bots` / `rep.update`).
                 if v != "turf" && v != "zones" && v != "boss" {
                     continue;
                 }
@@ -200,6 +201,9 @@ pub struct NetTest {
     /// `busy`, online.rs L317-319, so a re-issued `Create` runs).
     create_attempts: u8,
     create_acc: f32,
+    /// Task 46 batch B (D-T45-11): one-shot latch for the guest boss-B
+    /// arrival probe line.
+    boss_b_logged: bool,
 }
 
 impl NetTest {
@@ -224,8 +228,24 @@ impl NetTest {
             retry_acc: 0.0,
             create_attempts: 0,
             create_acc: 0.0,
+            boss_b_logged: false,
         }
     }
+}
+
+/// Task 46 batch B (D-T45-11): the guest boss-B arrival condition — a
+/// follower boss (`sim == false`, JS `bossMode.js` L23 `sim: !match.follower`)
+/// whose net buffer has at least one snapshot from the host's tick `B` field
+/// (`rep.update` → `sample_boss`, replication.rs L2020-2028). Returns the
+/// buffered count on first arrival. Pure so the gate is unit-testable without
+/// a live session.
+#[must_use]
+fn boss_b_arrival(bm: Option<&inkwave_sim::boss::BossMode>, is_host: bool) -> Option<usize> {
+    let bm = bm?;
+    if is_host || bm.boss.sim {
+        return None;
+    }
+    (!bm.boss.net.buf.is_empty()).then_some(bm.boss.net.buf.len())
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -452,6 +472,20 @@ pub fn nettest_update(
         }
     }
 
+    // 6b. Task 46 batch B (D-T45-11): guest boss-B arrival probe. Once the
+    // follower boss has buffered the host's first tick `B` snapshot
+    // (`rep.update` → `sample_boss` → `boss.net.buf`, replication.rs
+    // L2020-2028 ≡ JS netmatch guest `boss.net` feed), log the count once.
+    // Literal contract (the smoke script greps this):
+    //   `[nettest] boss B recv=<n>`
+    if !nt.boss_b_logged
+        && let Some(rep) = &nms.rep
+        && let Some(n) = boss_b_arrival(demo.bm.lock().unwrap().as_ref(), rep.is_host())
+    {
+        nt.boss_b_logged = true;
+        console_log(&format!("[nettest] boss B recv={n}"));
+    }
+
     // 7. Task 39 §3: the settled-result line, once. `Match::result` is the
     // end state (the host judges locally, a guest gets the host's `{k:'res'}`
     // — replication drives the same field, netmatch.js L652-660). Literal
@@ -564,6 +598,48 @@ mod tests {
                 create: true,
                 ..Default::default()
             })
+        );
+    }
+
+    #[test]
+    fn tr46_boss_b_arrival_gates_on_the_follower_role() {
+        // Task 46 batch B (D-T45-11): only a guest-side follower boss with a
+        // non-empty net buffer counts as "B arrived". The host boss
+        // (`sim == true`, JS bossMode.js L23 `sim: !match.follower`) never
+        // triggers the probe.
+        use inkwave_sim::actor::SimWorld;
+        use inkwave_sim::boss::BossMode;
+        use inkwave_sim::boss::nav::BossNav;
+        use inkwave_sim::collision::CollisionWorld;
+        let layout = inkwave_sim::embedded_tidewater();
+        let world = CollisionWorld::from_layout(&layout);
+        let sim = SimWorld::new(&world, &layout);
+        let tb = inkwave_sim::embedded_tuning();
+        let mk = |sim_boss: bool| {
+            BossMode::new(
+                &sim,
+                BossNav::new(&sim, &tb.boss.nav),
+                tb.boss.clone(),
+                5.2,
+                "normal",
+                sim_boss,
+                1,
+            )
+        };
+        let host = mk(true);
+        let follower = mk(false);
+        assert!(boss_b_arrival(None, false).is_none(), "turf: no boss");
+        assert!(
+            boss_b_arrival(Some(&host), true).is_none(),
+            "host never probes"
+        );
+        assert!(
+            boss_b_arrival(Some(&host), false).is_none(),
+            "a sim boss never follows snapshots"
+        );
+        assert!(
+            boss_b_arrival(Some(&follower), false).is_none(),
+            "empty net buffer = no arrival yet"
         );
     }
 }

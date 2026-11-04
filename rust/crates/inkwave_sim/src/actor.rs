@@ -607,6 +607,12 @@ pub struct Actor {
     /// drained by the match onto the runner (no handle inside `end`).
     #[serde(default)]
     pub sp_reset_aim: bool,
+    /// JS `actor._flickBossT` (weapons.js L1659): the projectile-clock stamp
+    /// of the last flick drop that reached the boss — the rest of the same
+    /// ink sheet inside the 0.3 s window chip (×0.12) instead of landing in
+    /// full. `None` ≡ JS `undefined` (`?? -9`).
+    #[serde(default)]
+    pub flick_boss_t: Option<f32>,
     /// The jetpack body asked for its blast this frame (specials.js
     /// L1562-1572): the match drains it into
     /// [`crate::weapon::ProjectileSim::fire_jetpack_blast`] (no projectile
@@ -723,6 +729,7 @@ impl Actor {
             cheer_t: 0.0,
             sp_let: None,
             sp_reset_aim: false,
+            flick_boss_t: None,
             sp_jet_fire: false,
             sp_jet_paint: false,
             sp_zip_impact: None,

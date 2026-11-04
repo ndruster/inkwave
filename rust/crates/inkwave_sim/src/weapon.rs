@@ -142,6 +142,52 @@ pub type Bubbles<'a> = Option<(&'a mut Vec<crate::special::world::WorldObject>, 
 /// geometry, kept behind a closure so the bomb loop's borrows stay disjoint.
 type DevBlast<'a> = &'a mut dyn FnMut(Option<&mut SubSystem>, Vec3, f32, f32, usize, bool);
 
+/// The live Boss Battle entity (JS `G.boss` at the projectile / bomb / beam
+/// call sites, weapons.js L1260 / L1621 / L1720 / L1781): `None` = no boss
+/// in the match — every standalone test and every non-boss game, with zero
+/// behaviour change.
+pub type BossRef<'a> = Option<&'a mut crate::boss::Boss>;
+
+/// JS `p.owner` / `b.owner` / `a` reduced to what `Boss::hit` / `splash` /
+/// `rain` consult (boss.js L289/L305/L324): `nid ?? slot` is the roster
+/// index offline (the same id the match builds for the boss squad,
+/// match_.rs L1418), `remote` the proxy mask, `isLocal` its negation.
+/// `None` when the firing actor is gone — JS `hit(null, …)` early-returns
+/// (L289), the impact FX still lands.
+#[must_use]
+pub(crate) fn boss_attacker(
+    actors: &[Actor],
+    remote: Option<&[bool]>,
+    team: usize,
+    slot: usize,
+) -> Option<crate::boss::BossAttacker> {
+    let i = actors
+        .iter()
+        .position(|a| a.slot == slot && a.team == team)?;
+    let is_remote = remote.is_some_and(|m| m.get(i).copied().unwrap_or(false));
+    Some(crate::boss::BossAttacker {
+        nid: i as i32,
+        is_remote,
+        is_local: !is_remote,
+        has_nid: true,
+    })
+}
+
+/// Key of [`WeaponRunner::roll_hits`] (JS `this.rollHits` keyed by the
+/// victim actor, or by `G.boss` / a crablet for the drum — weapons.js
+/// L269-273 / L613-617 `key = bh.boss ? G.boss : bh.target`).
+#[derive(
+    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, serde::Serialize, serde::Deserialize,
+)]
+pub enum RollKey {
+    /// Enemy actor index.
+    Actor(usize),
+    /// The boss body itself (a shape hit rolls up to the whole boss).
+    Boss,
+    /// Crablet id.
+    Crab(u32),
+}
+
 /// JS `lerp` (ctx.js): linear interpolation.
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
@@ -830,7 +876,7 @@ pub struct WeaponRunner {
     /// `G.time - last > cd`; the sim counts the window down per frame
     /// instead (no global clock) — equivalent: an absent entry is ready,
     /// a hit re-arms the countdown, every frame decays it.
-    roll_hits: BTreeMap<usize, f32>,
+    roll_hits: BTreeMap<RollKey, f32>,
     /// JS `this.kit` for the blade (weapons.js L57; blade.js `st()` L38-44):
     /// `None` = no kit yet (JS creates it lazily, same as brolly's `kitOf`).
     pub(crate) blade: Option<Box<blade::BladeKit>>,
@@ -1245,6 +1291,7 @@ impl WeaponRunner {
         fists: &mut Vec<mitts::MittsFist>,
         jump_held: bool,
         sub_blocked: bool,
+        mut boss: BossRef<'_>,
     ) {
         // ---- JS L110-116 common decay. JS `inp` here is the *gated* `winp`
         // (actor.js L370-373: `fire = intent.fire || buffered`, suppressed
@@ -1299,6 +1346,7 @@ impl WeaponRunner {
                 paint,
                 t,
                 remote,
+                boss.as_deref_mut(),
             ),
             WeaponKind::Brush => self.brush(
                 dt,
@@ -1312,6 +1360,7 @@ impl WeaponRunner {
                 paint,
                 t,
                 remote,
+                boss,
             ),
             // Task 32: JS L128 `default` → `MAIN_KITS.blade.update`.
             WeaponKind::Blade => blade::update(
@@ -1898,6 +1947,7 @@ impl WeaponRunner {
         paint: &mut PaintGrid,
         t: &PlayerTuning,
         remote: Option<&[bool]>,
+        mut boss: BossRef<'_>,
     ) {
         let rw = &w.roller;
         // JS L221-232: flick wind-up → release.
@@ -1961,14 +2011,14 @@ impl WeaponRunner {
                 && lat < rw.roll_width / 2.0 + 0.35
                 && dy.abs() < 1.2
                 && hs > 1.0
-                && !self.roll_hits.contains_key(&ei)
+                && !self.roll_hits.contains_key(&RollKey::Actor(ei))
             {
                 hits.push(ei);
             }
         }
         let (a_slot, a_team, a_pos) = (a.slot, a.team, a.pos);
         for ei in hits {
-            self.roll_hits.insert(ei, 0.5); // JS L265 literal window
+            self.roll_hits.insert(RollKey::Actor(ei), 0.5); // JS L265 literal window
             let Some(v) = foes.get_mut(ei) else {
                 continue;
             };
@@ -1991,6 +2041,42 @@ impl WeaponRunner {
                     damage: rw.roll_damage,
                     killed: outcome.killed,
                 });
+            }
+        }
+        // JS L268-273: the drum crushes into HULLBREAKER's claws / belly and
+        // flattens crablets — one hit per target per 0.5 s window.
+        if hs > 1.0
+            && let Some(b) = boss.as_mut()
+            && let Some(rh) = b.roll_hit(a.pos, fx, fz, rw.roll_width)
+        {
+            let key = if rh.boss {
+                RollKey::Boss
+            } else {
+                match rh.target {
+                    crate::boss::RollTarget::Crab(id) => RollKey::Crab(id),
+                    crate::boss::RollTarget::Shape(_) => RollKey::Boss,
+                }
+            };
+            if let std::collections::btree_map::Entry::Vacant(e) = self.roll_hits.entry(key) {
+                e.insert(0.5); // JS L272 window
+                let target = match rh.target {
+                    crate::boss::RollTarget::Shape(i) => crate::boss::HitTarget::Shape(i),
+                    crate::boss::RollTarget::Crab(id) => crate::boss::HitTarget::Crab(id),
+                };
+                let si = foes.self_idx();
+                let is_remote = remote.is_some_and(|m| m.get(si).copied().unwrap_or(false));
+                b.hit(
+                    Some(crate::boss::BossAttacker {
+                        nid: si as i32,
+                        is_remote,
+                        is_local: !is_remote,
+                        has_nid: true,
+                    }),
+                    rw.roll_damage,
+                    target,
+                    "roller",
+                    Some(rh.point),
+                );
             }
         }
         // JS L274-288: displacement ink + the three-stripe drum paint.
@@ -2060,6 +2146,7 @@ impl WeaponRunner {
         paint: &mut PaintGrid,
         t: &PlayerTuning,
         remote: Option<&[bool]>,
+        mut boss: BossRef<'_>,
     ) {
         let bw = &w.brush;
         // JS L573-577: swipe wind-up → release.
@@ -2120,14 +2207,14 @@ impl WeaponRunner {
                 && fwd < 1.2
                 && lat < bw.brush_width / 2.0 + 0.3
                 && dy.abs() < 1.2
-                && !self.roll_hits.contains_key(&ei)
+                && !self.roll_hits.contains_key(&RollKey::Actor(ei))
             {
                 hits.push(ei);
             }
         }
         let (a_slot, a_team, a_pos) = (a.slot, a.team, a.pos);
         for ei in hits {
-            self.roll_hits.insert(ei, bw.brush_hit_cd);
+            self.roll_hits.insert(RollKey::Actor(ei), bw.brush_hit_cd);
             let Some(v) = foes.get_mut(ei) else {
                 continue;
             };
@@ -2150,6 +2237,41 @@ impl WeaponRunner {
                     damage: bw.brush_damage,
                     killed: outcome.killed,
                 });
+            }
+        }
+        // JS L612-617: the bristles drag across HULLBREAKER's claws / belly
+        // or a crablet (like the roller's drum, `brushHitCd` window).
+        if let Some(b) = boss.as_mut()
+            && let Some(rh) = b.roll_hit(a.pos, fx, fz, bw.brush_width)
+        {
+            let key = if rh.boss {
+                RollKey::Boss
+            } else {
+                match rh.target {
+                    crate::boss::RollTarget::Crab(id) => RollKey::Crab(id),
+                    crate::boss::RollTarget::Shape(_) => RollKey::Boss,
+                }
+            };
+            if let std::collections::btree_map::Entry::Vacant(e) = self.roll_hits.entry(key) {
+                e.insert(bw.brush_hit_cd);
+                let target = match rh.target {
+                    crate::boss::RollTarget::Shape(i) => crate::boss::HitTarget::Shape(i),
+                    crate::boss::RollTarget::Crab(id) => crate::boss::HitTarget::Crab(id),
+                };
+                let si = foes.self_idx();
+                let is_remote = remote.is_some_and(|m| m.get(si).copied().unwrap_or(false));
+                b.hit(
+                    Some(crate::boss::BossAttacker {
+                        nid: si as i32,
+                        is_remote,
+                        is_local: !is_remote,
+                        has_nid: true,
+                    }),
+                    bw.brush_damage,
+                    target,
+                    "brush",
+                    Some(rh.point),
+                );
             }
         }
         // JS L618-624: displacement ink + the single bristle line splat.
@@ -2476,6 +2598,13 @@ impl<'a> FoeScan<'a> {
             hi: &mut [],
             hi_off: 0,
         }
+    }
+
+    /// The runner's own actor index (JS `nid ?? slot` for the drum's boss
+    /// hit, weapons.js L272 / L616).
+    #[must_use]
+    pub fn self_idx(&self) -> usize {
+        self.hi_off.saturating_sub(1)
     }
 
     /// `(full-list index, actor)` for every foe, low indices first.
@@ -3271,6 +3400,7 @@ impl ProjectileSim {
         mut subs: Option<&mut SubSystem>,
         remote: Option<&[bool]>,
         mut bubbles: Bubbles<'_>,
+        boss: BossRef<'_>,
     ) {
         // JS L1241-1244: range and damage follow the charge.
         let range = lerp(cw.range_min, cw.range_max, charge);
@@ -3349,6 +3479,39 @@ impl ProjectileSim {
                 }
             }
         }
+        // JS L1258-1263: boss mode — the beam stops at HULLBREAKER or a
+        // crablet when it is nearer than the squid kid, and lands the full
+        // charge damage on the hit target.
+        let mut boss_hit = false;
+        if let Some(b) = boss {
+            let end = m + dir * len;
+            if let Some(bh) = b.seg_hit(m, end, 0.1) {
+                let hd = match bh {
+                    crate::boss::SegHit::Shape { dist, .. } => dist as f32,
+                    crate::boss::SegHit::Crab { dist, .. } => dist as f32,
+                };
+                if victim.is_none_or(|(_, vd)| hd < vd) {
+                    victim = None;
+                    len = hd;
+                    boss_hit = true;
+                    let (target, point) = match bh {
+                        crate::boss::SegHit::Shape { idx, point, .. } => {
+                            (crate::boss::HitTarget::Shape(idx), point)
+                        }
+                        crate::boss::SegHit::Crab { id, point, .. } => {
+                            (crate::boss::HitTarget::Crab(id), point)
+                        }
+                    };
+                    b.hit(
+                        boss_attacker(actors, remote, team, owner_slot),
+                        dmg,
+                        target,
+                        "charger",
+                        Some(point),
+                    );
+                }
+            }
+        }
         if let Some((_, d)) = victim {
             len = d;
         }
@@ -3402,7 +3565,7 @@ impl ProjectileSim {
         // JS L1273-1278: the terminal splat only on a world hit with no body.
         let rad = cw.impact_radius * (0.6 + 0.4 * charge);
         let mut normal = -dir;
-        if hit.hit && victim.is_none() {
+        if hit.hit && victim.is_none() && !boss_hit {
             let seed = self.rng.next_f32();
             area += paint.splat(
                 world,
@@ -3542,6 +3705,7 @@ impl ProjectileSim {
         w: &WeaponSet,
         sb: &SubSet,
         bubbles: Bubbles<'_>,
+        boss: BossRef<'_>,
     ) {
         let mut owner = ShieldOwner {
             runners: &mut [],
@@ -3560,6 +3724,7 @@ impl ProjectileSim {
             &[],
             &mut owner,
             bubbles,
+            boss,
         );
     }
 
@@ -3584,6 +3749,7 @@ impl ProjectileSim {
         shields: &[Shield],
         owner: &mut ShieldOwner,
         mut bubbles: Bubbles<'_>,
+        mut boss: BossRef<'_>,
     ) {
         // JS `tick` clock: the kit's merge window and canopy idle checks run
         // on the projectile time (brolly.js L477-481 / L397).
@@ -3623,6 +3789,7 @@ impl ProjectileSim {
                 shields,
                 owner,
                 bubbles.as_mut().map(|(o, r)| (&mut **o, &mut **r)),
+                boss.as_deref_mut(),
             ) {
                 // JS lets the per-throw `volley.hit` Set die with its blobs
                 // (the object is shared, weapons.js L1316/L1599): drop the
@@ -3640,7 +3807,7 @@ impl ProjectileSim {
             }
         }
         // JS `update` L1576: `_updateBombs` runs after the rounds loop.
-        self.step_bombs(dt, world, actors, paint, t, sb, subs, remote, bubbles);
+        self.step_bombs(dt, world, actors, paint, t, sb, subs, remote, bubbles, boss);
     }
 
     /// JS `throwBomb` (weapons.js L1449-1465): a splat bomb leaves the hand
@@ -3777,6 +3944,7 @@ impl ProjectileSim {
         mut subs: Option<&mut SubSystem>,
         remote: Option<&[bool]>,
         mut bubbles: Bubbles<'_>,
+        mut boss: BossRef<'_>,
     ) {
         let mut i = self.bombs.len();
         while i > 0 {
@@ -3790,6 +3958,24 @@ impl ProjectileSim {
                 let prev = b.pos;
                 b.pos += b.vel * dt;
                 let hit = world.segment(prev, b.pos, false);
+                // JS L1719-1727: bombs glance off HULLBREAKER's shell —
+                // only shape spheres deflect (`bh.target.pos` is `undefined`
+                // for a crablet, so a crab never bounces a bomb).
+                if !hit.hit
+                    && b.kind == "bomb"
+                    && let Some(boss) = boss.as_mut()
+                    && let Some(crate::boss::SegHit::Shape { idx: si, .. }) =
+                        boss.seg_hit(prev, b.pos, 0.2)
+                {
+                    let (spos, sr, _, _) = boss.hit_sphere(si);
+                    let d = (b.pos - spos).normalize_or_zero();
+                    b.pos = spos + d * (sr + 0.22);
+                    let vn = b.vel.dot(d);
+                    if vn < 0.0 {
+                        b.vel += d * (-vn * 1.35);
+                    }
+                    b.vel *= 0.55;
+                }
                 if hit.hit && b.kind == "storm" {
                     // JS L1729: cloud + splice + `continue` — before the
                     // bounce / fuse arm of L1730-1738.
@@ -3854,6 +4040,7 @@ impl ProjectileSim {
                     bubbles.as_mut().map(|(o, r)| (&mut **o, &mut **r)),
                     &mut blast,
                     remote,
+                    boss.as_deref_mut(),
                 );
                 dead = true;
             }
@@ -3887,6 +4074,7 @@ impl ProjectileSim {
         mut bubbles: Bubbles<'_>,
         dev_blast: DevBlast<'_>,
         remote: Option<&[bool]>,
+        boss: BossRef<'_>,
     ) {
         let s = &sb.bomb;
         let c = b.pos;
@@ -4011,6 +4199,17 @@ impl ProjectileSim {
                 });
             }
         }
+        // JS L1506: the blast splashes the boss too.
+        if let Some(boss) = boss {
+            boss.splash(
+                boss_attacker(actors, remote, b.team, b.owner_slot),
+                c,
+                s.radius,
+                s.damage_max,
+                s.damage_min,
+                "bomb",
+            );
+        }
     }
 
     /// JS `tick` PEND flush (brolly.js L477-481): a merged pellet hit whose
@@ -4084,6 +4283,7 @@ impl ProjectileSim {
         shields: &[Shield],
         owner: &mut ShieldOwner,
         mut bubbles: Bubbles<'_>,
+        mut boss: BossRef<'_>,
     ) -> bool {
         // JS `update` L1571: a delayed round only counts its delay down —
         // no integration, no age, no hit tests until it clears (blade
@@ -4309,6 +4509,8 @@ impl ProjectileSim {
                     sb,
                     bubbles.as_mut().map(|(o, r)| (&mut **o, &mut **r)),
                     burst,
+                    boss.as_deref_mut(),
+                    false,
                 );
             } else {
                 self.push_event(SimEvent::Impact {
@@ -4373,6 +4575,34 @@ impl ProjectileSim {
                 ) {
                     dead = true;
                 }
+            }
+        }
+
+        // ---- boss mode (JS `_step` L1621-1624): HULLBREAKER's hit spheres
+        // and crablets eat the round before the world segment does.
+        if !dead {
+            let bh = {
+                let p = &self.list[idx];
+                boss.as_mut()
+                    .and_then(|b| b.seg_hit(p.prev, p.pos, p.size * 0.6))
+            };
+            if let Some(bh) = bh {
+                let b = boss.as_mut().unwrap();
+                self.boss_impact(
+                    idx,
+                    bh,
+                    b,
+                    world,
+                    actors,
+                    paint,
+                    w,
+                    t,
+                    remote,
+                    subs.as_deref_mut(),
+                    sb,
+                    bubbles.as_mut().map(|(o, r)| (&mut **o, &mut **r)),
+                );
+                dead = true;
             }
         }
 
@@ -4454,6 +4684,8 @@ impl ProjectileSim {
                         sb,
                         bubbles.as_mut().map(|(o, r)| (&mut **o, &mut **r)),
                         burst,
+                        boss.as_deref_mut(),
+                        false,
                     );
                 } else {
                     self.push_event(SimEvent::Impact {
@@ -4567,6 +4799,8 @@ impl ProjectileSim {
                         sb,
                         bubbles.as_mut().map(|(o, r)| (&mut **o, &mut **r)),
                         burst,
+                        boss,
+                        false,
                     );
                 }
                 dead = true;
@@ -4601,6 +4835,8 @@ impl ProjectileSim {
         sb: &SubSet,
         mut bubbles: Bubbles<'_>,
         burst: Option<BurstSpec>,
+        boss: BossRef<'_>,
+        direct_boss: bool,
     ) {
         // JS `_blastBurst` L1691: `w = b ? { burstRadius: b.radius,
         // impactRadius: b.paint ?? b.radius * 0.6, splashRadius:
@@ -4719,6 +4955,145 @@ impl ProjectileSim {
                 &mut ctx,
                 ghost,
             );
+        }
+        // JS L1708: `if (direct !== 'boss') G.boss?.splash(p.owner, c,
+        // w.splashRadius, w.splashDamageMax, w.splashDamageMin, 'blaster')`
+        // — a blast that ate the boss directly is hurt by the direct hit
+        // (`_bossImpact` L1663), not by its own splash as well.
+        if !direct_boss && let Some(b) = boss {
+            b.splash(
+                boss_attacker(actors, remote, team, owner_slot),
+                at,
+                splash_r,
+                dmax,
+                dmin,
+                "blaster",
+            );
+        }
+    }
+
+    /// JS `Projectiles._bossImpact(p, bh)` (weapons.js L1651-1665): a blob /
+    /// drop / blast connecting with the boss or a crablet. The `p.vol`
+    /// volley-dedup branch (L1656) is unreachable in the sim — only the
+    /// retired slosher ever set `vol` (weapons.js L1125-1137) — and the
+    /// `slosh` head splash (L1664) with it. `p.wid` (L1660) collapses to the
+    /// round's JS `type` (no round in the sim carries a weapon id; every
+    /// value maps to `BOSS.weapon` ×1 anyway).
+    #[allow(clippy::too_many_arguments)]
+    fn boss_impact(
+        &mut self,
+        idx: usize,
+        bh: crate::boss::SegHit,
+        boss: &mut crate::boss::Boss,
+        world: &CollisionWorld,
+        actors: &mut [Actor],
+        paint: &mut PaintGrid,
+        w: &WeaponSet,
+        t: &PlayerTuning,
+        remote: Option<&[bool]>,
+        subs: Option<&mut SubSystem>,
+        sb: &SubSet,
+        bubbles: Bubbles<'_>,
+    ) {
+        // JS L1652: `at = bh.point`, `target = bh.target`.
+        let (at, target) = match bh {
+            crate::boss::SegHit::Shape { idx: si, point, .. } => {
+                (point, crate::boss::HitTarget::Shape(si))
+            }
+            crate::boss::SegHit::Crab { id, point, .. } => {
+                (point, crate::boss::HitTarget::Crab(id))
+            }
+        };
+        let (owner_slot, team, damage, dmg_far, start, vel, blast, radius, ghost, no_sp) = {
+            let p = &self.list[idx];
+            (
+                p.owner_slot,
+                p.team,
+                p.damage,
+                p.dmg_far,
+                p.start,
+                p.vel,
+                p.blast,
+                p.radius,
+                p.ghost,
+                p.sp.unwrap_or(false),
+            )
+        };
+        // JS L1654-1655: drop rounds fall off over 7 m from the launch point
+        // to the hit point (the same rule as the body hit, L1603).
+        let mut dmg = damage;
+        if let Some(far) = dmg_far {
+            dmg = lerp(dmg, far, (start.distance(at) / 7.0).clamp(0.0, 1.0));
+        }
+        // JS L1659: a roller flick is one sheet of ink — only the first drop
+        // of a sheet hurts in full, the rest chip (0.3 s window on `G.time`,
+        // kept on the owner actor like JS `o._flickBossT`).
+        if dmg_far.is_some()
+            && let Some(oi) = actors
+                .iter()
+                .position(|a| a.slot == owner_slot && a.team == team)
+        {
+            let prev = actors[oi].flick_boss_t.unwrap_or(-9.0); // JS `?? -9`
+            if self.time - prev < 0.3 {
+                dmg *= 0.12;
+            } else {
+                actors[oi].flick_boss_t = Some(self.time);
+            }
+        }
+        // JS L1660-1661: `dmg > 0` hurts (the else branch is FX-only).
+        if dmg > 0.0 {
+            let wid = if blast {
+                "blaster"
+            } else if dmg_far.is_some() {
+                "drop"
+            } else {
+                "shot"
+            };
+            boss.hit(
+                boss_attacker(actors, remote, team, owner_slot),
+                dmg,
+                target,
+                wid,
+                Some(at),
+            );
+        }
+        if blast {
+            let burst_spec = self.list[idx].burst;
+            // JS L1663: `direct = 'boss'` — no actor is excluded from the
+            // splash (L1700) and the boss skips its own splash (L1708).
+            self.blast_burst(
+                at,
+                None,
+                team,
+                owner_slot,
+                ghost,
+                no_sp,
+                world,
+                actors,
+                paint,
+                w,
+                t,
+                remote,
+                subs,
+                sb,
+                bubbles,
+                burst_spec,
+                Some(boss),
+                true,
+            );
+        } else {
+            // JS L1662: the plain `weapon:impact` (kind drop/shot, the
+            // half-radius splat, no victim).
+            self.push_event(SimEvent::Impact {
+                pos: at,
+                normal: -vel.normalize_or_zero(),
+                team,
+                radius: radius * 0.5,
+                victim_slot: None,
+                owner_slot,
+                area: 0.0,
+                no_special: no_sp,
+            });
         }
     }
 }

@@ -768,7 +768,7 @@ impl Match {
         t: &PlayerTuning,
         w: &WeaponSet,
         sb: &SubSet,
-        boss: Option<&mut crate::boss::BossMode<'_>>,
+        boss: Option<&mut crate::boss::BossMode>,
     ) {
         self.step_masked(dt, inputs, None, world, t, w, sb, boss);
     }
@@ -789,7 +789,7 @@ impl Match {
         t: &PlayerTuning,
         w: &WeaponSet,
         sb: &SubSet,
-        mut boss: Option<&mut crate::boss::BossMode<'_>>,
+        mut boss: Option<&mut crate::boss::BossMode>,
     ) {
         // JS runs the whole match once per 60 Hz frame; variable dt would
         // desync the clock, timers and the fixed-step contract.
@@ -1250,6 +1250,7 @@ impl Match {
                     &mut self.fists,
                     inp.jump,
                     sub_blocked,
+                    boss.as_mut().map(|bm| &mut bm.boss),
                 );
             }
             // A brolly launch this frame joins the world canopy list (JS
@@ -1292,6 +1293,7 @@ impl Match {
                     Some(&mut self.subs),
                     remote,
                     Some((&mut self.specials.world, &mut self.rng)),
+                    boss.as_mut().map(|bm| &mut bm.boss),
                 );
             }
             // D-T34-9 deploy timing (D-T31-1 precedent): the runner has no
@@ -1641,6 +1643,7 @@ impl Match {
             &shields,
             &mut owner,
             Some((&mut self.specials.world, &mut self.rng)),
+            boss.as_mut().map(|bm| &mut bm.boss),
         );
 
         // Task 35 batch 2: storm clouds. JS creates them inside
@@ -1669,6 +1672,7 @@ impl Match {
             &mut self.rng,
             remote,
             t,
+            boss.as_mut().map(|bm| &mut bm.boss),
         );
 
         // JS `snapShields` (L192): this frame's pose becomes the next

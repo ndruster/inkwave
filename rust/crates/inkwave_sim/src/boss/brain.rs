@@ -120,7 +120,7 @@ pub struct BossBrain {
 impl BossBrain {
     /// JS ctor L21-37. `adopt` = `{adopt:true}` (guest→host handover); the
     /// `rnd` seed replaces JS `Math.random` (D-T43: `seed ^ golden-ratio`).
-    pub fn new(boss: &mut Boss<'_>, adopt: bool, seed: u64) -> Self {
+    pub fn new(boss: &mut Boss, adopt: bool, seed: u64) -> Self {
         let mut me = Self {
             rnd: Rng::new(seed),
             cool: if adopt { 1.0 } else { 2.4 }, // JS L24
@@ -186,19 +186,19 @@ impl BossBrain {
     }
 
     /// JS L41-44 `checkPhase()` — the hoisted entity method (Task 42 batch A).
-    pub fn check_phase(&mut self, boss: &mut Boss<'_>) {
+    pub fn check_phase(&mut self, boss: &mut Boss) {
         boss.check_phase();
     }
 
     /// JS L45 `onDefeat()` — clear the entity move + brain path/plan.
-    pub fn on_defeat(&mut self, boss: &mut Boss<'_>) {
+    pub fn on_defeat(&mut self, boss: &mut Boss) {
         boss.move_rec = None;
         self.path = None;
         self.plan = None;
     }
 
     /// JS L48-72 `update(dt)`.
-    pub fn update(&mut self, dt: f32, boss: &mut Boss<'_>, squad: &mut BossSquad<'_>) {
+    pub fn update(&mut self, dt: f32, boss: &mut Boss, squad: &mut BossSquad<'_>) {
         let (px, pz, pyaw) = (boss.pos.x, boss.pos.z, boss.yaw);
         // JS L50: the brain owns the boss-time clock on the host. `bt` stays
         // f32 on the entity (same as the guest `follow` path); f64 math below
@@ -263,7 +263,7 @@ impl BossBrain {
     }
 
     /// JS L74-81 `_roar()`.
-    fn roar(&mut self, boss: &mut Boss<'_>) {
+    fn roar(&mut self, boss: &mut Boss) {
         boss.phase = boss.pending_phase;
         boss.pending_phase = 0;
         boss.anim = 2;
@@ -280,7 +280,7 @@ impl BossBrain {
     }
 
     /// JS L84-105 `_idle(dt)`.
-    fn idle(&mut self, dt: f32, boss: &mut Boss<'_>, squad: &mut BossSquad<'_>) {
+    fn idle(&mut self, dt: f32, boss: &mut Boss, squad: &mut BossSquad<'_>) {
         self.retarget -= f64::from(dt);
         self.goal_t -= f64::from(dt);
         self.cool -= f64::from(dt);
@@ -353,7 +353,7 @@ impl BossBrain {
     }
 
     /// JS L107-120 `_pickTarget()`.
-    fn pick_target(&mut self, boss: &mut Boss<'_>, squad: &mut BossSquad<'_>) {
+    fn pick_target(&mut self, boss: &mut Boss, squad: &mut BossSquad<'_>) {
         self.retarget = 3.0 + f64::from(self.rnd.next_f32()) * 2.5; // JS L109
         let mut best: Option<usize> = None;
         let mut bs = f64::NEG_INFINITY;
@@ -397,7 +397,7 @@ impl BossBrain {
     }
 
     /// JS L122-143 `_walk(dt, t)`.
-    fn walk(&mut self, dt: f32, boss: &mut Boss<'_>, squad: &mut BossSquad<'_>, t: Option<usize>) {
+    fn walk(&mut self, dt: f32, boss: &mut Boss, squad: &mut BossSquad<'_>, t: Option<usize>) {
         let ph = boss.phase as usize;
         // JS L124: re-pick when the goal expires or the path ran out early.
         let path_exhausted = self
@@ -471,7 +471,7 @@ impl BossBrain {
 
     /// JS L146-164 `_turn(want, dt)` — yaw toward `want`, or a room-field
     /// side-step when the turn would clip geometry.
-    fn turn(boss: &mut Boss<'_>, want: f64, dt: f32) -> bool {
+    fn turn(boss: &mut Boss, want: f64, dt: f32) -> bool {
         let dy = angle_diff(f64::from(boss.yaw), want);
         if dy.abs() < 1e-3 {
             return true;
@@ -516,7 +516,7 @@ impl BossBrain {
     }
 
     /// JS L166-183 `_pickGoal(t)`.
-    fn pick_goal(&mut self, boss: &mut Boss<'_>, squad: &mut BossSquad<'_>, t: Option<usize>) {
+    fn pick_goal(&mut self, boss: &mut Boss, squad: &mut BossSquad<'_>, t: Option<usize>) {
         self.goal_t = 3.0 + f64::from(self.rnd.next_f32()) * 2.5; // JS L168
         let (pad_x, pad_z) = boss.nav.pad_center(0);
         let mut best: Option<[f32; 2]> = None;
@@ -558,12 +558,7 @@ impl BossBrain {
     }
 
     /// JS L186-213 `_choose(t)` — weighted move pick.
-    fn choose(
-        &mut self,
-        boss: &mut Boss<'_>,
-        squad: &mut BossSquad<'_>,
-        ti: usize,
-    ) -> Option<Plan> {
+    fn choose(&mut self, boss: &mut Boss, squad: &mut BossSquad<'_>, ti: usize) -> Option<Plan> {
         let ph = boss.phase as usize;
         // JS L188-189: distance measured from a point 2 m in front of the boss.
         let fx = f64::from(boss.pos.x) + f64::from(boss.yaw).sin() * 2.0;
@@ -673,7 +668,7 @@ impl BossBrain {
     }
 
     /// JS L215-227 `_lane(yaw)` — best charge corridor from the 13-offset fan.
-    fn lane(&self, boss: &Boss<'_>, yaw: f64) -> Option<Lane> {
+    fn lane(&self, boss: &Boss, yaw: f64) -> Option<Lane> {
         let mut best: Option<Lane> = None;
         let mut bs = f64::NEG_INFINITY;
         for o in [
@@ -705,9 +700,9 @@ impl BossBrain {
     /// record (`{id, t0, s, d, p}`, tele clamped by MIN_TELE × pace) and hands
     /// it to the entity (`move_rec` + `hz.add`, spec §2; network publish is
     /// Task 44).
-    fn start(&mut self, boss: &mut Boss<'_>, squad: &mut BossSquad<'_>, p: &Plan, ti: usize) {
+    fn start(&mut self, boss: &mut Boss, squad: &mut BossSquad<'_>, p: &Plan, ti: usize) {
         let ph = boss.phase as usize;
-        let tb: &tuning::Boss = boss.tb;
+        let tb: &tuning::Boss = &boss.tb;
         // JS L231: `pace = PACE[ph]` — the per-phase tempo scaling tele/act/
         // rec below; the crablets / frenzy cooldowns use the difficulty
         // getter `this.pace` (JS L39) at L281 / L287 instead.
@@ -808,7 +803,7 @@ impl BossBrain {
                     };
                     let mut x = f64::from(a.pos.x) + f64::from(a.vel.x) * 0.3 + ang.cos() * off;
                     let mut z = f64::from(a.pos.z) + f64::from(a.vel.z) * 0.3 + ang.sin() * off;
-                    let g = f64::from(boss.world.collision.ground_height(
+                    let g = f64::from(boss.collision.ground_height(
                         x as f32,
                         z as f32,
                         a.pos.y + 1.0,
@@ -821,7 +816,7 @@ impl BossBrain {
                         x = f64::from(a.pos.x);
                         z = f64::from(a.pos.z);
                     }
-                    let gy = f64::from(boss.world.collision.ground_height(
+                    let gy = f64::from(boss.collision.ground_height(
                         x as f32,
                         z as f32,
                         a.pos.y + 1.0,
@@ -970,7 +965,7 @@ impl BossBrain {
     }
 
     /// JS L299-327 `_runMove(dt)` — per-phase motion of the live move.
-    fn run_move(&mut self, dt: f32, boss: &mut Boss<'_>, player: &tuning::PlayerTuning) {
+    fn run_move(&mut self, dt: f32, boss: &mut Boss, player: &tuning::PlayerTuning) {
         let m = match boss.move_rec.clone() {
             Some(m) => m,
             None => return,
@@ -1032,7 +1027,7 @@ impl BossBrain {
     }
 
     /// JS L330-340 `_spawnCrabs(n)`.
-    fn spawn_crabs(&mut self, boss: &mut Boss<'_>, n: usize, player: &tuning::PlayerTuning) {
+    fn spawn_crabs(&mut self, boss: &mut Boss, n: usize, player: &tuning::PlayerTuning) {
         let bx = -f64::from(boss.yaw).sin();
         let bz = -f64::from(boss.yaw).cos();
         let water_y = f64::from(player.water_y);
@@ -1041,7 +1036,7 @@ impl BossBrain {
             let side = (i as f64 - (n as f64 - 1.0) / 2.0) * 1.1;
             let mut x = f64::from(boss.pos.x) + bx * 3.6 + bz * side;
             let mut z = f64::from(boss.pos.z) + bz * 3.6 - bx * side;
-            let mut g = f64::from(boss.world.collision.ground_height(
+            let mut g = f64::from(boss.collision.ground_height(
                 x as f32,
                 z as f32,
                 (f64::from(boss.pos.y) + 1.5) as f32,
@@ -1078,8 +1073,10 @@ impl BossBrain {
     }
 
     /// JS L342-375 `_crabs(dt)` — crablet steering toward the kids.
-    fn crabs(&mut self, dt: f32, boss: &mut Boss<'_>, squad: &mut BossSquad<'_>) {
-        let hz = &boss.tb.hz;
+    fn crabs(&mut self, dt: f32, boss: &mut Boss, squad: &mut BossSquad<'_>) {
+        // D-T45-9: `tb` is owned now — copy the (Copy) hazard table instead of
+        // borrowing `boss` across the mutable `crab_pop` calls below.
+        let hz = boss.tb.hz;
         let ph = boss.phase as usize;
         // JS L343: `HZ.crabSpeed[phase] || HZ.crabSpeed[2]`.
         let sp = if f64::from(hz.crab_speed[ph]) != 0.0 {
@@ -1156,7 +1153,7 @@ impl BossBrain {
                         if boss.nav.in_pad(nx as f32, nz as f32, 0.8) {
                             continue;
                         }
-                        let g = f64::from(boss.world.collision.ground_height(
+                        let g = f64::from(boss.collision.ground_height(
                             nx as f32,
                             nz as f32,
                             (f64::from(boss.crabs[ci].y) + 0.7) as f32,
@@ -1166,7 +1163,7 @@ impl BossBrain {
                         // solid geometry at head height.
                         if not_above(g, water_y + 0.3)
                             || g < f64::from(boss.crabs[ci].y) - 1.4
-                            || boss.world.collision.point_inside(
+                            || boss.collision.point_inside(
                                 glam::vec3(nx as f32, (g + 0.3) as f32, nz as f32),
                                 0.0,
                                 -1,
@@ -1253,7 +1250,7 @@ mod tests {
         sim: bool,
         seed: u64,
         difficulty: &str,
-        f: impl FnOnce(&mut Boss<'_>, &mut SquadKit) -> T,
+        f: impl FnOnce(&mut Boss, &mut SquadKit) -> T,
     ) -> T {
         let layout = crate::embedded_tidewater();
         let collision = CollisionWorld::from_layout(&layout);
@@ -1262,8 +1259,8 @@ mod tests {
         let nav = BossNav::new(&world, &tb.boss.nav);
         let mut boss = Boss::new(
             &world,
-            &nav,
-            &tb.boss,
+            nav,
+            tb.boss.clone(),
             BossConfig {
                 max_hp: 18000.0,
                 difficulty,
@@ -1279,7 +1276,7 @@ mod tests {
     /// Charge needs 6 m of open floor (`HZ.chargeMin`); one side of the
     /// Tidewater middle is furniture-blocked, so aimed tests place their kid
     /// down whichever cast is longer.
-    fn open_yaw(boss: &Boss<'_>) -> f64 {
+    fn open_yaw(boss: &Boss) -> f64 {
         let (p0x, p0z) = boss.nav.pad_center(0);
         let (p1x, p1z) = boss.nav.pad_center(1);
         let y0 =
@@ -1294,7 +1291,7 @@ mod tests {
     /// Active, post-intro boss with one kid 8 m down the open pad direction,
     /// facing it (JS yaw convention `atan2(dx, dz)`, so aimed moves start with
     /// `dy = 0`). Returns the facing yaw.
-    fn armed(boss: &mut Boss<'_>, kit: &mut SquadKit, phase: u32) -> f32 {
+    fn armed(boss: &mut Boss, kit: &mut SquadKit, phase: u32) -> f32 {
         boss.state = Phase::Active;
         boss.visible = true;
         boss.anim = 0;
@@ -1316,7 +1313,7 @@ mod tests {
     /// home pose facing the kid first, and `force` is re-armed every tick:
     /// JS consumes it in `_choose`, and an abandoned face-up plan (JS L99
     /// give-up) would otherwise fall through to the random pick.
-    fn forced_record(boss: &mut Boss<'_>, kit: &mut SquadKit, phase: u32, id: MoveId) -> JVal {
+    fn forced_record(boss: &mut Boss, kit: &mut SquadKit, phase: u32, id: MoveId) -> JVal {
         boss.phase = phase;
         boss.pending_phase = phase;
         boss.move_rec = None;
@@ -1537,7 +1534,7 @@ mod tests {
 
     /// JS bossBrain.js L273-275: `v: HZ.chargeSpeed[ph]`, `stun: 1`,
     /// `act = chargeTime(p)` on the rounded L, `rec = HZ.stun[ph]`.
-    fn assert_charge_record(boss: &Boss<'_>, m: &JVal, ph: u32) {
+    fn assert_charge_record(boss: &Boss, m: &JVal, ph: u32) {
         let v = f64::from(boss.tb.hz.charge_speed[ph as usize]);
         assert_eq!(rec_p_f64(m, "v"), v, "phase {ph} charge speed");
         assert_eq!(rec_p_f64(m, "stun"), 1.0);
@@ -1647,8 +1644,8 @@ mod tests {
         let mk = |seed: u64| {
             Boss::new(
                 &world,
-                &nav,
-                &tb.boss,
+                nav.clone(),
+                tb.boss.clone(),
                 BossConfig {
                     max_hp: 18000.0,
                     difficulty: "normal",
@@ -1704,7 +1701,7 @@ mod tests {
         assert_eq!(snap(&b1), snap(&b2), "crablets diverged");
     }
 
-    fn collect_records(boss: &mut Boss<'_>, recs: &mut Vec<JVal>, seen: &mut Vec<f64>) {
+    fn collect_records(boss: &mut Boss, recs: &mut Vec<JVal>, seen: &mut Vec<f64>) {
         for m in &boss.moves {
             let t0 = rec_t0(m);
             if !seen.contains(&t0) {
@@ -1717,7 +1714,7 @@ mod tests {
     // -- TR-43.2: crablet lifecycle (JS bossBrain.js L185-230, L335-373) ----
 
     /// Run the host brain until the crablets litter is out.
-    fn spawn_litter(boss: &mut Boss<'_>, kit: &mut SquadKit) -> f64 {
+    fn spawn_litter(boss: &mut Boss, kit: &mut SquadKit) -> f64 {
         armed(boss, kit, 2);
         let m = forced_record(boss, kit, 2, MoveId::Crablets);
         let tele = rec_d(&m, 0);

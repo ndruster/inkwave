@@ -168,6 +168,7 @@ fn frame(
         fists,
         jump_held,
         false,
+        None,
     );
     ps.drain_events()
 }

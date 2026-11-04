@@ -156,6 +156,7 @@ fn frame(
         &mut Vec::new(),
         false,
         false,
+        None,
     );
     ps.drain_events()
 }

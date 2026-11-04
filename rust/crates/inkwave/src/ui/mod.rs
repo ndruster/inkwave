@@ -21,18 +21,22 @@ use bevy::picking::pointer::PointerButton;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use inkwave_sim::actor::{ActorInput, SplatCause};
+use inkwave_sim::boss::BossEvent;
 use inkwave_sim::match_::{MatchEvent, MatchResult, Phase, ZoneOutcome};
 use inkwave_sim::tuning::Tuning;
 
 use crate::actors::team_color;
+use crate::audio::{BossAudioDirector, BossAudioFrame};
 use crate::ink_render::DemoSim;
 use crate::input::PlayerControls;
 use crate::net::OnlineSession;
 use crate::net::match_link::NetEvents;
 use inkwave_sim::net::session::{SPECIAL_IDS, SUB_IDS, SessionEvent, SessionState, WEAPON_ORDER};
 
+pub mod boss_hud;
 pub mod online;
 
+use self::boss_hud::{BOSS_NAME, BossHudFrame, BossHudOut, BossHudState};
 use self::online::{SessionCmd, run_cmd};
 
 /// Which screen is live (exactly one at a time).
@@ -75,6 +79,29 @@ pub struct UiState {
     /// armed when the fifth character lands in the last cell. `0.0` = no
     /// timer pending.
     pub auto_join: f64,
+    /// Task 46 batch B (D-T44-5): the offline Play-menu mode selector. JS has
+    /// no offline boss entry (boss only ever starts through `netmatch.js`
+    /// L164-171); this is the Rust-side placeholder cycle (turf → boss —
+    /// offline zones is not wired into `DemoSim`, Task 38 batch 3).
+    pub play_mode: PlayMode,
+}
+
+/// Offline Play-menu match mode (Task 46 batch B).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum PlayMode {
+    #[default]
+    Turf,
+    Boss,
+}
+
+impl PlayMode {
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Turf => "TURF",
+            Self::Boss => "BOSS",
+        }
+    }
 }
 
 impl Default for UiState {
@@ -85,8 +112,20 @@ impl Default for UiState {
             net_mode: false,
             net_back_pressed: false,
             auto_join: 0.0,
+            play_mode: PlayMode::default(),
         }
     }
+}
+
+/// Task 46 batch C2 — the boss HUD + bossAudio state machines (≡ hud-boss.js
+/// / bossAudio.js bus subscriptions). `hud` is `Some` only while a boss match
+/// is live (`DemoSim::bm`); `out` caches the render descriptor for
+/// `ui_update`, `audio` the trigger-log director.
+#[derive(Resource, Default)]
+pub struct BossHudRes {
+    pub hud: Option<BossHudState>,
+    pub out: BossHudOut,
+    pub audio: BossAudioDirector,
 }
 
 /// Root panel of one screen; `ui_update` toggles its `Display`.
@@ -124,6 +163,10 @@ pub enum Action {
     /// Task 24: Results "BACK TO LOBBY" (JS `netMatchEnd` brings the lobby
     /// back, main.js L769-846).
     NetBackToLobby,
+    /// Task 46 batch B (D-T44-5): cycle the offline Play-menu mode
+    /// (turf → boss). JS has no offline boss entry; the online lobby's MODE
+    /// button (`lob_mode`) is the interaction this mirrors.
+    ModeCycle,
 }
 
 /// The online screens' button intents (menus.js `_scr_online` /
@@ -270,6 +313,22 @@ pub fn team_names(t: &Tuning) -> [String; 2] {
 /// below instead (hud.js L1096-1126).
 #[must_use]
 pub fn results_text(res: &MatchResult, names: &[String; 2]) -> (String, String, String) {
+    if let Some(b) = &res.boss {
+        // Task 46 batch B/C2: Boss Battle settlement (JS `bossMode.js` L44-52
+        // + `main.js` L960 `boss: {name, defeated, time, hpLeft, phase}` —
+        // the summary lines mirror that record; the per-player bossDmg /
+        // weakHits columns live in `stats_rows`, JS main.js L961 + menus.js
+        // L4031-4040).
+        let title = if b.win { "VICTORY!" } else { "DEFEAT" };
+        return (
+            title.to_string(),
+            format!(
+                "{} {:.0}/{:.0} HP · PHASE {}",
+                b.name, b.hp, b.max_hp, b.phase
+            ),
+            format!("TIME {:.1}s", b.time),
+        );
+    }
     if let Some(z) = &res.zones {
         return zones_text(res.winner, z, names);
     }
@@ -324,21 +383,52 @@ fn res_bar(res: &MatchResult, t: usize) -> f32 {
     }
 }
 
-/// Per-actor results rows: tag, splats, deaths, turf m² (no trailing newline).
+/// Per-actor results rows: tag, splats, deaths, turf m² (no trailing
+/// newline). Task 46 batch C2: in a boss match the rows mirror the JS boss
+/// results table (main.js L961 `damage/weakHits/splats`, menus.js L4031-4040
+/// DAMAGE / weak hits / splats(crablets) / deaths / TURF) fed from
+/// `Boss::stats_by_nid` — offline the squad `ids` are roster indices
+/// (match_.rs L1432), so the key is the actor slot — plus a totals line.
 #[must_use]
 pub fn stats_rows(demo: &DemoSim) -> String {
+    let bm = demo.bm.lock().unwrap();
+    let boss = bm.as_ref();
     let mut s = String::new();
     for (i, a) in demo.m.actors.iter().enumerate() {
         if i > 0 {
             s.push('\n');
         }
-        s.push_str(&format!(
-            "{}  splats {}  deaths {}  turf {:.0}m2",
-            slot_tag(a.team, a.slot),
-            a.splats,
-            a.deaths,
-            a.turf
-        ));
+        match boss {
+            Some(b) => {
+                let st = b.boss.stats_by_nid.get(&(a.slot as i32));
+                s.push_str(&format!(
+                    "{}  dmg {:.0}  weak {}  splats {}  deaths {}  turf {:.0}m2",
+                    slot_tag(a.team, a.slot),
+                    f64::from(st.map_or(0.0, |x| x.boss_dmg)),
+                    st.map_or(0, |x| x.weak_hits),
+                    st.map_or(0, |x| x.splats),
+                    a.deaths,
+                    a.turf,
+                ));
+            }
+            None => {
+                s.push_str(&format!(
+                    "{}  splats {}  deaths {}  turf {:.0}m2",
+                    slot_tag(a.team, a.slot),
+                    a.splats,
+                    a.deaths,
+                    a.turf
+                ));
+            }
+        }
+    }
+    if let Some(b) = boss {
+        // Totals over the per-attacker table (JS sums the DAMAGE / weak-hit
+        // columns across the roster).
+        let (dmg, weak) = b.boss.stats_by_nid.values().fold((0.0f32, 0u32), |acc, x| {
+            (acc.0 + x.boss_dmg, acc.1 + x.weak_hits)
+        });
+        s.push_str(&format!("\nBOSS DMG {:.0}  WEAK {weak}", f64::from(dmg)));
     }
     s
 }
@@ -479,6 +569,13 @@ fn small_button_dyn(
 
 /// Build all four screen trees (only one is displayed at a time).
 pub fn build_ui(mut commands: Commands) {
+    // Task 46 batch C2: the boss HUD / bossAudio state machines live with
+    // the UI (registered here so both the real app and the headless test
+    // apps get them).
+    commands.init_resource::<BossHudRes>();
+    // Task 46: placeholder defeat quake (boss.js L182) — same registration
+    // surface as `BossHudRes` so test apps get it too.
+    commands.init_resource::<crate::boss_render::BossShake>();
     // ================= main menu =================
     let menu = commands.spawn(full_panel(Screen::Menu, PANEL_BG)).id();
     let menu_col = commands.spawn((col(18.0), ChildOf(menu))).id();
@@ -493,6 +590,15 @@ pub fn build_ui(mut commands: Commands) {
     ));
     button(&mut commands, menu_col, "PLAY 90s", Action::Play(90));
     button(&mut commands, menu_col, "PLAY 180s", Action::Play(180));
+    // Task 46 batch B (D-T44-5): offline mode selector (turf → boss). The
+    // dynamic label is refreshed by `ui_update`'s "menu_mode" role.
+    small_button_dyn(
+        &mut commands,
+        menu_col,
+        "MODE TURF",
+        Action::ModeCycle,
+        "menu_mode",
+    );
     // Task 24: the ONLINE entry (JS main menu's ONLINE button, menus.js
     // L2407 "the main menu's ONLINE button is --b too").
     button(
@@ -551,6 +657,147 @@ pub fn build_ui(mut commands: Commands) {
         ),
         ChildOf(timer_panel),
     ));
+
+    // Task 46 batch C2 — boss HUD placeholder档 (≡ hud-boss.js `_mount`):
+    // the bar block under the timer, the callout pill, the title card, the
+    // phase banner and the ending word. Non-boss matches leave every role
+    // empty / zero-width (ui_update guards on `BossHudRes`).
+    let boss_panel = commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(52.0),
+                left: Val::Px(0.0),
+                right: Val::Px(0.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(2.0),
+                ..default()
+            },
+            ChildOf(hud),
+        ))
+        .id();
+    commands.spawn((
+        (
+            LabelRole("boss_bar"),
+            Text::new(""),
+            TextFont::from_font_size(18.0),
+            TextColor(Color::WHITE),
+        ),
+        ChildOf(boss_panel),
+    ));
+    let boss_bar_bg = commands
+        .spawn((
+            Node {
+                width: Val::Px(360.0),
+                height: Val::Px(16.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
+            ChildOf(boss_panel),
+        ))
+        .id();
+    // JS `_writeBar`: the white chip lag rides behind the coloured fill.
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            width: Val::Percent(0.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.55)),
+        BarRole("boss_chip_bar"),
+        ChildOf(boss_bar_bg),
+    ));
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            width: Val::Percent(0.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgb(0.85, 0.25, 0.2)),
+        BarRole("boss_hp_bar"),
+        ChildOf(boss_bar_bg),
+    ));
+    // JS `_stun` is-open meter (hud-boss.js L237 / L321).
+    let boss_stun_bg = commands
+        .spawn((
+            Node {
+                width: Val::Px(200.0),
+                height: Val::Px(8.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
+            ChildOf(boss_panel),
+        ))
+        .id();
+    commands.spawn((
+        Node {
+            width: Val::Percent(0.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgb(1.0, 0.8, 0.2)),
+        BarRole("boss_stun_bar"),
+        ChildOf(boss_stun_bg),
+    ));
+    commands.spawn((
+        (
+            LabelRole("boss_open"),
+            Text::new(""),
+            TextFont::from_font_size(22.0),
+            TextColor(Color::srgb(1.0, 0.8, 0.2)),
+        ),
+        ChildOf(boss_panel),
+    ));
+    // JS callout pill (hud-boss.js L183-205) — centred upper third.
+    commands.spawn((
+        (
+            LabelRole("boss_call"),
+            Text::new(""),
+            TextFont::from_font_size(30.0),
+            TextColor(Color::srgb(1.0, 0.9, 0.3)),
+        ),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Percent(30.0),
+            left: Val::Px(0.0),
+            right: Val::Px(0.0),
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+        ChildOf(hud),
+    ));
+    // JS `_titleCard` (L444-461) / `_banner` (L463-472) / `_ending` (L474-494)
+    // — stacked centred overlays.
+    for (role, size, top) in [
+        ("boss_title", 44.0, 18.0),
+        ("boss_banner", 34.0, 34.0),
+        ("boss_ending", 52.0, 46.0),
+    ] {
+        commands.spawn((
+            (
+                LabelRole(role),
+                Text::new(""),
+                TextFont::from_font_size(size),
+                TextColor(Color::WHITE),
+            ),
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Percent(top),
+                left: Val::Px(0.0),
+                right: Val::Px(0.0),
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            ChildOf(hud),
+        ));
+    }
 
     // turf percent + bar, top-left / top-right (upstream zone-control-free
     // turf HUD: two team counters with the leader highlighted).
@@ -1075,7 +1322,14 @@ pub fn apply_action(
                 return;
             }
             st.duration = d;
-            demo.replay(d as f32);
+            match st.play_mode {
+                // Task 46: boss clock = BOSS_MODE.duration (JS match.js L21
+                // — the lobby time is ignored); difficulty defaults to
+                // "normal" (JS bossMode.js L23 `o.difficulty || 'normal'`),
+                // there is no offline difficulty selector.
+                PlayMode::Boss => demo.replay_boss(0.0, "normal"),
+                PlayMode::Turf => demo.replay(d as f32),
+            }
             st.screen = Screen::Hud;
         }
         Action::Resume => st.screen = Screen::Hud,
@@ -1085,11 +1339,21 @@ pub fn apply_action(
                 // `NetBackToLobby` by `ui_state_machine`
             }
             let d = st.duration;
-            demo.replay(d as f32);
+            match st.play_mode {
+                PlayMode::Boss => demo.replay_boss(0.0, "normal"),
+                PlayMode::Turf => demo.replay(d as f32),
+            }
             st.screen = Screen::Hud;
         }
         Action::Menu => st.screen = Screen::Menu,
         Action::Quit => *quit = true,
+        // Task 46: the offline mode cycle (turf → boss).
+        Action::ModeCycle => {
+            st.play_mode = match st.play_mode {
+                PlayMode::Turf => PlayMode::Boss,
+                PlayMode::Boss => PlayMode::Turf,
+            };
+        }
         // Task 24: the online buttons drive the session resource, which this
         // pure helper has no access to; `ui_state_machine` dispatches them
         // through `handle_online_action` instead.
@@ -1122,6 +1386,8 @@ pub fn ui_state_machine(
     time: Res<Time>,
     mut os: NonSendMut<OnlineSession>,
     mut net_ev: ResMut<NetEvents>,
+    mut boss: ResMut<BossHudRes>,
+    mut shake: ResMut<crate::boss_render::BossShake>,
 ) {
     let prev = st.screen;
     let mut quit = false;
@@ -1364,6 +1630,69 @@ pub fn ui_state_machine(
     }
     feed.lines.retain(|(exp, _)| *exp > now);
     feed.lines.truncate(4);
+
+    // Task 46 batch C2 — drain the boss event queue into the pure state
+    // machines (≡ the hud-boss.js / bossAudio.js bus subscriptions). Offline
+    // the stepper fills `DemoSim::boss_events`; `net_tick` mirrors the client
+    // queue in. The move callouts / audio loops ride the live `boss.st`
+    // phase edges (the sim raises one `Move` per move record, not per phase).
+    {
+        // Take first: the `bm` mutex guard would keep `demo` immutably
+        // borrowed and block the queue drain.
+        let events: Vec<BossEvent> = std::mem::take(&mut demo.boss_events);
+        // JS boss.js L182: defeat → `emit('shake', {amount: 0.9})` — the
+        // placeholder quake consumed by `camera_rig` (Task 51 replaces it
+        // with directional screenfx).
+        if events.iter().any(|e| matches!(e, BossEvent::Defeat { .. })) {
+            shake.amount = 0.9;
+        }
+        let bm = demo.bm.lock().unwrap();
+        let boss_live = bm.is_some();
+        if boss_live != boss.hud.is_some() {
+            // JS `setMode(true, boss)` (hud-boss.js L100-117) + the app's
+            // `bossAudio.begin()` (bossMode.js L13).
+            boss.hud = bm
+                .as_ref()
+                .map(|m| BossHudState::new(m.boss.max_hp, m.boss.hp));
+            boss.audio = BossAudioDirector::default();
+            if boss_live {
+                boss.audio.begin();
+            }
+            boss.out = BossHudOut::default();
+        }
+        if let (Some(hud), Some(bm)) = (boss.hud.as_mut(), bm.as_ref()) {
+            let b = &bm.boss;
+            for ev in &events {
+                hud.on_event(ev);
+            }
+            let dt = f64::from(time.delta_secs().min(0.1));
+            hud.update(
+                dt,
+                &BossHudFrame {
+                    hp: b.hp,
+                    max_hp: b.max_hp,
+                    dead: b.dead,
+                    stunned: b.stunned,
+                    invuln: b.invuln,
+                    move_id: b.st.move_id.as_deref(),
+                    move_phase: b.st.move_phase.as_deref(),
+                    hud_visible: st.screen == Screen::Hud,
+                    finished: demo.m.phase == Phase::End,
+                },
+            );
+            boss.out = hud.out();
+            boss.audio.update(
+                dt,
+                &events,
+                &BossAudioFrame {
+                    move_id: b.st.move_id.as_deref(),
+                    move_phase: b.st.move_phase.as_deref(),
+                    playing: demo.m.phase == Phase::Active,
+                    ended: demo.m.phase == Phase::End,
+                },
+            );
+        }
+    }
 
     pc.paused = st.screen != Screen::Hud;
 
@@ -1755,6 +2084,7 @@ pub fn ui_update(
     mut labels: Query<(&LabelRole, &mut Text, &mut TextColor)>,
     mut bars: Query<(&BarRole, &mut Node), Without<ScreenRoot>>,
     mut cross: Query<(&Crosshair, &mut BackgroundColor)>,
+    boss: Res<BossHudRes>,
 ) {
     for (root, mut node) in roots.iter_mut() {
         let want = if st.screen == root.0 {
@@ -1776,10 +2106,55 @@ pub fn ui_update(
     });
     let now = time.elapsed_secs();
 
-    if on_hud || on_results {
+    let on_menu = st.screen == Screen::Menu;
+
+    // Task 46 batch C2 — boss HUD placeholder档 (≡ the hud-boss.js writes).
+    // Non-boss matches leave `BossHudRes::out` at the all-off default, so
+    // every role clears.
+    let bo = &boss.out;
+    let (boss_bar_text, boss_open_text, boss_call_text, boss_banner_text) = if bo.bar_visible {
+        let mut bar = format!("{BOSS_NAME} {}% · P{}", bo.pct, bo.phase);
+        if bo.low {
+            bar.push_str(" · LOW");
+        }
+        if bo.shield {
+            bar.push_str(" · SHIELD");
+        }
+        if bo.enraged {
+            bar.push_str(" · ENRAGED");
+        }
+        (
+            bar,
+            if bo.open {
+                "OPEN!".to_string()
+            } else {
+                String::new()
+            },
+            bo.callout.clone().unwrap_or_default(),
+            match bo.banner {
+                Some(big) => format!("{big} — {}", bo.banner_sub.unwrap_or_default()),
+                None => String::new(),
+            },
+        )
+    } else {
+        (String::new(), String::new(), String::new(), String::new())
+    };
+    let (boss_hp_w, boss_chip_w, boss_stun_w) = if bo.bar_visible {
+        (
+            bo.shown * 100.0,
+            bo.chip * 100.0,
+            if bo.open { bo.open_frac * 100.0 } else { 0.0 },
+        )
+    } else {
+        (0.0, 0.0, 0.0)
+    };
+
+    if on_hud || on_results || on_menu {
         for (role, mut text, mut color) in labels.iter_mut() {
             // (new text, new colour) — `None` colour keeps the current one.
             let (t, c): (String, Option<Color>) = match role.0 {
+                // Task 46: the offline mode selector label.
+                "menu_mode" if on_menu => (format!("MODE {}", st.play_mode.label()), None),
                 "timer" if on_hud => (fmt_clock(demo.m.time), Some(timer_color(demo.m.time))),
                 "cov_a" if on_hud => (
                     pct(cov[0]),
@@ -1816,6 +2191,24 @@ pub fn ui_update(
                     None,
                 ),
                 "res_stats" if on_results => (stats_rows(&demo), None),
+                // Task 46 batch C2 — boss HUD roles (JS bar text / callout /
+                // title card / banner / ending word).
+                "boss_bar" if on_hud => (
+                    boss_bar_text.clone(),
+                    Some(if bo.low { RED } else { Color::WHITE }),
+                ),
+                "boss_open" if on_hud => (boss_open_text.clone(), None),
+                "boss_call" if on_hud => (boss_call_text.clone(), None),
+                "boss_title" if on_hud => (
+                    if bo.title_card {
+                        BOSS_NAME.to_string()
+                    } else {
+                        String::new()
+                    },
+                    None,
+                ),
+                "boss_banner" if on_hud => (boss_banner_text.clone(), None),
+                "boss_ending" if on_hud => (bo.ending.unwrap_or_default().to_string(), None),
                 // Task 24: in online mode the same button is BACK TO LOBBY
                 // (JS `netMatchEnd` re-shows the lobby; the click is
                 // remapped in `ui_state_machine`).
@@ -1847,6 +2240,9 @@ pub fn ui_update(
             "ink_bar" if on_hud => ink_frac * 100.0,
             "res_a_bar" if on_results => demo.m.result.as_ref().map_or(0.0, |r| res_bar(r, 0)),
             "res_b_bar" if on_results => demo.m.result.as_ref().map_or(0.0, |r| res_bar(r, 1)),
+            "boss_hp_bar" if on_hud => boss_hp_w,
+            "boss_chip_bar" if on_hud => boss_chip_w,
+            "boss_stun_bar" if on_hud => boss_stun_w,
             _ => continue,
         };
         let w = Val::Percent(p.min(100.0));
@@ -1974,6 +2370,157 @@ mod tests {
             (res_bar(&turf, 0) - 15.9).abs() < 1e-4,
             "turf keeps the coverage bar"
         );
+    }
+
+    #[test]
+    fn results_text_boss_branch_shows_outcome_hp_and_time() {
+        // Task 46 batch B/C2: Boss settlement (JS bossMode.js L44-52:
+        // `win = boss.dead`; main.js L960 `boss: {name, time, hpLeft, phase}`
+        // — batch C2 adds the PHASE column; the per-player bossDmg / weakHits
+        // columns ride `stats_rows`).
+        let names = ["Alpha".to_string(), "Bravo".to_string()];
+        let mk = |win: bool, time: f32, hp: f32| MatchResult {
+            coverage: [0.0; 2],
+            winner: if win { 0 } else { 1 },
+            points: [0.0; 2],
+            elapsed: 180.0,
+            zones: None,
+            boss: Some(inkwave_sim::boss::BossOutcome {
+                name: "HULLBREAKER".to_string(),
+                win,
+                time,
+                hp,
+                max_hp: 120_000.0,
+                phase: 2,
+            }),
+        };
+        let (t, a, b) = results_text(&mk(true, 84.3, 0.0), &names);
+        assert_eq!(t, "VICTORY!");
+        assert_eq!(a, "HULLBREAKER 0/120000 HP · PHASE 2");
+        assert_eq!(b, "TIME 84.3s");
+        let (t, a, b) = results_text(&mk(false, 95.7, 41_234.0), &names);
+        assert_eq!(t, "DEFEAT");
+        assert_eq!(a, "HULLBREAKER 41234/120000 HP · PHASE 2");
+        assert_eq!(b, "TIME 95.7s");
+    }
+
+    /// A live-enough `BossMode` for the presentation tests (the nettest.rs
+    /// L610-628 construction pattern).
+    fn mk_boss_mode() -> inkwave_sim::boss::BossMode {
+        use inkwave_sim::actor::SimWorld;
+        use inkwave_sim::boss::BossMode;
+        use inkwave_sim::boss::nav::BossNav;
+        use inkwave_sim::collision::CollisionWorld;
+        let layout = inkwave_sim::embedded_tidewater();
+        let world = CollisionWorld::from_layout(&layout);
+        let sim = SimWorld::new(&world, &layout);
+        let tb = inkwave_sim::embedded_tuning();
+        BossMode::new(
+            &sim,
+            BossNav::new(&sim, &tb.boss.nav),
+            tb.boss.clone(),
+            5.2,
+            "normal",
+            true,
+            1,
+        )
+    }
+
+    /// Task 46 batch C2: the boss results table rides `Boss::stats_by_nid`
+    /// (JS main.js L961 damage/weakHits + menus.js L4031-4040 columns) with a
+    /// totals line; turf matches keep the classic rows.
+    #[test]
+    fn stats_rows_boss_mode_shows_dmg_and_weak_columns() {
+        use inkwave_sim::boss::AttackerStats;
+        use inkwave_sim::collision::CollisionWorld;
+        let layout = inkwave_sim::embedded_tidewater();
+        let world = CollisionWorld::from_layout(&layout);
+        let demo = DemoSim::new(layout, world, 20261004);
+
+        // Turf rows first (no bm).
+        let turf = stats_rows(&demo);
+        assert!(turf.contains("splats"), "{turf}");
+        assert!(!turf.contains("dmg"));
+
+        // A boss match: seed the per-attacker table (offline squad ids are
+        // roster indices, so nid == slot).
+        let mut bm = mk_boss_mode();
+        bm.boss.stats_by_nid.insert(
+            0,
+            AttackerStats {
+                boss_dmg: 12_345.6,
+                weak_hits: 7,
+                splats: 3,
+            },
+        );
+        bm.boss.stats_by_nid.insert(
+            1,
+            AttackerStats {
+                boss_dmg: 4_000.0,
+                weak_hits: 1,
+                splats: 0,
+            },
+        );
+        *demo.bm.lock().unwrap() = Some(bm);
+        let rows = stats_rows(&demo);
+        assert!(rows.contains("dmg 12346"), "{rows}");
+        assert!(rows.contains("weak 7"), "{rows}");
+        assert!(rows.contains("splats 3"), "{rows}");
+        assert!(
+            rows.contains("BOSS DMG 16346  WEAK 8"),
+            "totals line: {rows}"
+        );
+    }
+
+    /// Headless (TR-46.1): a boss match's drained events drive the state
+    /// machines through the real systems without panicking, and the HUD
+    /// labels ride the descriptor.
+    #[test]
+    fn boss_hud_headless_drain_updates_labels() {
+        let mut app = ui_test_app();
+        app.update(); // startup: build_ui inits BossHudRes
+        // Enter a Hud screen and arm a boss match.
+        app.world_mut().resource_mut::<UiState>().screen = Screen::Hud;
+        {
+            let mut demo = app.world_mut().resource_mut::<DemoSim>();
+            let mut bm = mk_boss_mode();
+            bm.boss.hp = bm.boss.max_hp * 0.5;
+            let hp = bm.boss.hp;
+            *demo.bm.lock().unwrap() = Some(bm);
+            demo.boss_events.push(BossEvent::Phase { phase: 2 });
+            demo.boss_events.push(BossEvent::Stunned { dur: 3.0 });
+            demo.boss_events.push(BossEvent::Hp { hp });
+        }
+        app.update();
+        {
+            let boss = app.world().resource::<BossHudRes>();
+            assert!(boss.hud.is_some(), "bm live → state built");
+            assert_eq!(boss.out.banner, Some("PHASE 2!"));
+            assert!(boss.out.open, "stun window armed");
+            assert!(!boss.audio.cues.is_empty(), "audio director fed");
+        }
+        // Defeat: SUNK! then the bar drops 1.3 s later.
+        app.world_mut()
+            .resource_mut::<DemoSim>()
+            .boss_events
+            .push(BossEvent::Defeat { killer: 0 });
+        app.update();
+        assert_eq!(
+            app.world().resource::<BossHudRes>().out.ending,
+            Some("SUNK!")
+        );
+        let label_text = |app: &mut App, want: &str| -> String {
+            app.world_mut()
+                .query::<(&LabelRole, &Text)>()
+                .iter(app.world())
+                .find(|(r, _)| r.0 == want)
+                .map(|(_, t)| t.0.clone())
+                .unwrap_or_default()
+        };
+        assert_eq!(label_text(&mut app, "boss_ending"), "SUNK!");
+        // The 1.3 s is-gone timer is pinned in the boss_hud unit tests (the
+        // headless loop's wall-time dt is not controllable here).
+        assert!(app.world().resource::<BossHudRes>().out.bar_visible);
     }
 
     #[test]

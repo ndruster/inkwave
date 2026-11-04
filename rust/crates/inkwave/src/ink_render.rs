@@ -11,7 +11,7 @@
 //! rect written by `world::emit_box`) and blends team ink over the surface
 //! colour before lighting.
 
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use bevy::asset::{embedded_asset, load_embedded_asset};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin};
@@ -20,11 +20,14 @@ use bevy::render::render_resource::{AsBindGroup, Extent3d, TextureDimension, Tex
 use bevy::shader::ShaderRef;
 use inkwave_sim::actor::FIXED_DT;
 use inkwave_sim::actor::{ActorInput, SimWorld as ActorSimWorld};
+use inkwave_sim::boss::BossEvent;
+use inkwave_sim::boss::BossMode;
+use inkwave_sim::boss::nav::BossNav;
 use inkwave_sim::bot::{Bot, BotCtx};
 use inkwave_sim::collision::CollisionWorld;
 use inkwave_sim::geometry::StageLayout;
 use inkwave_sim::ink_atlas::InkAtlas;
-use inkwave_sim::match_::{Match, Phase};
+use inkwave_sim::match_::{Match, MatchMode, Phase};
 use inkwave_sim::nav::NavGraph;
 use inkwave_sim::tuning::Tuning;
 
@@ -178,6 +181,21 @@ pub struct DemoSim {
     /// Seed the roster/bots were built with (kept so `replay` can rebuild
     /// the bot brains fresh, matching the first match).
     seed: u64,
+    /// Task 46 batch B: the live Boss Battle wrapper — `Some` only while a
+    /// boss match runs (offline `replay_boss` / a net boss room's host or
+    /// follower). D-T45-9 unblocked: batch A made `Boss` own its nav /
+    /// collision / tuning, so `BossMode` is `'static` and this `Resource`
+    /// can hold it across frames (≡ `autopilot::run_boss` owning it in the
+    /// driver, JS `bossMode.js` L18-28). The `Mutex` is not about
+    /// contention: `BossNav`'s A* scratch `RefCell`/`Cell` buffers make
+    /// `BossMode` `Send` but not `Sync`, and a Bevy `Resource` needs both —
+    /// exactly one system (the match stepper) ever holds the lock.
+    pub bm: Mutex<Option<BossMode>>,
+    /// Every [`BossEvent`] the live boss raised since the match started, in
+    /// frame order (JS `emit('boss:*')` bus — the sim has none; drained from
+    /// `Boss::drain_events` each step). Batch C (HUD / render / audio)
+    /// consumes this stream.
+    pub boss_events: Vec<BossEvent>,
 }
 
 impl DemoSim {
@@ -209,6 +227,8 @@ impl DemoSim {
             player: None,
             player_slot: 0,
             seed,
+            bm: Mutex::new(None),
+            boss_events: Vec::new(),
         }
     }
 
@@ -244,16 +264,22 @@ impl DemoSim {
         }
     }
 
-    fn step_once(&mut self) {
+    pub fn step_once(&mut self) {
         let t = &self.tuning;
         let sim = ActorSimWorld::new(&self.world, &self.layout);
         let n = self.m.actors.len();
+        // One guard for the whole step (see the `bm` field doc).
+        let mut bmg = self.bm.lock().unwrap();
         if self.m.phase == Phase::Active {
             let snap = self.m.actors.clone();
             for (i, b) in self.bots.iter().enumerate() {
                 self.mate_goals[i] = b.goal_node();
             }
             let mate_minds = self.bots.iter().map(|b| Some(b.mind())).collect::<Vec<_>>();
+            // Task 46: a live boss hands the brains its entity (JS `G.boss`,
+            // bots.js L345 ≡ `autopilot::run_boss`'s `BotCtx { boss:
+            // Some(&bm.boss) }`).
+            let boss_ent = bmg.as_ref().map(|bm| &bm.boss);
             for i in 0..n {
                 if i == self.player_slot
                     && let Some((intent, yaw, pitch)) = self.player
@@ -282,7 +308,7 @@ impl DemoSim {
                     // plan is never live here (Task 38 batch 3).
                     zones: None,
                     zctl: None,
-                    boss: None,
+                    boss: boss_ent,
                 };
                 self.inputs[i] = self.bots[i].step(FIXED_DT, &mut self.m.actors[i], &ctx);
             }
@@ -298,8 +324,17 @@ impl DemoSim {
             &t.player,
             &t.weapons,
             &t.subs,
-            None,
+            // Task 46: the driver hands the owned `BossMode` to the match
+            // every frame (≡ `run_boss`'s `Some(&mut bm)`; JS match.js L229
+            // `bossMode?.update(dt)`). `None` keeps the turf path byte-for-bite
+            // identical to before.
+            bmg.as_mut().map(|bm| &mut *bm),
         );
+        // JS `emit('boss:*')` had no bus in the sim — drain the queue into
+        // the app-side event stream (batch C HUD / render / audio consumer).
+        if let Some(bm) = bmg.as_mut() {
+            self.boss_events.extend(bm.boss.drain_events());
+        }
         // Task 13: no auto-restart — the UI shows the results screen when the
         // match reaches `Phase::End` and replays on demand (`replay`).
     }
@@ -310,9 +345,28 @@ impl DemoSim {
     /// rollback in [`step_and_drain`].
     pub fn replay(&mut self, duration: f32) {
         let sim = ActorSimWorld::new(&self.world, &self.layout);
-        self.m.restart(&sim, &self.tuning.player);
-        self.m.duration = duration;
-        self.m.time = duration;
+        // Bind the probe result first: an `if`-condition temporary guard
+        // lives through the whole block and the body re-locks below.
+        let boss_live = self.bm.lock().unwrap().is_some();
+        if boss_live {
+            // Task 46: leaving a boss match for turf — `restart` would keep
+            // the Boss-shaped match (`boss_rules`), so rebuild the plain turf
+            // match fresh instead (≡ `restore_offline_demo`'s shape).
+            *self.bm.lock().unwrap() = None;
+            self.boss_events.clear();
+            let seed = self.m.seed;
+            self.m = Match::new(
+                duration,
+                seed,
+                &sim,
+                &self.tuning.player,
+                &self.tuning.match_config,
+            );
+        } else {
+            self.m.restart(&sim, &self.tuning.player);
+            self.m.duration = duration;
+            self.m.time = duration;
+        }
         self.acc = 0.0;
         self.splats = 0;
         // Fresh brains: no leftover target nodes / timers from the last match.
@@ -325,6 +379,64 @@ impl DemoSim {
             .map(|(i, a)| Bot::new(a, &t.difficulty.easy, self.seed, i))
             .collect();
         self.mate_goals = vec![None; self.bots.len()];
+    }
+
+    /// Task 46 batch B (D-T44-5): start a Boss Battle — the offline entry the
+    /// JS game only ever had through `netmatch` (JS `netmatch.js` L164-171
+    /// boss branch). The shape replicates `inkwave_sim::autopilot::run_boss`
+    /// L255-300: one team-0 squad of `rules.squad` slots, the local player in
+    /// slot 0, and the owned [`BossMode`] held across frames by this Resource
+    /// (D-T45-9 unblocked by batch A's owned refactor).
+    ///
+    /// `duration <= 0` takes `BOSS_MODE.duration` (JS `match.js` L21: the
+    /// boss clock ignores the lobby time). `difficulty` picks the HP tier —
+    /// JS `bossMode.js` L21-22: `maxHp = round(hpPerUnit × squadUnits(humans,
+    /// bots) × hpDiff[diff])`, with the offline squad = 1 local + 7 bots.
+    pub fn replay_boss(&mut self, duration: f32, difficulty: &str) {
+        let sim = ActorSimWorld::new(&self.world, &self.layout);
+        let t = &self.tuning;
+        let rules = t.boss.mode;
+        let squad = rules.squad.max(1) as usize;
+        // JS bossMode.js L20-21: slot 0 is the local human, the rest bots.
+        let units = inkwave_sim::boss::squad_units(1, squad - 1, &t.boss.squad_units);
+        let nav = BossNav::new(&sim, &t.boss.nav);
+        self.m = Match::with_roster_mode(
+            duration,
+            self.seed,
+            &sim,
+            &t.player,
+            &t.match_config,
+            squad,
+            MatchMode::Boss,
+            None,
+            None,
+            Some(rules),
+        );
+        // JS bossMode.js L23: `sim: !match.follower` — offline is always the
+        // host.
+        *self.bm.lock().unwrap() = Some(BossMode::new(
+            &sim,
+            nav,
+            t.boss.clone(),
+            units,
+            difficulty,
+            true,
+            self.seed,
+        ));
+        self.boss_events.clear();
+        self.acc = 0.0;
+        self.splats = 0;
+        let t = &self.tuning;
+        self.bots = self
+            .m
+            .actors
+            .iter()
+            .enumerate()
+            .map(|(i, a)| Bot::new(a, &t.difficulty.easy, self.seed, i))
+            .collect();
+        self.mate_goals = vec![None; self.bots.len()];
+        self.inputs = vec![ActorInput::default(); self.bots.len()];
+        self.player_slot = 0;
     }
 }
 
@@ -392,5 +504,80 @@ mod tests {
             d.m.actors[0].pos.distance(p0) > 0.05,
             "slot 0 bot must keep driving without an override"
         );
+    }
+
+    /// Task 46 batch B: the offline Boss Battle entry (D-T44-5). The HP
+    /// formula is pinned to JS `bossMode.js` L21-22 — `units = 1 + 7 × 0.6 =
+    /// 5.2`, `maxHp = round(18000 × 5.2 × hpDiff[diff])` (JS `boss.js` L17-18)
+    /// — and the frame loop must drain the boss event queue into
+    /// `boss_events`.
+    #[test]
+    fn demo_boss_match_drives_and_records_events() {
+        let layout = inkwave_sim::embedded_tidewater();
+        let world = CollisionWorld::from_layout(&layout);
+        let mut d = DemoSim::new(layout, world, 20261004);
+        d.replay_boss(0.0, "normal");
+        assert!(
+            d.bm.lock().unwrap().is_some(),
+            "the boss mode lives on the resource"
+        );
+        assert_eq!(d.m.mode, MatchMode::Boss);
+        assert_eq!(d.m.actors.len(), 8, "one team-0 squad of 8");
+        assert_eq!(d.m.duration, d.tuning.boss.mode.duration as f32);
+        assert_eq!(d.bm.lock().unwrap().as_ref().unwrap().boss.max_hp, 93_600.0);
+        assert_eq!(d.bm.lock().unwrap().as_ref().unwrap().boss.hp, 93_600.0);
+        for _ in 0..1200 {
+            d.step_once();
+        }
+        let bmg = d.bm.lock().unwrap();
+        let bm = bmg.as_ref().unwrap();
+        assert!(
+            (f64::from(bm.boss.bt) - 20.0).abs() < 0.01,
+            "boss clock: {}",
+            bm.boss.bt
+        );
+        assert!(
+            d.boss_events
+                .iter()
+                .any(|e| matches!(e, BossEvent::Move(_) | BossEvent::Hp { .. })),
+            "the Move/Hp event stream must reach the app"
+        );
+        assert!(
+            bm.boss.hp < bm.boss.max_hp,
+            "weapon fire must reach the boss"
+        );
+    }
+
+    #[test]
+    fn demo_boss_hp_tracks_the_difficulty_tier() {
+        // JS boss.js L18: hpDiff = {easy 0.75, normal 1, hard 1.3}.
+        let layout = inkwave_sim::embedded_tidewater();
+        let world = CollisionWorld::from_layout(&layout);
+        let mut d = DemoSim::new(layout, world, 20261004);
+        d.replay_boss(0.0, "easy");
+        assert_eq!(d.bm.lock().unwrap().as_ref().unwrap().boss.max_hp, 70_200.0);
+        d.replay_boss(0.0, "hard");
+        assert_eq!(
+            d.bm.lock().unwrap().as_ref().unwrap().boss.max_hp,
+            121_680.0
+        );
+        assert!(d.boss_events.is_empty(), "a fresh match resets the stream");
+    }
+
+    #[test]
+    fn demo_replay_leaves_the_boss_mode_behind() {
+        // The turf path must not keep a live BossMode: `replay` rebuilds the
+        // match plain (a `restart` would carry `boss_rules` over).
+        let layout = inkwave_sim::embedded_tidewater();
+        let world = CollisionWorld::from_layout(&layout);
+        let mut d = DemoSim::new(layout, world, 20261004);
+        d.replay_boss(0.0, "normal");
+        d.step_once();
+        d.replay(90.0);
+        assert!(d.bm.lock().unwrap().is_none());
+        assert!(d.boss_events.is_empty());
+        assert_eq!(d.m.mode, MatchMode::Turf);
+        d.step_once();
+        assert!(d.boss_events.is_empty(), "turf raises no boss events");
     }
 }

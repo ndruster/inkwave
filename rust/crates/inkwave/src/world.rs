@@ -812,12 +812,14 @@ fn toggle_shadows(
 /// `rig.follow(m.local)`): the pivot tracks the actor's visual position,
 /// look comes from `PlayerControls`, and the boom shrinks when a wall blocks
 /// the line of sight (cameraRig.js follow).
+#[allow(clippy::too_many_arguments)] // Bevy system injection (Task 46 adds the shake read).
 fn camera_rig(
     mut rig: ResMut<CamRig>,
     sim: Res<SimWorld>,
     pc: Res<crate::input::PlayerControls>,
     demo: Res<crate::ink_render::DemoSim>,
     settings: Res<crate::input::LookSettings>,
+    shake: Res<crate::boss_render::BossShake>,
     time: Res<Time>,
     mut q: Query<(&mut Transform, &mut Projection), With<Camera3d>>,
 ) {
@@ -844,7 +846,15 @@ fn camera_rig(
         true,
     );
     rig.boom = boom_next(rig.boom, hit.hit, hit.dist, time.delta_secs());
-    let cam_pos = pivot - look * rig.boom + Vec3::Y * 0.15;
+    let mut cam_pos = pivot - look * rig.boom + Vec3::Y * 0.15;
+    // Task 46 placeholder quake (JS boss.js L182 `emit('shake', {amount:
+    // 0.9})` on defeat): high-frequency camera jitter scaled by the decaying
+    // amount. Directional screenfx is Task 51.
+    if shake.amount > 0.0 {
+        let t = time.elapsed_secs();
+        cam_pos += Vec3::new((t * 41.0).sin(), (t * 53.0).sin() * 0.7, (t * 37.0).cos())
+            * (shake.amount * 0.08);
+    }
 
     // FOV from the user setting (horizontal at the 16/9 reference,
     // cameraRig.js L188); Bevy recomputes `aspect` from the window each frame.

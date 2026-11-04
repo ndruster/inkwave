@@ -125,6 +125,7 @@ fn frame(
         &mut Vec::new(),
         false,
         false,
+        None,
     );
     ps.drain_events()
 }
@@ -170,7 +171,17 @@ fn tr30_1_brolly_cadence_ink_and_pellet_cone() {
         }
         for _ in 0..28 {
             let _ = frame(&f, &mut r, &mut a, &mut ps, false);
-            ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w, &f.sb, None);
+            ps.step(
+                DT,
+                &f.world,
+                &mut [],
+                &mut pg,
+                &f.t,
+                &f.w,
+                &f.sb,
+                None,
+                None,
+            );
         }
     }
     assert!(cone_checked);
@@ -232,7 +243,17 @@ fn tr30_1_brolly_open_then_launch() {
         if r.brolly_launch.is_some() && launched_at.is_none() {
             launched_at = Some(frame_no);
         }
-        ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w, &f.sb, None);
+        ps.step(
+            DT,
+            &f.world,
+            &mut [],
+            &mut pg,
+            &f.t,
+            &f.w,
+            &f.sb,
+            None,
+            None,
+        );
         // openDelay 0.12 + openTime 0.14 + launchHold 0.9 ≈ 1.15 s: nothing
         // has launched yet at 1.0 s.
         if frame_no == 59 {
@@ -361,6 +382,7 @@ fn tr30_1_held_canopy_blocks_breaks_regrows() {
         &shields,
         &mut owner,
         None,
+        None,
     );
     assert!(ps.list.is_empty(), "the round is eaten by the canopy");
     assert!(
@@ -474,7 +496,17 @@ fn tr30_1_pellet_blast_merges_into_one_hit() {
     let _ = frame(&f, &mut r, &mut actors[0], &mut ps, false);
     let mut hits = Vec::new();
     for _ in 0..10 {
-        ps.step(DT, &f.world, &mut actors, &mut pg, &f.t, &f.w, &f.sb, None);
+        ps.step(
+            DT,
+            &f.world,
+            &mut actors,
+            &mut pg,
+            &f.t,
+            &f.w,
+            &f.sb,
+            None,
+            None,
+        );
         hits.extend(ps.drain_events().into_iter().filter_map(|e| match e {
             SimEvent::Hit {
                 victim_slot,

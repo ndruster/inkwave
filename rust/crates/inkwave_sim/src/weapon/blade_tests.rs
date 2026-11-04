@@ -137,6 +137,7 @@ fn frame(
         &mut Vec::new(),
         false,
         false,
+        None,
     );
     ps.drain_events()
 }
@@ -1002,6 +1003,7 @@ fn tr32_2_drop_dmg_far_lerp() {
             &[],
             &mut owner,
             None,
+            None,
         );
         ps.drain_events()
             .iter()
@@ -1074,11 +1076,31 @@ fn tr32_2_blade_drop_delay_freezes_the_first_frames() {
     );
     assert_eq!(ps.list.len(), 7);
     let frozen = ps.list[6].pos;
-    ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w, &f.sb, None);
+    ps.step(
+        DT,
+        &f.world,
+        &mut [],
+        &mut pg,
+        &f.t,
+        &f.w,
+        &f.sb,
+        None,
+        None,
+    );
     assert_eq!(ps.list[6].age, 0.0, "delay 0.018 > dt → frozen");
     assert_eq!(ps.list[6].pos, frozen, "a frozen round does not move");
     assert!(ps.list[0].age > 0.0, "delay 0 steps immediately");
-    ps.step(DT, &f.world, &mut [], &mut pg, &f.t, &f.w, &f.sb, None);
+    ps.step(
+        DT,
+        &f.world,
+        &mut [],
+        &mut pg,
+        &f.t,
+        &f.w,
+        &f.sb,
+        None,
+        None,
+    );
     assert!(
         ps.list[6].age > 0.0,
         "the last drop launches once its delay clears"
@@ -1124,6 +1146,7 @@ fn tr32_2_roller_melee_gates_and_window() {
             &mut Vec::new(),
             false,
             false,
+            None,
         );
         ps.drain_events()
             .iter()
@@ -1183,6 +1206,7 @@ fn tr32_2_roller_melee_gates_and_window() {
             &mut Vec::new(),
             false,
             false,
+            None,
         );
         hits += ps
             .drain_events()
@@ -1235,6 +1259,7 @@ fn tr32_2_brush_melee_box_and_cd() {
             &mut Vec::new(),
             false,
             false,
+            None,
         );
         let ev = ps.drain_events();
         for e in &ev {
@@ -1280,6 +1305,7 @@ fn tr32_2_brush_melee_box_and_cd() {
         &mut Vec::new(),
         false,
         false,
+        None,
     );
     assert_eq!(
         ps2.drain_events()
@@ -1335,6 +1361,7 @@ fn tr32_2_blade_melee_bounds_arc_los_and_once() {
                 &mut Vec::new(),
                 false,
                 false,
+                None,
             );
             hits += ps
                 .drain_events()
@@ -1412,6 +1439,7 @@ fn tr32_2_blade_melee_bounds_arc_los_and_once() {
             &mut Vec::new(),
             false,
             false,
+            None,
         );
         // Count only the melee hits (35): the crescent drops fired on frame 2
         // carry their own damage values and must not confuse the tally.

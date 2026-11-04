@@ -1083,6 +1083,7 @@ mod tests {
             &mut Vec::new(),
             false,
             false,
+            None,
         );
         assert!(wr.firing(), "a shot must open the firing window");
 

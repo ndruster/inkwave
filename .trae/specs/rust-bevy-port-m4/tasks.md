@@ -131,7 +131,7 @@
 - **评审**：独立评审 0 P0 / 2 P1 / 4 P2 → P1-1（时序）/P1-2（FX 回推）当场修复复验；P2-1 §8 回填、P2-2/P2-3 注释更正、P2-4 在案 → PASS 闭环。
 
 ## Task 46: Boss 呈现占位档——体块剪影/telegraph 标记/HUD boss 条
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 44
 - **Description**:
@@ -141,6 +141,17 @@
   - `rule` TR-46.1: 无头冒烟（headless 600 帧 boss 局不 panic）+ wasm 加载冒烟；HUD 状态映射单测（纯函数档）。
   - `rule` TR-46.2: 复核项登记 REVIEW_CHECKLIST（GPU 环境 boss 局视觉）。
 - **Notes**: 高保真模型 Non-Goal（spec）；本任务只求"可玩且可读"。
+
+### Task 46 Completion Evidence（2026-11-04）
+- **TR-46.1 ✅**：无头冒烟——`--headless --mode boss` 600 帧不 panic（bt≈10/hp 满/events≥3 含 Intro/Move）+ turf 回归 exit 0；wasm 冒烟=TRUNK attempt 1 成功 rc=0。`BossHudState` 纯函数单测 14 项（intro 填充曲线/chip hold 0.6s 滞后排放/notch [⅔,⅓] 下穿锁存/`_writeBar` 4000 档量化+low≤0.2/OPEN! 倒计时/PHASE 2!·SHELL CRACKED! banner/callout 生命周期/3.2s title/SUNK! 1.3s is-gone/TIME'S UP!）；`boss_render` 几何参数对 JS 钉值 7 项（slam/barrage/sweep/charge/frenzy/fan 顶点/非 boss 局零实体）；`BossAudioDirector` 触发计数表 5 项（move×phase/hit·crit 三门 0.06/0.07/0.3/stun dizzy 0.35s/crablet pitch）；弹丸接线 4 项（weak ×2.5=75/flick 比值/charger 全额/crab 分支）。
+- **TR-46.2 ✅**：REVIEW_CHECKLIST 登记 GPU 视觉复核项（剪影轮廓/telegraph 可读性/HUD boss 条布局/title card/结算行/crablet pop）；wasm seam guest 侧 B 到达探针（`[nettest] boss B recv`）留用户机器复核（JS smoke 未 grep 该行——tools/ 冻结）。
+- **批次 A（sim）✅**：D-T46-1 owned 重构（`Boss`/`BossMode` 去生命周期，nav/tb/collision 按值持有；578 基线钉死行为零变化）——**D-T45-9 解**；D-T46-2 弹丸→`boss.hit/splash/rain` 接线（`BossRef` Option 注入，None 逐字节不变；seg_hit 优先序/drop 衰减/flick/blast direct 门/bomb 弹开/charger 截断/roller·brush 直连/rain 全锚；wid 坍缩与 subs/specials/kits 直伤链未接线如实顺延）。
+- **批次 B（app 驱动）✅**：D-T46-3 `DemoSim.bm: Mutex<Option<BossMode>>`（Mutex 因 BossNav RefCell 非 Sync）+ `boss_events` 每帧 drain（**D-T45-3 收口**）；`replay_boss` maxHp 三档钉 93,600/70,200/121,680；D-T46-4 离线菜单 MODE 两档 cycle（**D-T44-5 收口**，zones 卡随离线 zones demo 再开）；D-T46-5 在线 `start_net_match` boss 双端构造 + nettest 探针（**D-T45-11 收口**）；roar 震屏（BossShake+camera jitter）。
+- **批次 C（呈现）✅**：D-T46-6 剪影（壳长轴沿 z/双钳/眼柄/6 腿，st 驱动简档 ≡ bossModel.js L86-101）；D-T46-7 telegraph 五招标记（圈/环带/桶/扇/beam/车道/frenzy 全圆；占位简化=无墙体裁边声明）；D-T46-8 crablet 体块+pop 肿胀；D-T46-9 `ui/boss_hud.rs` 纯函数 S 机（零 Bevy；Move callout 帧间边沿合成——D-T43-5 落地）；D-T46-10 bossAudio 占位表（**D-T43-8 呈现档收口**）；D-T46-11 结算 boss 行（PHASE/bossDmg Σ/weak Σ）。
+- **评审**：独立评审 0 P0 / 4 P1 / 4 P2 → 全当场修复（P1 壳长轴/sweep 扇悬空/beam y 分量/alpha 斜坡；P2 Cylinder 参数序/head z/腿 z/dizzy/dead 门/hover·is-zero 声明）→ APPROVE 闭环（D-T46-12）。
+- **基线**：`inkwave_sim` 582（578+4）/`inkwave` 101（74→+27）/workspace **711 passed** 全绿；依赖面不变；JS 树/wire.rs/PROTO/fixture 零改动。
+- **九段门禁**：`rust/tools/verify/logs/task46-gates-20261104T174853Z.log` — FMT/CLIPPY/TEST(711)/WASM/TREE/DETERM/XCHK(10/10)/**TRUNK(attempt 1 成功 rc=0，不再适用 D-T40-1 DEGRADED 口径)**/HEADLESS(turf+boss 双跑)/JS_TREE_CLEAN **全绿**。
+- **D-T46-13 收口**：TRUNK 首跑 rc=1 系真实编译错（Bevy 0.19 `elapsed_secs`）非 SIGKILL；TEST flake `run_boss_lose_branch`（HashMap 迭代序→f32 求和序）修复=按 nid 排序求和，复验 30/30。
 
 ## Task 47: bot 深化——threat AI + 顺延战术项
 - **Status**: `pending`

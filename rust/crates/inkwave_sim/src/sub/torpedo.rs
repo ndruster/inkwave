@@ -917,7 +917,7 @@ fn explode_bomb_fan(ctx: &mut Ctx, b: &Bomb) {
     // The sub-kit fan has no `SubSystem` / bubble registry handle (the
     // torpedo blast does not reach bubbles — recorded deviation).
     ctx.projectiles.explode_bomb(
-        b, ctx.world, ctx.actors, ctx.paint, ctx.t, ctx.sb, None, None, &mut fan, ctx.remote,
+        b, ctx.world, ctx.actors, ctx.paint, ctx.t, ctx.sb, None, None, &mut fan, ctx.remote, None,
     );
 }
 

@@ -25,6 +25,8 @@
 
 use bevy::prelude::*;
 use inkwave_sim::actor::{ActorInput, FIXED_DT, SimWorld};
+use inkwave_sim::boss::BossMode;
+use inkwave_sim::boss::nav::BossNav;
 use inkwave_sim::bot::Bot;
 use inkwave_sim::match_::{Match, MatchEvent};
 use inkwave_sim::net::matchbuild::{bot_difficulty, build_net_match, fnv1a, local_roster_index};
@@ -151,6 +153,35 @@ fn start_net_match(
         );
     }
     demo.m = built;
+    // Task 46 batch B: Boss Battle room — the app layer owns the `BossMode`
+    // across frames (D-T45-9 unblocked by batch A's owned refactor). JS
+    // `netmatch.js` L164-171: both host and guest construct it;
+    // `sim: !match.follower` (bossMode.js L23) makes the guest a pure
+    // follower that only interpolates the host's B snapshots.
+    demo.boss_events.clear();
+    if cfg.mode == "boss" {
+        // JS bossMode.js L21-22: `units = squadUnits(team-0)` — humans 1.0,
+        // bots 0.6. The loading-leaver prune above can shrink the final
+        // actor list, but both peers count the same `cfg.roster`, so host
+        // and guest HP stay identical (JS reads live actors; recorded
+        // deviation — leavers mid-loading are the only divergence case).
+        let humans = cfg.roster.iter().filter(|r| !r.bot).count();
+        let bots = cfg.roster.len() - humans;
+        let units = inkwave_sim::boss::squad_units(humans, bots, &demo.tuning.boss.squad_units);
+        let bnav = BossNav::new(&sim, &demo.tuning.boss.nav);
+        let boss_sim = !demo.m.follower;
+        *demo.bm.lock().unwrap() = Some(BossMode::new(
+            &sim,
+            bnav,
+            demo.tuning.boss.clone(),
+            units,
+            &cfg.difficulty,
+            boss_sim,
+            seed,
+        ));
+    } else {
+        *demo.bm.lock().unwrap() = None;
+    }
     nms.cfg = Some(cfg);
     nms.seed = seed;
     nms.inputs = vec![ActorInput::default(); demo.m.actors.len()];
@@ -194,6 +225,10 @@ fn teardown_net_match(nms: &mut NetMatchState, demo: &mut DemoSim, st: &mut UiSt
 fn restore_offline_demo(demo: &mut DemoSim) {
     let sim = SimWorld::new(&demo.world, &demo.layout);
     let seed = demo.m.seed;
+    // Task 46: a net boss room's owned BossMode dies with the room — the
+    // offline baseline is a plain turf demo.
+    *demo.bm.lock().unwrap() = None;
+    demo.boss_events.clear();
     let m = Match::new(
         90.0,
         seed,
@@ -352,6 +387,9 @@ pub fn net_tick(
                 nms.acc -= FIXED_DT;
                 steps += 1;
                 // Bot brains (owned + adopted actors, match.js L222-224).
+                // Task 46: a live boss hands the brains its entity (JS
+                // `G.boss`, bots.js L345) — host *and* guest (the follower
+                // interpolates the B snapshots into the same entity).
                 rep.drive_bots(
                     &mut demo.m,
                     &demo.nav,
@@ -360,7 +398,7 @@ pub fn net_tick(
                     &t.weapons,
                     &t.weapon_range,
                     &mut nms.inputs,
-                    None,
+                    demo.bm.lock().unwrap().as_ref().map(|bm| &bm.boss),
                 );
                 // Local player input into `inputs[local_idx]` (JS
                 // PlayerController; zeroed outside `playing`, match.js
@@ -386,7 +424,9 @@ pub fn net_tick(
                     &t.player,
                     &t.weapons,
                     &t.subs,
-                    None,
+                    // Task 46: the owned BossMode drives every frame
+                    // (≡ `run_boss`'s `Some(&mut bm)`; JS match.js L229).
+                    demo.bm.lock().unwrap().as_mut().map(|bm| &mut *bm),
                 );
                 let Some(tr) = os.sess.transport_mut() else {
                     break; // link gone; the session will emit `Aborted`
@@ -399,16 +439,29 @@ pub fn net_tick(
                     &t.weapons,
                     &t.subs,
                     tr,
-                    None,
+                    // Task 46: host records Move/Bc into the outgoing ticks
+                    // and the guest consumes B here (replication.rs
+                    // `sample_boss` ≡ JS netmatch guest `boss.net` feed).
+                    demo.bm.lock().unwrap().as_mut().map(|bm| &mut bm.boss),
                 );
                 // Un-consumed bus events (splat / turf / countdown / …) feed
                 // the HUD + audio drains like the offline match's own bus.
                 demo.m.events.extend(rest);
+                // Task 46: drain the boss event queue into the app-side
+                // stream (JS `emit('boss:*')`; batch C HUD/audio consumer).
+                if let Some(bm) = demo.bm.lock().unwrap().as_mut() {
+                    demo.boss_events.extend(bm.boss.drain_events());
+                }
                 // Host settles the match (JS match.js L258/271 `sendResult`
                 // inside `_judge`, right before `setState('judge')`).
                 if rep.is_host() && demo.m.result.is_some() && !nms.result_sent {
                     if let Some(tr) = os.sess.transport_mut() {
-                        rep.send_result(&demo.m, None, tr);
+                        // Task 46: the boss entity carries the result's HP /
+                        // damage rows (replication.rs `send_result` boss
+                        // param ≡ JS netmatch.js L490-493 boss stats fold).
+                        let bmg = demo.bm.lock().unwrap();
+                        let boss_ent = bmg.as_ref().map(|bm| &bm.boss);
+                        rep.send_result(&demo.m, boss_ent, tr);
                     }
                     nms.result_sent = true;
                 }

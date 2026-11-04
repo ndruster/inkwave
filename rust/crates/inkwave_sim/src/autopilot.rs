@@ -296,8 +296,8 @@ pub fn run_boss(
     // JS L23: `sim: !match.follower` — the offline driver is always the host.
     let mut bm = crate::boss::BossMode::new(
         &sim,
-        &bnav,
-        &tuning.boss,
+        bnav,
+        tuning.boss.clone(),
         units,
         opts.difficulty,
         true,
@@ -416,9 +416,20 @@ pub fn run_boss(
     let frame_times = None;
 
     let boss = m.result.as_ref().and_then(|r| r.boss.clone());
-    // TR-44.1 reconciliation: Σ stats_by_nid.{boss_dmg,weak_hits}.
-    let boss_dmg: f32 = bm.boss.stats_by_nid.values().map(|s| s.boss_dmg).sum();
-    let weak_hits: u32 = bm.boss.stats_by_nid.values().map(|s| s.weak_hits).sum();
+    // TR-44.1 reconciliation: Σ stats_by_nid.{boss_dmg,weak_hits}. Sum in
+    // sorted-nid order: `HashMap` iteration order is randomised per instance,
+    // and a raw `.values()` sum changes the f32 accumulation order between
+    // same-seed runs (TR-44.1's bit-identical assertion caught exactly that).
+    let mut dmg_nids: Vec<i32> = bm.boss.stats_by_nid.keys().copied().collect();
+    dmg_nids.sort_unstable();
+    let boss_dmg: f32 = dmg_nids
+        .iter()
+        .map(|k| bm.boss.stats_by_nid[k].boss_dmg)
+        .sum();
+    let weak_hits: u32 = dmg_nids
+        .iter()
+        .map(|k| bm.boss.stats_by_nid[k].weak_hits)
+        .sum();
     Report {
         seed,
         duration,

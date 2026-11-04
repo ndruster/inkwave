@@ -414,6 +414,7 @@ pub fn step_clouds(
     rng: &mut Rng,
     remote: Option<&[bool]>,
     t: &PlayerTuning,
+    mut boss: crate::weapon::BossRef<'_>,
 ) {
     const RAIN_EVERY: f32 = 0.045; // JS L1775
     const RAIN_START_DROP: f32 = 0.8; // JS L1777 (`y - 0.8`)
@@ -473,6 +474,30 @@ pub fn step_clouds(
                     }
                 }
             }
+            // JS L1781: the storm rains on the boss too (ghost clouds never
+            // hurt it); the visual scale `s` (L1766) rides the rain radius.
+            if !ghost && let Some(b) = boss.as_mut() {
+                let grow = (cloud.t / 0.5).clamp(0.0, 1.0);
+                let fade = ((cloud.dur - cloud.t) / 0.6).clamp(0.0, 1.0);
+                let s = (0.3 + 0.7 * (1.0 - (1.0 - grow) * (1.0 - grow) * (1.0 - grow)))
+                    * (0.2 + 0.8 * fade);
+                let attacker = find_actor(actors, team, cloud.owner_slot).map(|oi| {
+                    let is_remote = remote.is_some_and(|m| m.get(oi).copied().unwrap_or(false));
+                    crate::boss::BossAttacker {
+                        nid: oi as i32,
+                        is_remote,
+                        is_local: !is_remote,
+                        has_nid: true,
+                    }
+                });
+                b.rain(
+                    attacker,
+                    objects[i].pos.x,
+                    objects[i].pos.z,
+                    sp.radius * s,
+                    sp.dps * dt,
+                );
+            }
             // JS L1782-1791: the dps ladder. Runs for ghost clouds too — the
             // cloud hurts *this screen's* local actors wherever it lives
             // ("online: each client rains on its own actors", L1783); remote
@@ -526,8 +551,9 @@ pub fn step_objects(
     rng: &mut Rng,
     remote: Option<&[bool]>,
     t: &PlayerTuning,
+    boss: crate::weapon::BossRef<'_>,
 ) {
-    step_clouds(objects, dt, actors, collision, paint, rng, remote, t);
+    step_clouds(objects, dt, actors, collision, paint, rng, remote, t, boss);
 }
 
 // ---------------------------------------------------------------------------
