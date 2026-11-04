@@ -1,11 +1,12 @@
 // M3 tuning extractor (Task 3 M1 slice, extended by Task 28 for M3; TR-28.1/TR-28.2),
 // extended by Task 41 with the HULLBREAKER boss data tables (schema v3, TR-41.1),
 // extended by Task 42 batch A with the boss nav plan constants and the
-// boss.hit rest-model-space sphere positions (schema v4).
+// boss.hit rest-model-space sphere positions (schema v4),
+// extended by Task 43 batch A with the brain PREF table (schema v5).
 //
 // Imports the upstream tuning module verbatim (src/config.js — never modified,
 // AC-1/TR-2.4) and emits the full gameplay tuning set into
-// rust/assets/tuning.json (schema inkwave.tuning.v4):
+// rust/assets/tuning.json (schema inkwave.tuning.v5):
 //   PLAYER, WEAPONS (the 12 roster weapons per WEAPON_ORDER — the retired
 //   dualies/slosher/splatling defs are NOT emitted, TR-28.2), WEAPON_ORDER,
 //   weaponRange() evaluated per weapon, SUBS (15, per SUB_ORDER),
@@ -129,17 +130,20 @@ assertContains(srcHIT, "['shellF', 1.8, false]", 'bossModel.js HIT');
 assertContains(srcHIT, "['crackR', 0.7, true]", 'bossModel.js HIT');
 const HIT = new Function(`${srcHIT}\nreturn HIT;`)();
 
-// SPEED / TURN / COOL / COOL_RND (bossBrain.js L12-15) — private, sliced.
+// SPEED / TURN / COOL / COOL_RND / PREF (bossBrain.js L12-16) — private, sliced.
 const srcSPEED = sliceBlock(bossBrainSrc, 'bossBrain.js', 'SPEED', 'const SPEED = [', '];');
 const srcTURN = sliceBlock(bossBrainSrc, 'bossBrain.js', 'TURN', 'const TURN = [', '];');
 const srcCOOL = sliceBlock(bossBrainSrc, 'bossBrain.js', 'COOL', 'const COOL = [', '];');
 const srcCOOL_RND = sliceBlock(bossBrainSrc, 'bossBrain.js', 'COOL_RND', 'const COOL_RND = [', '];');
+const srcPREF = sliceBlock(bossBrainSrc, 'bossBrain.js', 'PREF', 'const PREF = [', '];');
 assertContains(srcSPEED, 'const SPEED = [0, 2.9, 3.3, 3.8];', 'bossBrain.js SPEED');
 assertContains(srcTURN, 'const TURN = [0, 1.25, 1.45, 1.75];', 'bossBrain.js TURN');
 assertContains(srcCOOL, 'const COOL = [0, 1.05, 0.8, 0.6];', 'bossBrain.js COOL');
 assertContains(srcCOOL_RND, 'const COOL_RND = [0, 0.8, 0.6, 0.45];', 'bossBrain.js COOL_RND');
-const { SPEED, TURN, COOL, COOL_RND } = new Function(
-  [srcSPEED, srcTURN, srcCOOL, srcCOOL_RND, 'return { SPEED, TURN, COOL, COOL_RND };'].join('\n'),
+assertContains(srcPREF, 'const PREF = [0, 10, 9, 8];', 'bossBrain.js PREF');
+const { SPEED, TURN, COOL, COOL_RND, PREF } = new Function(
+  [srcSPEED, srcTURN, srcCOOL, srcCOOL_RND, srcPREF,
+   'return { SPEED, TURN, COOL, COOL_RND, PREF };'].join('\n'),
 )();
 
 // WALL_BODY / FLOOR_BODY / PAD_MARGIN (bossNav.js L10-15) — the design spec's
@@ -252,7 +256,7 @@ const boss = {
   hz: HZ,
   reachStep: SAFE_PAD,
   reachN: REACH_N,
-  brain: { speed: SPEED, turn: TURN, cool: COOL, coolRnd: COOL_RND },
+  brain: { speed: SPEED, turn: TURN, cool: COOL, coolRnd: COOL_RND, pref: PREF },
   nav: {
     wallBody: WALL_BODY, floorBody: FLOOR_BODY, padr: PAD_MARGIN,
     planWall: PLAN_WALL, planFloor: PLAN_FLOOR, stride: STRIDE,
@@ -264,7 +268,7 @@ const boss = {
 };
 
 const tuning = {
-  schema: 'inkwave.tuning.v4',
+  schema: 'inkwave.tuning.v5',
   source: { commit, path: 'src/config.js + src/boss/*.js' },
   player: PLAYER,
   weaponOrder: WEAPON_ORDER,

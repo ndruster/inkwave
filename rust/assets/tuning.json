@@ -52,6 +52,12 @@
         0.6,
         0.45
       ],
+      "pref": [
+        0,
+        10,
+        9,
+        8
+      ],
       "speed": [
         0,
         2.9,
@@ -434,9 +440,9 @@
     "turnRateSlow": 1.5,
     "waterY": -1.6
   },
-  "schema": "inkwave.tuning.v4",
+  "schema": "inkwave.tuning.v5",
   "source": {
-    "commit": "b392a06041f88ef326e34ba67df3e9e8d1a6643a",
+    "commit": "26dea5e83f4a692dcedbe992e449d2b413528bec",
     "path": "src/config.js + src/boss/*.js"
   },
   "specialOrder": [

@@ -29,7 +29,7 @@ use std::collections::{HashMap, HashSet};
 
 use glam::{Vec3, vec3};
 
-use crate::actor::SimWorld;
+use crate::actor::{Actor, SimWorld};
 use crate::match_::Phase;
 use crate::net::wire::{self, JVal};
 use crate::net::{BossCrab, BossSnap, DirectMsg};
@@ -38,7 +38,12 @@ use crate::weapon::Rng;
 
 use self::nav::BossNav;
 
+pub mod brain;
+pub mod hazards;
 pub mod nav;
+
+pub use self::brain::BossBrain;
+pub use self::hazards::{MoveId, Threat};
 
 // JS src/boss/boss.js L496-497: `Math.round(x * 100) / 100` etc., in f64.
 #[inline]
@@ -197,8 +202,8 @@ pub enum BossEvent {
     CrabSpawn { id: u32, x: f32, y: f32, z: f32 },
     /// `boss:intro` (L160).
     Intro,
-    /// `boss:stun` (L173; the `dur` needs the move tables — Task 43).
-    Stunned,
+    /// `boss:stun` (L173; `dur` = the move's recovery length, Task 43).
+    Stunned { dur: f32 },
     /// `boss:hp` (L176).
     Hp { hp: f32 },
 }
@@ -225,6 +230,14 @@ pub struct CrabState {
     pub spawned: bool,
     /// JS `c.popped` (L404).
     pub popped: bool,
+    /// JS `c.age` (bossBrain.js L336): seconds alive — host-side brain
+    /// bookkeeping (Task 43 batch C), defaulted `0` like the JS fill (L31).
+    pub age: f32,
+    /// JS `c.tgt` (L336): the crablet's squad target (`nid ?? slot`, `-1`
+    /// none).
+    pub tgt: i32,
+    /// JS `c.retgt` (L336): seconds until the next target roll.
+    pub retgt: f32,
 }
 
 /// Per-attacker boss bookkeeping (JS `attacker.stats.bossDmg` / `weakHits` /
@@ -299,16 +312,19 @@ pub struct BossNet {
     pub crab_seen: HashSet<u32>,
 }
 
-/// Netcode audit (JS `this.log`, boss.js L48). `moves` is the brain's
-/// (Task 43); `sent`/`sentDmg` are bumped by the guest uplink
+/// Netcode audit (JS `this.log`, boss.js L48). `moves` is filled by
+/// [`Boss::hz_add`] (JS `hz.add`, bossHazards.js L83 — `[t0, id]` per added
+/// move); `sent`/`sentDmg` are bumped by the guest uplink
 /// `sendBossHit` (netmatch.js L153 — raw `d`, not the `r2(d)` sent on the
 /// wire).
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct BossLog {
     pub recv: u32,
     pub recv_dmg: f32,
     pub sent: u32,
     pub sent_dmg: f32,
+    /// JS `log.moves` (bossHazards.js L83): `(t0, id)` per accepted move.
+    pub moves: Vec<(f64, String)>,
 }
 
 /// A guest's delivered hit (JS `d` in `remoteHit`, boss.js L352-359).
@@ -320,6 +336,29 @@ pub struct RemoteHit {
     pub weak: bool,
     /// Crablet id, `-1` for boss hits.
     pub c: i32,
+}
+
+/// Per-move derived hazard geometry (the JS `hz.cache` WeakMap value,
+/// bossHazards.js L74/L201). Keyed by the move's `t0` on [`Boss::hz_cache`].
+#[derive(Debug, Default, Clone)]
+pub struct HzCache {
+    /// `beamLen` per `Math.round(ang * 90)` angle bucket (L220-230).
+    pub beam: HashMap<i32, f32>,
+    /// The `REACH_N`-heading floor-clipped extent (L202-213), `None` until
+    /// first asked.
+    pub reach: Option<Vec<f32>>,
+}
+
+/// The squad view the hazards need (JS reads `G.actors` / `a.remote` /
+/// `a.nid ?? a.slot` / `PLAYER` in bossHazards.js L119-194). The match layer
+/// owns the real arrays (Task 44); tests synthesise them.
+pub struct BossSquad<'s> {
+    pub actors: &'s mut [Actor],
+    /// JS `a.nid ?? a.slot`, per actor.
+    pub ids: &'s [i32],
+    /// JS `a.remote`, per actor — owned by its own client, never hurt here.
+    pub remote: &'s [bool],
+    pub player: &'s tuning::PlayerTuning,
 }
 
 /// `this._ev` (boss.js L65): the edge-detect bookkeeping for the event queue.
@@ -381,8 +420,21 @@ pub struct Boss<'a> {
     /// keyword — same rename as [`BossSnap::move_rec`]).
     pub move_rec: Option<JVal>,
     /// Move records seen so far, insertion order (JS `hz.moves` — the host's
-    /// timeline, Task 43 grows it).
+    /// timeline; [`Boss::hz_add`] grows it, bossHazards.js L80-85).
     pub moves: Vec<JVal>,
+    /// JS `hz.hits` (bossHazards.js L73): one-shot keys already dealt,
+    /// `${t0}|${kind}|${i}|${nid}` (L127).
+    pub hz_hits: HashSet<String>,
+    /// JS `hz.cache` (L74): per-move derived geometry keyed by the move's
+    /// `t0` (the JS WeakMap on the record; `t0.to_bits()` — f64 is not
+    /// `Hash`).
+    pub hz_cache: HashMap<u64, HzCache>,
+    /// JS `hz.prevBt` (L75): the previous boss clock, for the swept damage
+    /// bands (`hz_hurt_local`).
+    pub hz_prev_bt: f32,
+    /// JS `hz.dead` (L76): boss time of the defeat, `-1` while alive — after
+    /// it no hazard lands (`hz_live`).
+    pub hz_dead: f32,
     /// `nid` focused on (JS `this.target`, L45; `targetActor` is Task 44).
     pub target: i32,
     pub flash_n: u32,
@@ -406,6 +458,12 @@ pub struct Boss<'a> {
     pub events: Vec<BossEvent>,
     /// `sendBossHit` messages a guest queued for the host (L296/L374).
     pub guest_hits: Vec<DirectMsg>,
+    /// JS `this.brain` (boss.js L63): the host-side AI — present only while
+    /// simulating (Task 43 batch C).
+    pub brain: Option<BossBrain>,
+    /// Non-killed crab bursts raised outside [`Boss::update`] (no squad at
+    /// hand): drained by the next update (JS applies them inline, L396).
+    crab_burst_pending: Vec<[f32; 3]>,
     /// Navigation grid (JS `this.nav`, L37 — shared, built once per level).
     pub nav: &'a BossNav,
     /// The `boss` tuning section (JS `BOSS` / `HZ` / `FLOOR_BODY` tables).
@@ -464,6 +522,11 @@ impl<'a> Boss<'a> {
             anim_t0: 0.0,
             move_rec: None,
             moves: Vec::new(),
+            // JS `hz` constructor (bossHazards.js L70-78).
+            hz_hits: HashSet::new(),
+            hz_cache: HashMap::new(),
+            hz_prev_bt: 0.0,
+            hz_dead: -1.0,
             target: -1,
             flash_n: 0,
             weak_n: 0,
@@ -477,6 +540,8 @@ impl<'a> Boss<'a> {
             net: BossNet::default(),
             events: Vec::new(),
             guest_hits: Vec::new(),
+            brain: None,
+            crab_burst_pending: Vec::new(),
             nav,
             tb,
             world,
@@ -496,6 +561,13 @@ impl<'a> Boss<'a> {
             },
         };
         me.spawn_point(); // JS L49
+        // JS L63: `this.brain = sim ? new BossBrain(this) : null`. D-T43: the
+        // brain's rnd stream is seeded from the boss seed (golden-ratio mix)
+        // — a stream of its own, never the entity's `rng`.
+        if cfg.sim {
+            let seed = cfg.seed ^ 0x9E37_79B9_7F4A_7C15;
+            me.brain = Some(BossBrain::new(&mut me, false, seed));
+        }
         me
     }
 
@@ -590,7 +662,11 @@ impl<'a> Boss<'a> {
         }
         match self.tb.hit[i].socket.as_str() {
             "belly" => self.stunned || self.phase >= 3,
-            "crackL" | "crackR" => false,
+            // D-T42-4 materialized (Task 43): the crack sockets open once the
+            // shell is torn. JS gates on the model's tear pose weight (a
+            // render-side value); the sim proxies it with the phase-3 shell
+            // break, the only tearing the state machine knows about.
+            "crackL" | "crackR" => self.phase >= 3,
             _ => true,
         }
     }
@@ -620,32 +696,55 @@ impl<'a> Boss<'a> {
 
     // ------------------------------------------------------------------ per frame
     /// JS `update(dt)` (L100-116).
-    pub fn update(&mut self, dt: f32) {
+    pub fn update(&mut self, dt: f32, squad: &mut BossSquad<'_>) {
         // JS L101: loading — the clock starts with the intro (root.visible
         // is render-side).
         if self.state == Phase::Init {
             return;
         }
-        let _bt0 = self.bt; // JS L102 (consumed by `hz.paint`, Task 43)
+        let bt0 = self.bt; // JS L102
         if self.sim {
-            // JS L103: `this.brain.update(dt)` — BossBrain is Task 43.
+            // JS L103: `this.brain.update(dt)` — the brain lives on the
+            // entity, so take/put around the call (disjoint mutable borrows).
+            if let Some(mut br) = self.brain.take() {
+                br.update(dt, self, squad);
+                self.brain = Some(br);
+            }
         } else {
             self.follow(dt);
         }
-        let _live = self.live() && self.visible; // JS L105
-        // JS L106-110: hazard fizzle / paint slice / `hz.update` — Task 43.
+        let live = self.live() && self.visible; // JS L105
+        // JS L106: the defeat fizzle, once (`judge`/`results` → Phase::End).
+        if !live
+            && self.hz_dead < 0.0
+            && (self.dead || self.state == Phase::Finish || self.state == Phase::End)
+        {
+            self.hz_fizzle(self.bt);
+        }
+        // JS L108: host — paint the slice of boss time just simulated.
+        if self.sim && live && self.bt > bt0 {
+            let from = bt0.max(self.paint_bt);
+            let player = squad.player;
+            self.hz_paint(from, self.bt, player);
+        }
         self.paint_bt = self.bt; // JS L109
+        self.hz_update(dt, self.bt, live, squad); // JS L110
+        // Non-killed crab bursts raised without a squad at hand (see
+        // `crab_burst_pending`) land here.
+        for p in std::mem::take(&mut self.crab_burst_pending) {
+            self.hz_crab_burst(p[0], p[1], p[2], squad);
+        }
         self.emit_events(); // JS L111
         self.crab_visuals(dt); // JS L112
-        // JS L113: `_pushActors` — needs the actor list (Task 44).
-        self.model_update(dt); // JS L114
+        // JS L113: `_pushActors` — the actor list is the squad (Task 44).
+        self.model_update(dt, squad); // JS L114
         self.flush_rain(dt); // JS L115
     }
 
     /// JS `_modelUpdate(dt)` (L119-140): the animation state, from state
     /// alone — identical everywhere. The root transform / `model.update`
     /// calls are render-side; the sim keeps [`Boss::st`].
-    fn model_update(&mut self, _dt: f32) {
+    fn model_update(&mut self, _dt: f32, squad: &mut BossSquad<'_>) {
         let st = &mut self.st;
         st.speed = f64::from(self.vel.x).hypot(f64::from(self.vel.z)) as f32; // JS L123
         st.turn = self.turn;
@@ -665,14 +764,91 @@ impl<'a> Boss<'a> {
             } else {
                 self.tb.boss.roar_len
             };
+        } else if let Some(m) = self.move_rec.clone().filter(|_| !self.dead) {
+            // JS L128-133: move playback via `movePhaseAt` / `moveTimes`.
+            let u = f64::from(self.bt) - hazards::rec_t0(&m);
+            let ph = hazards::move_phase_at(&m, u);
+            let t = hazards::move_times(&m);
+            st.move_id = ph.and_then(|_| m.field("id").and_then(JVal::as_str).map(str::to_string)); // JS L130
+            st.move_phase = ph.map(str::to_string);
+            let start = if ph == Some("tele") {
+                0.0
+            } else if ph == Some("act") {
+                t.tele
+            } else {
+                t.tele + t.act
+            }; // JS L131
+            st.move_t = (u - start) as f32; // JS L132
+            st.phase_dur = if ph == Some("tele") {
+                t.tele
+            } else if ph == Some("act") {
+                t.act
+            } else {
+                t.rec
+            } as f32;
+            st.aim = Self::move_aim(&m, u); // JS L133
         } else {
-            // JS L128-133: move playback needs `movePhaseAt` / `moveTimes`
-            // (bossHazards — Task 43); L135-138: the target aim needs the
-            // actor list (Task 44). Idle path for now.
             st.move_id = None;
             st.move_phase = None;
             st.move_t = 0.0;
             st.phase_dur = 0.0;
+        }
+        // JS L135-138: no move aim — aim at the focused target (`targetActor`
+        // is the squad lookup, Task 44 owns the actor list elsewhere).
+        if st.aim.is_none()
+            && !self.dead
+            && self.target >= 0
+            && let Some(ti) = squad
+                .ids
+                .iter()
+                .enumerate()
+                .find(|(i, id)| **id == self.target && squad.actors[*i].alive)
+                .map(|(i, _)| i)
+        {
+            let a = &squad.actors[ti];
+            st.aim = Some(vec3(a.pos.x, a.pos.y + 1.0, a.pos.z));
+        }
+    }
+
+    /// JS `_moveAim(m, u, out)` (L142-151): the move's aim marker for the
+    /// telegraph ring. A free function so it can run while `st` is borrowed.
+    fn move_aim(m: &JVal, u: f64) -> Option<Vec3> {
+        let id = m.field("id").and_then(JVal::as_str)?;
+        let p = m.field("p")?;
+        let pf = |k: &str| -> f64 { p.field(k).and_then(JVal::as_f64).unwrap_or(0.0) };
+        let v3 = |x: f64, y: f64, z: f64| vec3(x as f32, y as f32, z as f32);
+        match id {
+            "slam" => Some(v3(pf("x"), pf("y"), pf("z"))), // JS L145
+            "sweep" => {
+                // JS L146: during tele the ring shows the arc's start.
+                let a = if u < hazards::rec_d(m, 0) {
+                    pf("a0")
+                } else {
+                    hazards::beam_angle(m, u)
+                };
+                Some(v3(
+                    pf("ox") + a.sin() * 12.0,
+                    pf("y"),
+                    pf("oz") + a.cos() * 12.0,
+                ))
+            }
+            "charge" => {
+                // JS L147: 3 m past the corridor end.
+                let yaw = pf("yaw");
+                let l3 = pf("L") + 3.0;
+                Some(v3(
+                    pf("x") + yaw.sin() * l3,
+                    pf("y") + 1.0,
+                    pf("z") + yaw.cos() * l3,
+                ))
+            }
+            "barrage" => {
+                // JS L148: the first barrel not yet landed, else the last.
+                let b = hazards::rec_pts(m);
+                let row = b.iter().find(|row| row[3] + 0.2 > u).or_else(|| b.last())?;
+                Some(v3(row[0], row[1], row[2]))
+            }
+            _ => None, // JS L149
         }
     }
 
@@ -704,11 +880,17 @@ impl<'a> Boss<'a> {
                 self.events.push(BossEvent::Move(m.clone()));
             }
         }
-        // JS L171-174: stun (the `dur` needs the move tables — Task 43).
+        // JS L171-174: stun. Spec §2 pins `dur` to `moveTimes(m).rec` (JS
+        // L173 uses the remaining move time; the spec materialization list
+        // chose the recovery length).
         if self.stunned != self.ev.stun {
             self.ev.stun = self.stunned;
             if self.stunned {
-                self.events.push(BossEvent::Stunned);
+                let dur = self
+                    .move_rec
+                    .as_ref()
+                    .map_or(1.5, |m| hazards::move_times(m).rec as f32);
+                self.events.push(BossEvent::Stunned { dur });
             }
         }
         // JS L175: phase (`model.setPhase` is render-side).
@@ -1204,7 +1386,9 @@ impl<'a> Boss<'a> {
                 st.weak_hits += 1;
             }
         }
-        // JS L342: `brain.noteDamage` — Task 43.
+        if let (Some(br), Some(atk)) = (self.brain.as_mut(), attacker) {
+            br.note_damage(atk.nid, d); // JS L342
+        }
         self.flash_n += 1; // JS L343
         if weak {
             self.weak_n += 1;
@@ -1275,8 +1459,12 @@ impl<'a> Boss<'a> {
         self.stunned = false;
         self.anim = 0;
         self.killer = attacker.map_or(-1, |a| a.nid); // JS L364
-        // JS L365-367: `hz.fizzle` / `brain.onDefeat` — Task 43;
-        // `match.bossMode.onDefeat` — Task 44.
+        self.hz_fizzle(self.bt); // JS L365
+        if let Some(mut br) = self.brain.take() {
+            br.on_defeat(self); // JS L366
+            self.brain = Some(br);
+        }
+        // JS L367: `match.bossMode.onDefeat` — Task 44.
     }
 
     /// JS `_hitCrab(attacker, c, dmg, fromNet)` (L371-381).
@@ -1334,13 +1522,15 @@ impl<'a> Boss<'a> {
         if self.crabs[idx].hp <= 0.0 {
             // JS L380.
             self.stats_by_nid.entry(attacker.nid).or_default().splats += 1;
-            self.crab_pop(id, true);
+            self.crab_pop(id, true, None);
         }
     }
 
     /// JS `crabPop(c, killed)` (L383-388): a crablet bursts (killed:
     /// harmless, into the squad's ink · otherwise: a boss-ink burst).
-    fn crab_pop(&mut self, id: u32, killed: bool) {
+    /// `squad` is the local actor list for the non-killed burst damage
+    /// (JS reads `G.actors` globally; the brain path supplies it).
+    fn crab_pop(&mut self, id: u32, killed: bool, squad: Option<&mut BossSquad<'_>>) {
         let Some(idx) = self.crabs.iter().position(|c| c.id == id) else {
             return;
         };
@@ -1357,13 +1547,21 @@ impl<'a> Boss<'a> {
             z: r2(z),
             killed,
         });
-        self.crab_burst(id, x, y, z, killed); // JS L387
+        self.crab_burst(id, x, y, z, killed, squad); // JS L387
     }
 
     /// JS `_crabBurst(id, x, y, z, killed)` (L390-402): the burst itself,
     /// everyone — guests get it on the host's timeline.
     #[allow(clippy::too_many_arguments)]
-    fn crab_burst(&mut self, id: u32, x: f32, y: f32, z: f32, killed: bool) {
+    fn crab_burst(
+        &mut self,
+        id: u32,
+        x: f32,
+        y: f32,
+        z: f32,
+        killed: bool,
+        squad: Option<&mut BossSquad<'_>>,
+    ) {
         if let Some(idx) = self.crabs.iter().position(|c| c.id == id) {
             self.crabs[idx].dead = true; // JS L392
             self.crab_pop_fx(idx);
@@ -1377,7 +1575,13 @@ impl<'a> Boss<'a> {
             z,
             killed,
         });
-        // JS L396: `hz.crabBurst` when `!killed && live()` — Task 43.
+        // JS L396: `hz.crabBurst` when `!killed && live()`.
+        if !killed && self.live() {
+            match squad {
+                Some(sq) => self.hz_crab_burst(x, y, z, sq),
+                None => self.crab_burst_pending.push([x, y, z]),
+            }
+        }
         if self.sim {
             // JS L397-400: painted once, by the host (`!G.netm || isHost` —
             // sim implies host/offline here).
@@ -1477,20 +1681,13 @@ impl<'a> Boss<'a> {
     }
 
     /// JS `onMove(m)` (L436): a move record from the host's timeline (or a
-    /// snapshot's copy) — idempotent by `t0`.
+    /// snapshot's copy) — `hz.add`'s idempotency by `t0` (bossHazards.js
+    /// L80-85) also feeds [`BossLog::moves`].
     pub fn on_move(&mut self, m: JVal) {
         // JS L436: `if (m && typeof m.t0 === 'number') this.hz.add(m)`.
-        let Some(t0) = m.field("t0").and_then(JVal::as_f64) else {
-            return;
-        };
-        if self
-            .moves
-            .iter()
-            .any(|e| e.field("t0").and_then(JVal::as_f64) == Some(t0))
-        {
-            return;
+        if m.field("t0").and_then(JVal::as_f64).is_some() {
+            self.hz_add(m);
         }
-        self.moves.push(m);
     }
 
     /// JS `_follow(dt)` (L439-472): guest — apply this frame's sampled
@@ -1530,7 +1727,7 @@ impl<'a> Boss<'a> {
         self.invuln = s.f & 4 != 0;
         self.visible = s.f & 8 != 0;
         if s.f & 2 != 0 && !self.dead {
-            // JS L450 (`hz.fizzle` — Task 43; the defeat broadcast rides
+            self.hz_fizzle(self.bt); // JS L450 (the defeat broadcast rides
             // `emit_events`).
             self.killer = s.killer;
             self.dead = true;
@@ -1607,6 +1804,9 @@ impl<'a> Boss<'a> {
                         pop_t: 0.0,
                         spawned: false,
                         popped: false,
+                        age: 0.0,
+                        tgt: -1,
+                        retgt: 0.0,
                     });
                     self.crabs.len() - 1
                 }
@@ -1660,8 +1860,11 @@ impl<'a> Boss<'a> {
         self.sim = true;
         self.net.err = Vec3::ZERO; // JS L478
         self.net.err_v = Vec3::ZERO;
-        // JS L479: `this.brain = new BossBrain(this, { adopt: true })` —
-        // Task 43.
+        // JS L479: `this.brain = new BossBrain(this, { adopt: true })`. D-T43:
+        // the adopt seed replaces JS `Math.random` with a draw from the
+        // entity's own stream, mixed the same way as `Boss::new`.
+        let seed = self.rng.next_u32() as u64 ^ 0x9E37_79B9_7F4A_7C15;
+        self.brain = Some(BossBrain::new(self, true, seed));
     }
 
     /// A new host took over: keep drawing from here, settle the offset
@@ -1676,6 +1879,11 @@ impl<'a> Boss<'a> {
     pub fn spawn_crab(&mut self, x: f32, y: f32, z: f32, yaw: f32, hp: f32) -> u32 {
         let id = self.crab_seq;
         self.crab_seq += 1;
+        // Keep the brain's own counter (Task 43) ahead of the entity's ids so
+        // the two spawn paths never collide.
+        if let Some(br) = &mut self.brain {
+            br.crab_seq = br.crab_seq.max(self.crab_seq);
+        }
         self.crabs.push(CrabState {
             id,
             x,
@@ -1689,6 +1897,10 @@ impl<'a> Boss<'a> {
             pop_t: 0.0,
             spawned: false,
             popped: false,
+            // JS bossBrain.js L336.
+            age: 0.0,
+            tgt: -1,
+            retgt: 0.0,
         });
         id
     }
@@ -1746,6 +1958,35 @@ mod tests {
             ("id".to_string(), JVal::Str("slam".to_string())),
             ("t0".to_string(), t0),
         ])
+    }
+
+    /// An empty squad for [`Boss::update`] in tests (Task 43 batch C): no
+    /// actors, the embedded player tuning.
+    struct EmptySquad {
+        actors: Vec<Actor>,
+        ids: Vec<i32>,
+        remote: Vec<bool>,
+        player: tuning::PlayerTuning,
+    }
+
+    impl EmptySquad {
+        fn new() -> Self {
+            Self {
+                actors: Vec::new(),
+                ids: Vec::new(),
+                remote: Vec::new(),
+                player: crate::embedded_tuning().player,
+            }
+        }
+
+        fn squad(&mut self) -> BossSquad<'_> {
+            BossSquad {
+                actors: &mut self.actors,
+                ids: &self.ids,
+                remote: &self.remote,
+                player: &self.player,
+            }
+        }
     }
 
     // JS BOSS L17-24 + tuning: the HP the squad actually faces.
@@ -2280,6 +2521,7 @@ mod tests {
     #[test]
     fn rain_batches_per_03s_as_storm() {
         with_boss(true, 1, 18000.0, "normal", |b, _, _, _| {
+            let mut es = EmptySquad::new();
             b.state = Phase::Active;
             b.visible = true;
             let atk = Some(BossAttacker {
@@ -2291,7 +2533,7 @@ mod tests {
             b.rain(atk, b.pos.x, b.pos.z, 1.0, 5.0);
             b.rain(atk, b.pos.x, b.pos.z, 1.0, 5.0);
             b.rain(atk, b.pos.x + 100.0, b.pos.z, 1.0, 5.0); // out of range
-            b.update(0.1); // (0 − 0.1) ≤ 0 → flush
+            b.update(0.1, &mut es.squad()); // (0 − 0.1) ≤ 0 → flush
             assert_eq!(b.hp, 18000.0 - 10.0); // one batched hit, storm ×1
             let ev = b.drain_events();
             assert_eq!(
@@ -2302,9 +2544,9 @@ mod tests {
             );
             // the next batch waits out the 0.3 s window
             b.rain(atk, b.pos.x, b.pos.z, 1.0, 3.0);
-            b.update(0.2); // 0.3 − 0.2 = 0.1 > 0 → no flush
+            b.update(0.2, &mut es.squad()); // 0.3 − 0.2 = 0.1 > 0 → no flush
             assert_eq!(b.hp, 18000.0 - 10.0);
-            b.update(0.15); // → −0.05 → flush
+            b.update(0.15, &mut es.squad()); // → −0.05 → flush
             assert_eq!(b.hp, 18000.0 - 13.0);
         });
     }
@@ -2408,9 +2650,10 @@ mod tests {
 
         // the guest follows it
         with_boss(false, 2, 18000.0, "normal", move |b, _, _, _| {
+            let mut es = EmptySquad::new();
             b.state = Phase::Active;
             b.net.cur = Some(snap.clone());
-            b.update(0.05);
+            b.update(0.05, &mut es.squad());
             assert_eq!(b.pos, vec3(snap.x, snap.y, snap.z));
             assert_eq!(b.yaw, snap.yaw);
             assert_eq!(b.turn, snap.turn);
@@ -2430,7 +2673,7 @@ mod tests {
             assert_eq!(b.crabs[0].id, 0);
             assert_eq!(b.crabs[0].speed, Some(0.0)); // first sample
             let ev = b.drain_events();
-            assert!(ev.iter().any(|e| matches!(e, BossEvent::Stunned)));
+            assert!(ev.iter().any(|e| matches!(e, BossEvent::Stunned { .. })));
             assert!(
                 ev.iter()
                     .any(|e| matches!(e, BossEvent::Phase { phase: 2 }))
@@ -2452,37 +2695,39 @@ mod tests {
             b.pack(true)
         });
         with_boss(false, 2, 18000.0, "normal", |b, _, _, _| {
+            let mut es = EmptySquad::new();
             b.state = Phase::Active;
             b.net.cur = Some(base.clone());
-            b.update(0.05);
+            b.update(0.05, &mut es.squad());
             // the crab moved +2 m in x over 0.25 s → sp = 8 → speed → 8
             let mut s2 = base.clone();
             s2.crabs[0].x = 2.0;
             b.net.cur = Some(s2);
-            b.update(0.25);
+            b.update(0.25, &mut es.squad());
             assert_eq!(b.crabs[0].speed, Some(8.0));
             assert_eq!(b.crabs[0].x, 2.0);
             // gone from the sample: missT accumulates, then the crab drops
             let mut s3 = base.clone();
             s3.crabs.clear();
             b.net.cur = Some(s3);
-            b.update(0.3);
+            b.update(0.3, &mut es.squad());
             assert!(!b.crabs[0].dead);
             assert!((b.crabs[0].miss_t - 0.3).abs() < 1e-6);
-            b.update(0.35); // 0.65 > 0.6 → dead + pop fx
+            b.update(0.35, &mut es.squad()); // 0.65 > 0.6 → dead + pop fx
             assert!(b.crabs[0].dead);
             assert!(b.crabs[0].popped);
-            b.update(1.3); // popT > 1.2 → forgotten
+            b.update(1.3, &mut es.squad()); // popT > 1.2 → forgotten
             assert!(b.crabs.is_empty());
         });
         // the dead bit carries the killer (L450)
         with_boss(false, 3, 18000.0, "normal", |b, _, _, _| {
+            let mut es = EmptySquad::new();
             b.state = Phase::Active;
             let mut s = base.clone();
             s.f |= 2;
             s.killer = 4;
             b.net.cur = Some(s);
-            b.update(0.05);
+            b.update(0.05, &mut es.squad());
             assert!(b.dead);
             assert_eq!(b.killer, 4);
             let ev = b.drain_events();
@@ -2562,7 +2807,8 @@ mod tests {
     #[test]
     fn update_returns_early_while_loading() {
         with_boss(true, 1, 18000.0, "normal", |b, _, _, _| {
-            b.update(0.1);
+            let mut es = EmptySquad::new();
+            b.update(0.1, &mut es.squad());
             assert!(b.events.is_empty());
             assert_eq!(b.bt, 0.0);
             assert_eq!(b.paint_bt, 0.0);
@@ -2576,7 +2822,7 @@ mod tests {
             b.state = Phase::Active;
             b.visible = true;
             let id = b.spawn_crab(1.234, -0.25, 5.678, 0.0, 90.0);
-            b.crab_pop(id, false); // killed by the boss's own burst
+            b.crab_pop(id, false, None); // killed by the boss's own burst
             let c = &b.crabs[0];
             assert!(c.dead);
             let ev = b.drain_events();
@@ -2618,7 +2864,7 @@ mod tests {
             // `Math.random()`): xorshift32 never repeats back to back.
             assert_ne!(b.rng.next_f32(), seed);
             // a dead crab pops are idempotent
-            b.crab_pop(id, true);
+            b.crab_pop(id, true, None);
             assert!(b.drain_events().is_empty());
         });
     }

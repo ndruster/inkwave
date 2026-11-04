@@ -1,9 +1,10 @@
 //! Gameplay tuning constants, extracted from upstream `src/config.js` into
-//! `assets/tuning.json` (schema `inkwave.tuning.v4`) by the Task 3 pipeline,
+//! `assets/tuning.json` (schema `inkwave.tuning.v5`) by the Task 3 pipeline,
 //! extended to the full M3 content set by Task 28 (12 weapons / 15 subs /
 //! 19 specials / zones / three difficulties), with the HULLBREAKER boss
 //! data tables by Task 41 (slice+eval of `src/boss/*.js`) and the boss hit
-//! sphere rest positions + nav plan constants by Task 42 batch A (v3 → v4).
+//! sphere rest positions + nav plan constants by Task 42 batch A (v3 → v4),
+//! plus the brain `pref` table by Task 43 batch A (v4 → v5).
 //!
 //! Units: metres / seconds / m·s⁻¹ / m·s⁻²; HP and ink are points. Weapon
 //! spread / arc / fan / leap-angle fields are degrees; every other angle is
@@ -44,9 +45,10 @@ pub struct Tuning {
     #[serde(rename = "teamPalettes")]
     pub team_palettes: Vec<TeamPalette>,
     pub difficulty: DifficultySet,
-    /// HULLBREAKER boss data tables (Task 41, extended by Task 42 batch A,
-    /// schema v4): `BOSS`, `BOSS_MODE`, `MOVES` / `PACE` / `HZ` / … , `HIT`
-    /// (with rest `pos`), brain + nav arrays (with plan constants).
+    /// HULLBREAKER boss data tables (Task 41, extended by Task 42 batch A
+    /// and Task 43 batch A, schema v5): `BOSS`, `BOSS_MODE`, `MOVES` /
+    /// `PACE` / `HZ` / … , `HIT` (with rest `pos`), brain + nav arrays
+    /// (with plan constants and the brain `pref` table).
     pub boss: Boss,
 }
 
@@ -1384,13 +1386,14 @@ impl DifficultySet {
 }
 
 // ---------------------------------------------------------------------------
-// Task 41 (tuning v3, extended by Task 42 batch A to v4): the HULLBREAKER boss
+// Task 41 (tuning v3, extended by Task 42 batch A to v4 and Task 43 batch A
+// to v5): the HULLBREAKER boss
 // data tables. Extracted from src/boss/{boss,bossMode,bossHazards,bossModel,
 // bossBrain,bossNav,bossModelGeo}.js via the slice+eval path in
 // extract-tuning.mjs; line anchors in the tests below.
 // ---------------------------------------------------------------------------
 
-/// Top-level `boss` section (schema v4).
+/// Top-level `boss` section (schema v5).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Boss {
@@ -1412,7 +1415,7 @@ pub struct Boss {
     pub reach_step: f32,
     /// `REACH_N` — floor-clipped extent headings (bossHazards.js L36).
     pub reach_n: u32,
-    /// Phase-indexed brain arrays (bossBrain.js L12-15).
+    /// Phase-indexed brain arrays (bossBrain.js L12-16).
     pub brain: BossBrainTuning,
     /// Footprints + pad margins (bossNav.js L10-15).
     pub nav: BossNavTuning,
@@ -1539,7 +1542,7 @@ pub struct BossHazardTuning {
     pub crab_speed: [f32; 4],
 }
 
-/// Phase-indexed brain tables (bossBrain.js L12-15), `[0, p1, p2, p3]`.
+/// Phase-indexed brain tables (bossBrain.js L12-16), `[0, p1, p2, p3]`.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BossBrainTuning {
@@ -1550,6 +1553,8 @@ pub struct BossBrainTuning {
     /// Gap between moves (s) by phase (+ up to `cool_rnd`).
     pub cool: [f32; 4],
     pub cool_rnd: [f32; 4],
+    /// Preferred distance to the mark (m) by phase.
+    pub pref: [f32; 4],
 }
 
 /// `WALL_BODY` / `FLOOR_BODY` / `PAD_MARGIN` (bossNav.js L10-15) plus the plan
@@ -1680,7 +1685,7 @@ mod tests {
     #[test]
     fn schema_and_provenance() {
         let t = tuning();
-        assert_eq!(t.schema, "inkwave.tuning.v4");
+        assert_eq!(t.schema, "inkwave.tuning.v5");
         assert_eq!(t.source.path, "src/config.js + src/boss/*.js");
         assert_eq!(t.source.commit.len(), 40, "commit must be a full sha");
     }
@@ -2779,6 +2784,12 @@ mod tests {
         assert_eq!(br.turn, [0.0, 1.25, 1.45, 1.75]); // JS src/boss/bossBrain.js L13
         assert_eq!(br.cool, [0.0, 1.05, 0.8, 0.6]); // JS src/boss/bossBrain.js L14
         assert_eq!(br.cool_rnd, [0.0, 0.8, 0.6, 0.45]); // JS src/boss/bossBrain.js L15
+    }
+
+    #[test]
+    fn boss_brain_pref_values() {
+        let br = &tuning().boss.brain;
+        assert_eq!(br.pref, [0.0, 10.0, 9.0, 8.0]); // JS src/boss/bossBrain.js L16
     }
 
     #[test]

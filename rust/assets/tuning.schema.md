@@ -1,4 +1,4 @@
-# tuning.json — 字段模式（schema `inkwave.tuning.v4`）
+# tuning.json — 字段模式（schema `inkwave.tuning.v5`）
 
 由 `rust/tools/extract/extract-tuning.mjs` 从上游 `src/config.js` 提取（v3 起另含 `src/boss/*.js`
 的 boss 数据表，切源+eval 方式，不经 ESM import），**不要手改**。
@@ -15,13 +15,15 @@ v3→v4（Task 42 批次 A）：`boss.nav` 新增 `planWall` `planFloor` `stride
 各项新增 `pos:[x,y,z]`（rest 模型空间球心，见下）；其余各节数值不变。提取新增
 `src/boss/bossModelGeo.js` 切块 eval（真 THREE，node_modules 已有），`source.path` 的
 `src/boss/*.js` glob 已覆盖之。
+v4→v5（Task 43 批次 A）：`boss.brain` 新增 `pref` 字段（JS `PREF`，brain 对各阶段"与目标保持
+的偏好距离"，见下）；其余各节数值不变。
 权威数值以本 JSON 为准（本文档只描述字段与语义，逐值锚定见 `inkwave_sim` 单测）。
 
 ## 顶层
 
 | 字段 | 含义 |
 | --- | --- |
-| `schema` | 模式标识 `inkwave.tuning.v3`，Rust 侧由单测 `schema_and_provenance` 精确断言 |
+| `schema` | 模式标识 `inkwave.tuning.v5`，Rust 侧由单测 `schema_and_provenance` 精确断言 |
 | `source.commit` / `source.path` | 数据出处（git commit 与 JS 文件），用于上游同步审查 |
 | `player` | `PLAYER`（config.js L21-90）：角色物理/手感全部常量，见下 |
 | `weaponOrder` | `WEAPON_ORDER`（L303）：12 武器出场顺序 |
@@ -281,10 +283,12 @@ JSON 键为蛇形（`barrage_sticky` 等），Rust 侧显式 rename。
 
 相位索引数组均为 `[0, p1, p2, p3]`（0 占位，阶段 1..3 有效）。
 
-### boss.brain（src/boss/bossBrain.js L12-15，未导出，切源）
+### boss.brain（src/boss/bossBrain.js L12-16，未导出，切源）
 
 `speed=[0,2.9,3.3,3.8]`（m/s，L12）、`turn=[0,1.25,1.45,1.75]`（rad/s，L13）、
 `cool=[0,1.05,.8,.6]`（招式间隔 s，L14）、`coolRnd=[0,.8,.6,.45]`（L15）。
+v5 新增 `pref=[0,10,9,8]`（L16，JS `PREF`：各阶段与目标的偏好距离 m——idle 游走保持的距离、
+出招选型的落点半径参照）。
 
 ### boss.nav（src/boss/bossNav.js L10-15）
 

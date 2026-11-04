@@ -16,6 +16,8 @@
 //! hand-rolled binary heap with the same push/pop and tie-breaking order, and
 //! `random_point` takes the caller's rng so batch C can inject a seeded one.
 
+use std::cell::{Cell, RefCell};
+
 use crate::actor::SimWorld;
 use crate::collision::CollisionWorld;
 use crate::tuning::{BossNavTuning, NavFootprint};
@@ -92,12 +94,14 @@ pub struct BossNav {
     offs: Vec<(i32, i32, f64)>,
     // A* scratch buffers reused across `path` calls (JS L193-194
     // `this._g/_from/_seen/_closed/_stamp`); `g`/`from` are only read when
-    // `seen == stamp`, so the reuse is safe.
-    g_buf: Option<Vec<f32>>,
-    from_buf: Option<Vec<i32>>,
-    seen_buf: Option<Vec<u32>>,
-    closed_buf: Option<Vec<u32>>,
-    stamp: u32,
+    // `seen == stamp`, so the reuse is safe. Interior mutability keeps `path`
+    // callable through the `&BossNav` the entity holds (Task 43 batch C: the
+    // brain plans through a shared nav reference).
+    g_buf: RefCell<Option<Vec<f32>>>,
+    from_buf: RefCell<Option<Vec<i32>>>,
+    seen_buf: RefCell<Option<Vec<u32>>>,
+    closed_buf: RefCell<Option<Vec<u32>>>,
+    stamp: Cell<u32>,
 }
 
 impl BossNav {
@@ -143,11 +147,11 @@ impl BossNav {
             plan_ids: Vec::new(),
             area: 0.0,
             offs: Self::build_offs(st),
-            g_buf: None,
-            from_buf: None,
-            seen_buf: None,
-            closed_buf: None,
-            stamp: 0,
+            g_buf: RefCell::new(None),
+            from_buf: RefCell::new(None),
+            seen_buf: RefCell::new(None),
+            closed_buf: RefCell::new(None),
+            stamp: Cell::new(0),
         };
         me.build(world.collision, nav);
         me
@@ -664,7 +668,7 @@ impl BossNav {
     /// JS L189-230 `path`: A* over plannable cells (prefers open floor),
     /// string-pulled into a few straight legs. Returns cell-centre `[x, z]`
     /// points, or `None`.
-    pub fn path(&mut self, x0: f32, z0: f32, x1: f32, z1: f32) -> Option<Vec<[f32; 2]>> {
+    pub fn path(&self, x0: f32, z0: f32, x1: f32, z1: f32) -> Option<Vec<[f32; 2]>> {
         let a = self.nearest_plan(x0, z0);
         let b = self.nearest_plan(x1, z1);
         if a < 0 || b < 0 {
@@ -677,14 +681,14 @@ impl BossNav {
         // rounded on store, comparisons happen in f64).
         let (gx0, gz0, gst) = (self.x0 as f64, self.z0 as f64, self.step as f64);
         // JS L193-194: lazily allocated scratch buffers reused across calls.
-        if self.g_buf.is_none() {
-            self.g_buf = Some(vec![0.0f32; n]);
-            self.from_buf = Some(vec![-1i32; n]);
-            self.seen_buf = Some(vec![0u32; n]);
-            self.closed_buf = Some(vec![0u32; n]);
+        if self.g_buf.borrow().is_none() {
+            *self.g_buf.borrow_mut() = Some(vec![0.0f32; n]);
+            *self.from_buf.borrow_mut() = Some(vec![-1i32; n]);
+            *self.seen_buf.borrow_mut() = Some(vec![0u32; n]);
+            *self.closed_buf.borrow_mut() = Some(vec![0u32; n]);
         }
-        self.stamp += 1;
-        let st = self.stamp;
+        self.stamp.set(self.stamp.get() + 1);
+        let st = self.stamp.get();
         let xz =
             |i: i32| -> (f64, f64) { (gx0 + (i % nx) as f64 * gst, gz0 + (i / nx) as f64 * gst) };
         let (bx, bz) = xz(b);
@@ -695,10 +699,14 @@ impl BossNav {
         };
         let mut cells: Vec<i32> = Vec::new();
         {
-            let g = self.g_buf.as_mut().unwrap();
-            let from = self.from_buf.as_mut().unwrap();
-            let seen = self.seen_buf.as_mut().unwrap();
-            let closed = self.closed_buf.as_mut().unwrap();
+            let mut g_b = self.g_buf.borrow_mut();
+            let mut from_b = self.from_buf.borrow_mut();
+            let mut seen_b = self.seen_buf.borrow_mut();
+            let mut closed_b = self.closed_buf.borrow_mut();
+            let g = g_b.as_mut().unwrap();
+            let from = from_b.as_mut().unwrap();
+            let seen = seen_b.as_mut().unwrap();
+            let closed = closed_b.as_mut().unwrap();
             let plan = &self.plan;
             let dw = &self.dw;
             let dv = &self.dv;
@@ -1080,7 +1088,7 @@ mod tests {
     /// string-pull collapses thousands of cells into a few legs).
     #[test]
     fn path_endpoints_and_bounds() {
-        let (mut nav, t) = tidewater_nav();
+        let (nav, t) = tidewater_nav();
         let b = t.collision.bounds;
         let a = nav.nearest_plan(1.0, b.min_z + 10.0);
         let e = nav.nearest_plan(-2.0, b.max_z - 12.0);

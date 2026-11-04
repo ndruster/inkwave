@@ -61,7 +61,7 @@
 - 处置后复验：fmt/clippy/test 全绿（inkwave_sim 506 passed），门禁重跑九段如上。
 
 ## Task 43: BossBrain + BossHazards——六招与危害求值
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 42
 - **Description**:
@@ -72,6 +72,20 @@
   - `rule` TR-43.1: 六招逐招固定种子断言（telegraph ≥0.6s、时序、hazard 几何逐帧对参考求值、伤害归属 victim-side）。
   - `rule` TR-43.2: 同 record 双端（sim=host/guest）hazard 位置逐 tick 一致；crablets 数量/追踪/pop 链。
 - **Notes**: 本任务是 boss 局可玩性的逻辑核心；渲染无关。
+
+### Task 43 Completion Evidence（2026-11-04）
+- **TR-43.1 ✅**：`boss/brain.rs` ≡ bossBrain.js 376 行全量平移（目标选取评分 L114/attn 衰减/walk·turn 8 向 room 场侧移/选招权重表+last×0.3+force 审计钩/六招 `_start` record 构造逐键 r3/`_runMove` charge 位移·sweep lean·frenzy spin/crablet 管理 `_spawnCrabs`·`_crabs` 全式）+ `boss/hazards.rs` ≡ bossHazards.js L1-352（MoveId+record JVal 访问器/几何自由函数 moveTimes·movePhaseAt·chargeDist·chargeTime·barrelPos·beamAngle·ringStart·ringRadius/hz 状态上移 Boss（hits·cache·prevBt·dead）/victim-side 六招伤害逐锚（once 键、跨界带防穿隧、SAFE_PAD、submerged 免束、LOS、dps·dt、charge 击飞 L170 逐式）/paint host-only Splat{team1}（steps 离散化、pad 0.3、waterY 拒）/threat 查询（Task 47 消费））。测试 27 项：逐招 record 钉形（slam rings 按 phase、barrage n/四元组/throw 时钟、sweep span 对称、charge v/stun、crablets n、frenzy spin/rot0）、tele≥MIN_TELE、pace 缩放、同 seed 双跑逐 record 确定性、几何参考值（ring 线性、barrelPos 端点、beamAngle smoothstep、chargeTime 往返、reach 剪枝 Tidewater 实测）、伤害语义（once 不重、防穿隧、SAFE_PAD、submerged、dps·dt、remote 不伤）。
+- **TR-43.2 ✅**：host/guest 同 record 逐 tick `hz_current`/几何一致（guest `on_move`→`hz_add` 幂等、`hz_update(live=false)` 不产伤不产 Splat）；crablets 生命周期（n 只生成、retgt 0.4 重选、crabLife 超时 pop、接触 1.05 pop+victim-side burst 伤害、pop 1.2s 清除、无 squad 入 pending 队列）；threat 逐招钉值 3 项；paint 3 项（host-only+pad+water 拒）。测试 20 项。接线：`Boss::update(dt,squad)` ≡ boss.js L100-116 时序（brain→fizzle→paint→hz_update→emit→model_update→rain）、model_update move 分支+_moveAim+target aim 实化、shape_active crack→phase≥3（D-T42-4 落地）、Stunned.dur、defeat/apply_damage/crab_burst/follow/adopt 全接。
+- **提取扩展 ✅**：schema v4→v5——`brain.pref`（bossBrain.js L16 `[0,10,9,8]`，slice+assertContains 钉定）；tuning.json 连跑逐字节一致；`tuning.rs` 类型+`boss_brain_pref_values` 锚测；`tuning.schema.md`/`boss-hitpos-crosscheck.mjs` 同步 v5。
+- **九段门禁**：`rust/tools/verify/logs/task43-gates-20261104T001844Z.log` — FMT/CLIPPY/TEST(**workspace 657 passed**=603+54，inkwave_sim 560)/WASM/TREE/DETERM/XCHK/HEADLESS(600 帧)/JS_TREE_CLEAN 全绿；**TRUNK=DEGRADED**：3 次重试 wasm-bindgen SIGKILL（沙箱 OOM 同 D-T40-1 先例），不阻塞提交。首轮门禁 FMT/CLIPPY 失败（新文件未跑 fmt+22 条 lint），修复后复跑：机械修 20（collapsible_if/map 迭代/needless_range_loop/`from_str`→`parse_id`/`not_above` NaN 语义 helper 等，行为等价）+豁免 2（测试记录构造器 too_many_arguments，扁平参数面保 JS 逐式对应）。
+
+### Task 43 Review 附录（独立评审：0 P0 / 0 P1 / 5 P2 → 全部核销 → PASS 闭环）
+- 评审员实核：bossBrain.js 376/bossHazards.js L1-352 全文对照，≥20 锚抽查全一致（含 _hurtLocal 六招逐式、charge 击飞 L170、paint steps、threat、_pickTarget 评分、record 键序 wire 兼容）；接线 boss.js L100-116/L128-149/L396/adopt L21-37 一致；已声明偏差（barrage jitter 预抽、hz_cache u64 键、hz_paint player 参、伪攻击手、seed 派生、crack 代理、Stunned.dur）逐条与 JS 行为核对自洽；测试钉行为非重言式、无脆弱钉。
+- **P2-1 ✅（不改）** `reachStep` 命名系 spec 既有命名（值=SAFE_PAD 0.6，tuning.rs 注释+锚测澄清）。
+- **P2-2 ✅（补记）** nav.rs `path()` `&mut self`→`&self`（RefCell/Cell）未列简报清单——机械适配行为保持，D-T43-9 补记。
+- **P2-3 ✅（误报核销）** hz_cache 剪枝不清理——实核 hazards.rs L419 已 `remove`，评审误报。
+- **P2-4 ✅（在案）** Move 事件每 move 一次 vs JS per-phase——spec §2 已声明，Task 46 若需再议。
+- **P2-5 ✅（无差异）** follow 死亡分支 fizzle 与 dead 赋值顺序相反——`hz_fizzle` 不读 dead/killer，无观测差异。
 
 ## Task 44: BossMode 规则 + 离线完整局 + boss bots
 - **Status**: `pending`

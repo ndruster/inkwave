@@ -218,3 +218,59 @@ tuning v3（boss 全数据表入产物）+ wire 金标准（B/bhit/bm/bc/res-bos
 - **D-T42-6 主上下文核验补漏**：`BossAttacker.has_nid` 门控（netmatch.js L152 `attacker.nid === undefined` 不发上行但仍本地预测）——评审未列，核验 JS 实读后补，含专项测试。
 - **D-T42-7 接受项**：P2-2 f32 状态 + `mv` f32 量化 ⇒ Rust-host↔JS-guest 混部不受支持（PROTO v1 同语言部署口径不变）；P2-3 splash/rain 嵌套 hypot vs JS 三参 Math.hypot（~1ulp，仅 LOS 边界翻转理论风险，改动收益低于风险）。
 - 测试：inkwave_sim 506 passed（470→506，+36），workspace 基线 567 单调递增（门禁日志为准）。
+
+## Task 43 实施设计（2026-11-03，实读锚点后定稿）
+
+### §0 目标
+`BossBrain`（bossBrain.js 376 全读）+ `BossHazards` sim 段（bossHazards.js L1-352 全读；L357-600 `HazardFX` 渲染段归 Task 46）逐行平移进 `inkwave_sim::boss`；接入 `Boss::update`（boss.js L100-116 时序），实化 Task 42 留桩：`_modelUpdate` move 分支（L128-133 `movePhaseAt/moveTimes`）+ `_moveAim`（L142-149）+ target aim（L135-138）+ crack 近似实化（phase≥3）+ `hz.fizzle/paint/update/crabBurst` + `brain.noteDamage/checkPhase/onDefeat` 接线 + `adopt` 建 brain。
+
+### §1 JS 锚点（本窗口全读实核）
+- bossBrain.js：SPEED/TURN/COOL/COOL_RND L12-15（已提取）、**PREF L16 `[0,10,9,8]` 未提取→本任务扩抓**；ctor L21-37（adopt 语义：cool 1.0、checkPhase、`_spawned` 判 crablets 已过 tele、crabSeq=maxId+1 且补 age/tgt/retgt/speed 缺省 L31）；pace getter L39；noteDamage L40；checkPhase L41-44；onDefeat L45；update L48-72（intro/roar 时钟、dmgBy exp 衰减、`stunned = move.p.stun && movePhaseAt==='rec'` L67、floorAt 缓升 L69-70、vel/turn 回算 L71）；_roar L74-81；_idle L84-105（face 判定 0.16/0.6/1.2/2.4）；_pickTarget L107-120（评分式 L114、attn×0.8 衰减 L117）；_walk L122-143（waypoint 1.1、vmax clamp(1−|dy|/0.9)、speed ±4/3·dt、stuck 0.8）；_turn L146-164（侧移 8 向 room 场）；_pickGoal L166-183（16 采样、pad 18m −12）；_choose L186-213（权重表、last×0.3、force 审计钩）；_lane L215-227（13 偏置、cast 34、min 6）；**_start L230-296（record 构造：tele=max(MIN_TELE,M.tele·pace)、六招 p 形态、barrage 候选排序 L247 含比较器内 rnd() 抽取、pts 空回退、`recBoss(['bm'])` L294）**；_runMove L299-327（charge 位移、sweep 身姿 lean、frenzy spin、crablets `_spawned`）；_spawnCrabs L330-340；_crabs L342-375（crabLife 超时、retgt 0.4、bd 30、接触 1.05/1.3、7 偏置绕行、inPad 0.8、waterY+0.3、落差 −1.4、pointInside、speed 平滑 dt·8）。
+- bossHazards.js：MOVES L17-24、PACE L25、MIN_TELE L26、HZ L27-34、SAFE_PAD L35、REACH_N L36（均已提取）；moveTimes/movePhaseAt L38-46；chargeDist/chargeTime L48-55；barrelPos L57-60；beamAngle L61（smoothstep）；ringStart/ringRadius L62-63；BossHazards L69-352：add（t0 幂等+log.moves）L80-85、current L86、fizzle L88-98（fx burst 渲染段省略）、_live L101-105（slam extra）、update L107-116（end+4 剪枝+hits 清理、live→_hurtLocal、prevBt）、_hurtLocal L119-187（victim-side：`!remote && alive && team!==1`、SAFE_PAD 免疫、once 键 `${t0}|${kind}|${i}|${nid}`、slam impact 跨界带、ring 扫带+reach 剪、barrel land、sweep dps·dt+submerged 免+LOS、charge WALL_BODY 双球+击飞速度式 L170、frenzy dps·dt+LOS）、crabBurst L189-194、_damage L195（`a.damage(dmg, boss.attacker, 'boss')`）、_los L196、_c/reach/reachAt L201-217（kindAt===0 步进 0.35、1.2 起步）、beamLen L220-230（raycast skipGrates=true、角度桶 round(ang·90)）、**paint L233-289（host-only：splat 射线 DOWN 4m skipGrates=true、点+法线·0.08、pad 0.3 免疫、waterY 拒；六招泼墨节律含 steps() 离散化）**、threat L294-349（level/ax/az/ringIn/cover/beam/lane、horizon 1.2、push 归一）。
+- API 对应（实核）：`G.level.groundHeight(x,z,yMax)` ≡ `collision.ground_height(x,z,y_max,false)`（level.js L389 默认 skipGrates=false）；`G.physics.raycast(o,d,max,out,true)` ≡ `collision.raycast(...,true)`（physics.js L34）；`los` ≡ `collision.los`；`pointInside(p,0)` ≡ `point_inside(p,0.0,-1,scratch)`；`PLAYER.waterY/radius` ≡ tuning.player；`rng()` ≡ `Rng::next_f32`。
+- 既有 Rust 桩：`Boss::update` L629-642（_bt0/_live 占位）、`model_update` L648-677（move 分支缺）、`emit_events` L690-706（per-phase 注）、`defeat` L1278（hz.fizzle/brain.onDefeat）、`apply_damage` L1207（noteDamage）、`crab_burst` L1396（hz.crabBurst）、`adopt` L1663（建 brain）、`follow` L1533（fizzle）、`shape_active` L593 crack=false、`BossLog` 无 moves、`CrabState` 缺 age/tgt/retgt。
+
+### §2 设计
+- **record 形态 = JVal 端到端**（`{id,t0,s,d:[tele,act,rec],p}`，值经 r3 f64）：与 `['bm']` 逐字节同形、guest `on_move` 已收 JVal、pack s[18] 已带 record——不建平行 typed 结构；新增 `MoveId` enum（slam/barrage/sweep/charge/crablets/frenzy，from_str/as_str）+ 访问器族（`rec_d(m,i)`、`rec_p_f64(m,"x")`、`rec_rings(m)->Vec<f64>`、`rec_pts(m)->Vec<[f64;4]>`、`rec_n`、`rec_spin` 等）置于 `boss/hazards.rs`。
+- **hz 状态上移实体**（沿用 Task 42 hoisting 先例）：`Boss` 新增 `hz_hits: HashSet<String>`、`hz_cache: HashMap<f64, HzCache>`（t0→{beam: HashMap<i32,f32>, reach: Option<Vec<f32>>}）、`hz_prev_bt: f32`、`hz_dead: f32`（−1 哨兵）；`BossLog` 增 `moves: Vec<(f64,String)>`（去 Copy 保 Clone）。hazards 逻辑写成 `impl Boss`（文件 `boss/hazards.rs`），公开方法：`hz_add(m)->bool`、`hz_current(bt)`、`hz_fizzle(bt)`、`hz_live(m,bt)`、`hz_update(dt,bt,live,squad)`、`hz_hurt_local(bt0,bt1,dt,squad)`、`hz_crab_burst(x,y,z,squad)`、`hz_reach/hz_reach_at/hz_beam_len`、`hz_paint(bt0,bt1)`（产 `BossEvent::Splat{team:1}`，seed 走 boss.rng）、`threat(x,y,z,horizon)->Threat`（pub struct，Task 47 消费）；几何自由函数 move_times/move_phase_at/charge_dist/charge_time/barrel_pos/beam_angle/ring_start/ring_radius/h_dist（smoothstep 复刻 ctx.js）。
+- **brain 独立结构** `boss/brain.rs`：`BossBrain{rnd:Rng, cool, path:Option<Vec<[f32;2]>>, pi, goal, goal_t, stuck_t, attn:HashMap<i32,f64>, dmg_by:HashMap<i32,f64>, last:Option<MoveId>, cd:{crablets,frenzy}, retarget, plan:Option<Plan>, speed, force:Option<MoveId>, spawned}`；`Plan{id, face:Option<f64>, face_fn:bool(aimAt), lane:Option<Lane>, t}`；方法 `update(&mut self, dt, boss:&mut Boss, squad:&mut BossSquad)` 等（JS `this.b` 显式参数化）。`Boss` 增 `brain: Option<BossBrain>`，调用点 take/put 规避双借。`Boss::new`：sim 时建 brain（rnd 种子 = seed 派生 `seed ^ 0x9E37_79B9_7F4A_7C15`，与 boss.rng 分流，D-T43）；`adopt()` 建 adopt brain（cool 1.0、check_phase、spawned 判定、crab_seq=max+1 并补齐 crab age/tgt/retgt/speed）。
+- **actor 视图** `boss/mod.rs`：`pub struct BossSquad<'s>{ pub actors:&'s mut [Actor], pub ids:&'s [i32], pub remote:&'s [bool], pub player:&'s tuning::Player }`（ids=JS `a.nid ?? a.slot`，remote=JS `a.remote`；Task 44 match 层持有真数据，测试合成）。`Boss::update(dt)` 签名改 `update(&mut self, dt:f32, squad:&mut BossSquad)`，内部序 ≡ boss.js L100-116：brain.update|follow → fizzle 条件（L106，`Phase::End` 并 finish/judge/results）→ paint（sim&&live&&bt>bt0，`[max(bt0,paint_bt),bt]`）→ paint_bt=bt → hz_update(dt,bt,live) → emit_events → crab_visuals → model_update(dt,squad) → flush_rain。
+- **实化清单**：`model_update` move 分支 L128-133（ph/start/moveT/phaseDur）+ `_moveAim` L142-149（六招 aim 求值，barrage find 首个未落地桶）+ L135-138 target aim（squad 查 ids==target）；`shape_active` crack→`phase>=3`（D-T42-4 实化，姿态项 tear→phase 代理声明）；`BossEvent::Stunned` 增 `dur: f32`（=moveTimes(m).rec，JS L173）；`emit_events` move 事件保持每 move 一次（per-phase 拆分不做，Task 46 若需再议）；`defeat` 接 hz_fizzle+brain.onDefeat；`apply_damage` 接 brain.note_damage；`crab_burst` 接 hz_crab_burst（!killed&&live 门 ≡ JS L396）；`follow` 死亡分支接 hz_fizzle；`CrabState` 增 `age:f32/tgt:i32/retgt:f32`（host 字段，guest 侧恒初值）。
+- **提取扩抓**：`extract-tuning.mjs` brain 段加 `PREF`（slice `const PREF = [`…`];` + assertContains 钉 L16）→ `brain.pref:[f32;4]`；schema `inkwave.tuning.v4→v5`；tuning.rs 类型+锚定测试；重生成 tuning.json 连跑逐字节一致。
+- **伤害归属**：victim-side `_damage` → `actor.damage(dmg, Some((1,0)), Some(boss_pos), player_t)`（boss 伪攻击手 team1/slot0——boss 局无 team1 实体，D-T43）；charge 击飞直改 `a.vel/a.grounded`（JS L170 逐式）。
+
+### §3 实施批次（委派）
+- A：提取 PREF + schema v5 + tuning.rs 类型/锚测（独立，先行）。
+- B：`boss/hazards.rs`（record 访问器+几何+hz 状态方法+threat+paint）——依赖 A 否（不依赖 pref）。
+- C：`boss/brain.rs` + Boss 接线（update 签名、model_update/defeat/adopt/crab 字段等实化）——依赖 B。
+- D：测试（TR-43.1/43.2）+ 既有测试适配（update 签名波及面）——依赖 C。
+
+### §4 测试
+- TR-43.1 六招逐招：固定种子 brain 序列确定（同 seed 两次逐 record 一致）；tele≥MIN_TELE；paceDiff 缩放；`force` 钩逐招钉 record 形态（slam rings 按 phase、barrage n=[0,4,5,7][ph]、sweep span、charge v/stun、crablets n、frenzy spin/rot0）；hazard 几何对参考值逐帧（ring 半径线性、barrelPos 抛物、beamAngle smoothstep 端点、chargeDist ramp、reach 剪枝 Tidewater 实测）；伤害 once 键不重、扫带防穿隧、SAFE_PAD、submerged 免束、LOS、dps·dt、victim-side（remote 不伤）。
+- TR-43.2 双端：同 record host/guest `hz_current`/几何求值逐 tick 一致（guest 经 on_move+hz_update(live=false) 不产伤害）；crablets 生命周期（n 只、追踪重选 0.4s、life 超时 pop、接触 1.05 pop、`Bc` 事件、pop 1.2s 清除）；threat() 逐招输出钉值。
+- 基线：inkwave_sim 506→≥560 目标（单调），workspace 603 递增；`cargo tree -p inkwave_sim` 依赖面不变。
+
+### §5 风险
+- barrage 排序比较器含 `rnd()` 抽取（JS L247 非纯比较器）：抽取次数依赖排序算法比较序——仅 host 产 record，guest 重放不重算；Rust↔Rust 确定、JS↔Rust 混部 host 不支持（沿 D-T42-7），测试钉 Rust 自身确定性即可。
+- `update` 签名变更波及 Task 42 测试与调用点（headless 工具）——统一适配，空 squad 兜底。
+- paint 节律 `steps()` 离散化 + splat 序列 host-only：逐字节钉 seed 流（boss.rng 消耗序）风险高——测试钉计数/半径/坐标量化值，不钉 seed 值本身（JS 用 Math.random 本就不可钉）。
+- JS `for…of Map` 迭代序 = 插入序：crabs/attn/dmgBy 用 Vec/HashMap 需保证遍历序（attn/dmgBy 仅取值不依赖序；crabs 保 Vec ✓）。
+
+### §6 验收
+- TR-43.1/TR-43.2 全绿；九段门禁全绿（TRUNK DEGRADED 口径同 D-T40-1）；JS 树零改动；基线递增。
+
+### §7 定案（实施后回填 §8）
+
+### §8 Task 43 定案（2026-11-03，实施+评审后）
+- **D-T43-1 brain RNG 分流**：JS `new rng((Math.random()*2**31)>>>0)`（bossBrain.js L23）不可钉种 ⇒ Rust 以 boss seed 派生（`seed ^ 0x9E37_79B9_7F4A_7C15`）保确定性、与 boss.rng 互不干扰；paint 的 splat seed 流仍走 boss.rng（JS L240 `Math.random()` 独立源）。
+- **D-T43-2 barrage 排序偏差**：JS L247 比较器每次比较抽 `rnd()`（非纯、结果依赖排序算法）⇒ Rust 每候选预抽 jitter `(rnd()-0.5)*6`、按纯 key `dist+jitter` 降距排序（brain.rs DEVIATION 注释在案）；record 仅 host 产生（D-T42-7），钉 Rust 自身确定性（同 seed 双跑逐 record 一致测试）。
+- **D-T43-3 hz_cache 键**：f64 不满足 `Hash/Eq` ⇒ `HashMap<u64>` 键 `t0.to_bits()`；`hz_update` 剪枝时同步 `remove` ≡ JS WeakMap 随记录回收（hazards.rs L419）。
+- **D-T43-4 hz_paint 加 player 参**：JS L239 读全局 `PLAYER.waterY`，Rust Boss 不持有 player tuning ⇒ 签名 `hz_paint(bt0,bt1,player)`，接线传 `squad.player`。
+- **D-T43-5 victim-side 伪攻击手**：JS `_damage` 传 `boss.attacker`（team1、无 nid ⇒ 不上行）⇒ Rust `Some((1,0))`+boss 位置；boss 局无 team1 实体，伤害归属仅审计面。
+- **D-T43-6 crack 实化**：D-T42-4 近似落地——`A.sp.tear.x` 依赖 ⇒ `phase>=3` 代理（姿态 tear 项声明性丢弃）；belly 维持 `stunned||phase>=3`。
+- **D-T43-7 Stunned.dur**：= `move_times(m).rec`（JS boss.js L173 `remaining` 在 tele→rec 边沿触发时刻 ≈ rec）。
+- **D-T43-8 渲染段省略**：`hz_fizzle` 的 barrel fx burst 循环、`crabBurst(x,y,z,id)` 未用 id 参、HazardFX 全段（bossHazards.js L357-600）⇒ Task 46。
+- **D-T43-9 nav.path 内部可变性**：`&mut self`→`&self`（RefCell/Cell scratch），brain 经实体共享引用规划所需，行为保持（评审 P2-2 补记）。
+- **D-T43-10 crab_burst pending 队列**：host 正常路径带 squad 内联 victim-side；无 squad 调用点入队、下次 update 排空（测试覆盖）。
+- **评审**：独立评审 PASS（0 P0 / 0 P1 / 5 P2）。处置：P2-1 `reachStep` 命名系 spec 既有命名（值=SAFE_PAD 已锚测+注释澄清）不改；P2-2→D-T43-9 补记；P2-3 hz_cache 不清理——**评审误报**，剪枝已 remove（L419 实核）；P2-4 Move 事件每 move 一次——§2 已声明（Task 46 若需再议）；P2-5 follow fizzle 顺序——`hz_fizzle` 不读 dead/killer，无观测差异。
+- 测试：inkwave_sim 506→560 passed（+54：批次 A 锚测 1、批次 B smoke 6、批次 D 47），workspace 基线递增（门禁日志为准）；TR-43.1 逐招 record 钉形/几何参考值/伤害语义 27 项、TR-43.2 双端一致/crablets 生命周期/threat 钉值/paint host-only 20 项。
