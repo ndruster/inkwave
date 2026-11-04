@@ -109,7 +109,7 @@
   - 评审：P0=0；P1-1 已修（D-T44-9）；P1-2/P2-1/P2-6 误报；P1-3/4/5 由 §8 覆盖；其余 P2 留档
 
 ## Task 45: Boss 联网——快照播放/上行/迁移 + e2e + scenario E
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 44
 - **Description**:
@@ -120,6 +120,15 @@
   - `rule` TR-45.1: harness e2e——guest boss 位置/phase/move 与 host 逐 tick 对账（播放层门限沿用 Task 25 定标）；`'bhit'` 累计伤害收敛；迁移后无缝。
   - `rule` TR-45.2: scenario E 实跑 dump（DEGRADED 如实记录 + 可断言子项：握手/roster/boss 快照到达）；带宽压测（NFR-M4-3）。
 - **Notes**: 协议不改（JS 客户端已在用），Rust 对齐即可。
+
+### Task 45 Completion Evidence（2026-11-04）
+- **TR-45.1 ✅**：`replication.rs` tests 六 e2e（FakeRelay pair 先例）——①`tr45_1_1` 双端 BossMode 600 帧路径收敛（近 120 帧最优差 <0.5m + 末帧 <6m、hp 一位小数量化精确、phase 相等）；②`tr45_1_2` guest `hit()`→'bhit'→host `remote_hit`：log.recv/sent、recv_dmg/sent_dmg、host hp 差、stats_by_nid 归属全对齐；③`tr45_1_3` 迁移：adopt 后 sim=true/err 归零/brain 生成/无位置跳变/bt 推进；④`tr45_1_4` ['bm'] 时间线 guest `log.moves` 与 host 逐条 (t0,id) 相等；⑤`tr45_1_5` 击杀→5.2s 胜利窗口→judge→res：`bo` 逐字段重建、st 含 bossDmg 列、guest 时钟不钉零。
+- **TR-45.2 ✅**：scenario E（`net-smoke.mjs` `bossScenario`，C/D 先例复刻）沙箱实跑 **DEGRADED ok=true**（Rust guest tab 被 SwiftShader wgpu 杀死，B 场景同历史表现；dump `net-smoke-2026-11-04T08-19-23-252Z.json`）；可断言子项=握手（`[nettest] loadout` 行 `mode=boss` echo）+ roster 跨认 + host 侧 `__G.netm.bossN>0`（guest 侧 B 到达留 REVIEW_CHECKLIST——wasm seam 无 boss 实体驱动，D-T45-9）；`nfr_m4_3` 带宽压测：最坏满快照（8 小蟹+move_rec）tick <65536B。
+- **接线 ✅**：`BossNet` 扩 `prev_t/prev_raw` + `prev` 改 `Vec3`（D-T45-4）；`sample_boss` ≡ `_sampleBoss` L504-564 逐式（Hermite/离散 11 键/crab 配对/三段修正/阻尼 w=13，评审逐式全对齐）；八处钩子（send_tick `%10` full、on_tick B 消费单调门+40 trim、play_events 'bm' 无门/'bc' 有门、on_message 'bhit' is_host、on_leave adopt/handoff、drive_bots ctx.boss、res 形态+停钟）；host drain 在 send_tick 后 ride 下一 tick ≡ JS（评审 P1-1 修正）+ FX 事件回推（P1-2）。
+- **app 层 ✅/留档**：inkwave crate 22 处 + net-harness 7 处 None 适配（非 boss 局逐字节不变）；nettest `netmode` 放开 boss；**BossMode 跨帧持有不可行**（Bevy Resource:'static 自引用，D-T45-9 借用面实读证据）——app 层 boss 实体驱动留 Task 46。
+- **基线**：`inkwave_sim` 572→578 passed（+6）；`inkwave` 69；workspace 675 全绿；`cargo tree -p inkwave_sim` 依赖面不变；wire.rs/JS 树/`server/` 零改动。
+- **九段门禁**：`rust/tools/verify/logs/task45-gates-<TS>.log` — FMT/CLIPPY/TEST(578+69)/WASM/TREE/DETERM/XCHK/HEADLESS(600 帧)/JS_TREE_CLEAN 全绿；**TRUNK=DEGRADED**（沙箱 wasm-bindgen SIGKILL 同 D-T40-1 先例，不阻塞）。
+- **评审**：独立评审 0 P0 / 2 P1 / 4 P2 → P1-1（时序）/P1-2（FX 回推）当场修复复验；P2-1 §8 回填、P2-2/P2-3 注释更正、P2-4 在案 → PASS 闭环。
 
 ## Task 46: Boss 呈现占位档——体块剪影/telegraph 标记/HUD boss 条
 - **Status**: `pending`

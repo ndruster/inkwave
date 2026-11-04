@@ -492,7 +492,7 @@ fn tr35_2_host_drain_rewrites_op2_gid_to_the_nid_form() {
     // records ride the *next* tick, replication.rs L438-441), so spin past a
     // second 1/20 s tick boundary and read the last tick frame.
     for _ in 0..5 {
-        r.update(FIXED_DT, &mut m, &sim, t, w, sb, &mut rec);
+        r.update(FIXED_DT, &mut m, &sim, t, w, sb, &mut rec, None);
     }
 
     let payload = &rec

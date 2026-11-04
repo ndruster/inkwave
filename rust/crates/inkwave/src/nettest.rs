@@ -32,10 +32,12 @@
 //!                    the lobby cycle UI's NONE stop.
 //! ?netspecial=<id|none>  `setMe({special})` (L203 `specialOf`), same
 //!                    `none` rule.
-//! ?netmode=turf|zones  host-only `hostSet({mode})` (session.js L244); any
-//!                    other value disqualifies the knob.
+//! ?netmode=turf|zones|boss  host-only `hostSet({mode})` (session.js L244;
+//!                    Task 45: `boss` passes through — the session accepts
+//!                    the mode and the guest boss cfg, D-T44-8). Any other
+//!                    value disqualifies the knob.
 //!                    → `[nettest] loadout w=<id> sub=<id|-> sp=<id|->
-//!                    mode=<turf|zones>` is logged once after the latch,
+//!                    mode=<turf|zones|boss>` is logged once after the latch,
 //!                    reading the session's *effective* values (the lobby
 //!                    `me` row + `lob.mode`), so a sim-dropped invalid id
 //!                    shows the old weapon and the script can reconcile.
@@ -85,7 +87,7 @@ pub struct NetTestCfg {
     pub sub: Option<Option<String>>,
     /// `?netspecial=<id|none>`, same `none` rule.
     pub special: Option<Option<String>>,
-    /// `?netmode=turf|zones` (host-only; anything else disqualifies).
+    /// `?netmode=turf|zones|boss` (host-only; anything else disqualifies).
     pub mode: Option<String>,
 }
 
@@ -150,9 +152,13 @@ pub fn parse_query(search: &str) -> Option<NetTestCfg> {
                 });
             }
             "netmode" => {
-                // turf/zones only (session.js L244 `hostSet` accepts boss
-                // too, but the Rust UI/seam never drives it — M3 scope).
-                if v != "turf" && v != "zones" {
+                // Task 45: boss passes through too (session.js L244 `hostSet`
+                // accepts the three modes; the session already lets a guest
+                // join a boss room without rejecting — D-T44-8). The boss
+                // *entity* driving lands with Task 46 (app-layer BossMode);
+                // until then a boss room runs the boss-shaped match without
+                // the entity stepping.
+                if v != "turf" && v != "zones" && v != "boss" {
                     continue;
                 }
                 cfg.mode = Some(v.to_string());
@@ -501,11 +507,15 @@ mod tests {
         assert_eq!(c.weapon.as_deref(), Some("weird"));
         assert_eq!(c.sub, Some(Some("bomb".to_string())));
         assert_eq!(c.special, None, "absent knob stays None");
-        // A bad `netmode` value disqualifies only that knob (boss is out of
-        // the M3 seam scope); empty values drop their own knob; no loadout
-        // keys ⇒ all fields None and the cfg still exists for other keys.
+        // Task 45: `boss` passes through (the session accepts it, D-T44-8).
+        // A bad `netmode` value disqualifies only that knob; empty values
+        // drop their own knob; no loadout keys ⇒ all fields None and the
+        // cfg still exists for other keys.
+        let c = parse_query("?net=create&netmode=boss&netweapon=&netsub=").expect("some");
+        assert_eq!(c.mode.as_deref(), Some("boss"));
+        assert_eq!((c.weapon, c.sub), (None, None));
         assert_eq!(
-            parse_query("?net=create&netmode=boss&netweapon=&netsub=")
+            parse_query("?net=create&netmode=duel&netweapon=&netsub=")
                 .map(|c| (c.mode, c.weapon, c.sub)),
             Some((None, None, None))
         );

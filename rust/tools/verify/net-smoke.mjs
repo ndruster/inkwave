@@ -24,16 +24,32 @@
 //     the probe `sub=`/`sp=` deploy counters >= 1 and zero errors both sides.
 //     The JS server (:8490) is shared with B: if the port already listens,
 //     C/D reuse that instance instead of spawning a second one.
+//   scenario E (Task 45 batch C): the JS client hosts a BOSS Battle match
+//     (`setSettings({map:'tidewater',mode:'boss'})` — session.js L244
+//     accepts boss; tidewater has no `noBoss` flag) and the Rust wasm guest
+//     joins. The sim layer reads `B` (Task 45 batch A: `on_tick` buffering +
+//     `_sampleBoss` playback), but the Rust wasm seam drives `boss: None`
+//     per frame (app-layer BossMode persistence deferred to Task 46), so no
+//     guest-side boss probe exists — the boss-snapshot assertion is the JS
+//     host's own `msg.B` publication counter `__G.netm.bossN` (netmatch.js
+//     L196 increments it per tick carrying `B`, bind() L72 exposes the
+//     NetMatch as `G.netm`) — the honest assertable surface until the seam
+//     drives the boss entity. Checks: handshake (the `[nettest] loadout`
+//     line = welcome+lobby+set_me landed), roster cross-recognition (JS
+//     lobby sees the guest weapon; the loadout line echoes `mode=boss`,
+//     which the Rust session keeps verbatim, session.rs L1797), boss
+//     snapshots published (count > 0), match ticks reached the guest
+//     (probe lines), zero errors both sides. E shares :8490 with B/C/D.
 //
 // Probe/error collection follows `wasm-smoke.mjs` (same RENDER_ERR_RE gate,
 // console.error + exception + Log.entryAdded capture, non-zero exit on any
 // application error). No npm deps; Node >= 22 for the global WebSocket.
 //
 // Usage:
-//   node rust/tools/verify/net-smoke.mjs [--scenario A|C|D|all] [--secs N]
+//   node rust/tools/verify/net-smoke.mjs [--scenario A|C|D|E|all] [--secs N]
 //        [--cdp-port 9222] [--relay-port 8787] [--dist-port 8491] [--js-port 8490]
-//   (B — the JS-host handshake baseline — runs unconditionally; C/D gate on
-//   their own scenario names.)
+//   (B — the JS-host handshake baseline — runs unconditionally; C/D/E gate
+//   on their own scenario names.)
 //
 // Evidence: a JSON summary on stdout plus the raw per-tab console lines in
 // rust/tools/verify/logs/net-smoke-<stamp>.json (TR-26.1/26.2 records).
@@ -567,6 +583,167 @@ async function loadoutScenario(name, opts) {
 }
 
 // ---------------------------------------------------------------------------
+// Task 45 batch C: the cross-stack boss-mode scenario (E)
+// ---------------------------------------------------------------------------
+// The JS client hosts a Boss Battle match (`setSettings({mode:'boss'})`,
+// session.js L244 — boss is upstream-allowed; the Rust session keeps the
+// host's `boss` lobby mode verbatim, inkwave_sim session.rs L1797) and the
+// Rust wasm guest joins; the match runs a short window. No settled-result
+// cross-check here (unlike C/D): the sim layer consumes `B` since Task 45
+// batch A, but the wasm seam passes `boss: None` per frame (app-layer
+// BossMode persistence deferred to Task 46 — Bevy `Resource: 'static`
+// forbids the self-referential borrow), so no guest-side boss probe exists;
+// the boss-snapshot assertion reads the JS host's OWN publication counter
+// instead: netmatch.js L196 increments `this.bossN` on every tick that
+// carries `msg.B` (TICK = 1/20 s), and bind() L72 exposes the NetMatch
+// as `G.netm`. `__G.netm.bossN > 0` on the host proves boss snapshots went
+// onto the wire the Rust guest consumes; guest-side `B` receipt stays a
+// REVIEW_CHECKLIST item until the seam drives the boss entity.
+async function bossScenario(name) {
+  const t0 = Date.now();
+  let js = null;
+  let rust = null;
+  let code = null;
+  let loadout = null;
+  let loadoutLine = null;
+  let lobbyRoster = null;
+  let bossN = null;
+  try {
+    // Fresh browser for this scenario (same reason as C/D: a wasm tab
+    // crashed earlier leaves the GPU process unable to hand out any new
+    // WebGL context; the relay/dist/JS servers are stateless and stay up).
+    const p = `/tmp/net-smoke-profile-${stamp}-${name}`;
+    sh("rm", ["-rf", p], "/");
+    await startBrowser(p);
+    if (!(await ensureJsServer())) throw new Error("JS game server (:8490) unreachable");
+    browser.labelSeq = `${name}-js`;
+    js = await browser.newTab();
+    // Reload until the JS app reaches the menu (≤3): the software GL stack
+    // can refuse the first WebGL context on a fresh tab (≡ loadoutScenario).
+    for (let attempt = 1; ; attempt++) {
+      js.errors = [];
+      js.lines = [];
+      js.navigate(`http://127.0.0.1:${JSPORT}/?skipTitle&autopilot`);
+      try {
+        await js.waitForEval(
+          "window.__inkwave && window.__G && __G.net && __G.mode === 'menu'",
+          150000, "JS client menu");
+        break;
+      } catch (e) {
+        if (attempt >= 3) throw e;
+        await sleep(3000);
+      }
+    }
+    const codeR = await js.eval("(async () => await __G.net.create('Host'))()", {
+      awaitPromise: true, timeoutMs: 30000,
+    });
+    code = codeR.result?.value;
+    if (!code) throw new Error("JS create() returned no code: " + JSON.stringify(codeR));
+    // Boss host settings (≡ C/D's setSettings injection; session.js L244
+    // accepts `mode:'boss'`, L248 keeps tidewater — it has no `noBoss` flag)
+    // + the host's own loadout (session.js L200-206 `setMe`). The boss
+    // match ignores the turf duration clock on a win, so no duration write.
+    await js.eval(
+      "__G.net.setSettings({map:'tidewater',mode:'boss',bots:true,difficulty:'normal'})",
+      { timeoutMs: 15000 });
+    await js.eval(
+      "__G.net.setMe({weapon:'charger',sub:'mine',special:'crab',ready:true})",
+      { timeoutMs: 15000 });
+    browser.labelSeq = `${name}-rust`;
+    rust = await browser.newTab();
+    rust.navigate(rustUrl(
+      `netjoin=${code}&netweapon=brolly&netsub=bomb&netspecial=stamp&netready&autopilot&netprobe`));
+    // ① handshake + ② roster: the Rust loadout line (welcome + lobby + the
+    // seam's set_me echo; `mode=` is read off the host-broadcast lobby, so
+    // it proves the boss lobby settings landed at the guest) and the JS
+    // lobby cross-recognizing the guest's weapon.
+    loadoutLine = await rust.waitForLine(LOADOUT_RE, 240000, "Rust loadout line");
+    loadout = LOADOUT_RE.exec(loadoutLine);
+    await js.waitForEval("__G.net.lobby.players.some(p=>p.weapon==='brolly')", 180000,
+      "JS lobby sees the guest weapon");
+    lobbyRoster = (await js.eval(
+      "JSON.stringify(__G.net.lobby.players.map(p=>[p.name,p.weapon,p.sub,p.special]))"
+    )).result?.value;
+    await js.waitForEval("__G.net.canStart()", 30000, "canStart");
+    await js.eval("__G.net.start()", { timeoutMs: 15000 });
+    await js.waitForEval(
+      "__G.net.state === 'match' && __inkwave.match && __inkwave.match.state === 'playing'",
+      240000, "JS boss match playing");
+    await rust.waitForLine(PROBE_RE, 240000, "Rust probe (boss match ticks)");
+    // Run the boss match a short window so the host publishes ticks' worth
+    // of snapshots (TICK = 1/20 s → tens of `B` frames within seconds).
+    await sleep(Math.min(SECS, 20) * 1000);
+    // ③ boss snapshots on the wire: the host's own `msg.B` publication
+    // count (see the block comment above for the surface choice).
+    const bossR = await js.eval("__G.netm && __G.netm.bossN");
+    bossN = bossR.result?.value;
+    const probes = rust.lines.map(parseProbe).filter(Boolean);
+    const lastRetry = rust.lines.reduce(
+      (acc, l, i) => (/\[nettest\] (?:join|create) retry/.test(l) ? i : acc), -1);
+    const checks = [];
+    checks.push([`${name}: Rust loadout line shows the picks`,
+      !!loadout && loadout[1] === "brolly" && loadout[2] === "bomb" && loadout[3] === "stamp"]);
+    checks.push([`${name}: lobby mode boss at the guest (loadout line echo)`,
+      !!loadout && loadout[4] === "boss"]);
+    checks.push([`${name}: JS lobby roster carries the guest weapon`,
+      !!lobbyRoster && lobbyRoster.includes("brolly")]);
+    checks.push([`${name}: Rust probe lines (boss match ticks reached the guest)`,
+      probes.length >= 2]);
+    checks.push([`${name}: host published boss snapshots (msg.B count ${bossN ?? "?"} > 0)`,
+      typeof bossN === "number" && bossN > 0]);
+    checks.push([`${name}: no [nettest] err line`,
+      !rust.lines.slice(lastRetry + 1).some((l) => l.includes("[nettest] err"))]);
+    checks.push([`${name}: no console errors either side`,
+      rust.errors.length === 0 && !rust.panicked && js.errors.length === 0 && !js.panicked]);
+    recordScenario(name, {
+      status: checks.every(([, v]) => v) ? "PASS" : "FAIL",
+      code, loadout: loadoutLine, lobbyRoster, bossN,
+      checks: checks.map(([n, v]) => `${v ? "PASS" : "FAIL"} ${n}`),
+      ok: checks.every(([, v]) => v),
+      durationMs: Date.now() - t0,
+    });
+  } catch (e) {
+    const hs = rust ? rust.lines.filter((l) => l.includes("[nettest]")).slice(0, 16) : [];
+    const died = (rust && renderDied(rust)) || (js && renderDied(js));
+    // What the run DID prove, in order (each stage is independent evidence).
+    const proven = [];
+    if (code) proven.push(`JS host created room ${code} over the shim (≡ net-test L73)`);
+    if (loadout) proven.push(`Rust loadout line: ${loadoutLine ?? ""}`);
+    if (lobbyRoster) proven.push(`JS lobby roster carries the guest weapon: ${lobbyRoster}`);
+    if (typeof bossN === "number" && bossN > 0) proven.push(`host boss snapshot count: ${bossN}`);
+    const base = { code, loadout: loadoutLine, lobbyRoster, bossN, handshake: hs, proven };
+    if (died) {
+      recordScenario(name, {
+        ...base,
+        status: "DEGRADED",
+        degraded: true,
+        reason: `a client tab quit on the sandbox SwiftShader PBR failure: ${e.message}`,
+        renderErrors: [...(rust?.errors ?? []), ...(js?.errors ?? [])]
+          .filter((er) => /render-error|Quitting/.test(er)).slice(0, 4),
+        ok: true,
+        durationMs: Date.now() - t0,
+      });
+    } else if (proven.length >= 2) {
+      // The handshake/roster evidence landed but the match stalled under the
+      // software renderer — the spec's downgrade clause (same shape as C/D).
+      recordScenario(name, {
+        ...base,
+        status: "DEGRADED",
+        degraded: true,
+        reason: `sandbox software renderer stalled the boss match before the snapshot ` +
+          `evidence completed (see \`proven\`): ${e.message}. Boss-match rerun is a ` +
+          "REVIEW_CHECKLIST item (tasks.md Task 45 downgrade clause).",
+        ok: true,
+        durationMs: Date.now() - t0,
+      });
+    } else {
+      recordScenario(name, { ...base, status: "FAIL", reason: String(e.message ?? e),
+        durationMs: Date.now() - t0 });
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // boot the infrastructure
 // ---------------------------------------------------------------------------
 // Hoisted so `loadoutScenario` (defined at the top level) closes over them.
@@ -829,6 +1006,17 @@ try {
   }
   if (SCENARIO === "D" || SCENARIO === "all") {
     await loadoutScenario("D", { zones: true });
+  }
+
+  // ============ scenario E (Task 45 batch C): cross-stack boss-mode match ===
+  // JS host (`setSettings({map:'tidewater',mode:'boss'})`) + Rust wasm
+  // guest: handshake, roster cross-recognition, and the host's boss
+  // snapshot publication (`__G.netm.bossN` > 0 — the Rust seam has no
+  // guest-side boss probe yet, see the bossScenario block comment). A
+  // sandbox renderer stall records the DEGRADED clause with the `proven`
+  // list, same caliber as C/D.
+  if (SCENARIO === "E" || SCENARIO === "all") {
+    await bossScenario("E");
   }
 
   results.exitOk = Object.values(results.scenarios).every((s) => s.ok);

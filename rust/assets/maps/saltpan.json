@@ -3922,7 +3922,7 @@
   ],
   "schema": "inkwave.stage_layout.v1",
   "source": {
-    "commit": "70e0c8029b7d05a0bd72044c0a3ee62eb34c612a",
+    "commit": "f55921c31a9c21f5f698f234f552be31089d2609",
     "path": "src/world/stages/saltpan/layout.js"
   },
   "stage": {

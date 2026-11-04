@@ -297,6 +297,7 @@ pub fn net_tick(
                         nms.seed,
                         &sim,
                         &demo.tuning.player,
+                        None,
                     );
                     // The humans-only stage dropped the leaver's actor
                     // (`remove_at` inside `on_leave`): JS keeps `m.local` as
@@ -318,7 +319,7 @@ pub fn net_tick(
             }
             SessionEvent::GameMessage { from, payload } => {
                 let end = if let Some(rep) = &mut nms.rep {
-                    rep.on_message(&from, &payload, &mut demo.m, &demo.tuning.player)
+                    rep.on_message(&from, &payload, &mut demo.m, &demo.tuning.player, None)
                 } else {
                     None
                 };
@@ -359,6 +360,7 @@ pub fn net_tick(
                     &t.weapons,
                     &t.weapon_range,
                     &mut nms.inputs,
+                    None,
                 );
                 // Local player input into `inputs[local_idx]` (JS
                 // PlayerController; zeroed outside `playing`, match.js
@@ -397,6 +399,7 @@ pub fn net_tick(
                     &t.weapons,
                     &t.subs,
                     tr,
+                    None,
                 );
                 // Un-consumed bus events (splat / turf / countdown / …) feed
                 // the HUD + audio drains like the offline match's own bus.
@@ -405,7 +408,7 @@ pub fn net_tick(
                 // inside `_judge`, right before `setState('judge')`).
                 if rep.is_host() && demo.m.result.is_some() && !nms.result_sent {
                     if let Some(tr) = os.sess.transport_mut() {
-                        rep.send_result(&demo.m, tr);
+                        rep.send_result(&demo.m, None, tr);
                     }
                     nms.result_sent = true;
                 }
@@ -718,6 +721,7 @@ mod tests {
                 ws,
                 &demo.tuning.weapon_range,
                 &mut hinputs,
+                None,
             );
             hm.step_masked(
                 FIXED_DT,
@@ -737,6 +741,7 @@ mod tests {
                 ws,
                 sb,
                 h.transport_mut().unwrap(),
+                None,
             );
             hm.events.extend(rest);
             grep.drive_bots(
@@ -747,6 +752,7 @@ mod tests {
                 ws,
                 &demo.tuning.weapon_range,
                 &mut ginputs,
+                None,
             );
             gm.step_masked(
                 FIXED_DT,
@@ -766,17 +772,18 @@ mod tests {
                 ws,
                 sb,
                 g.transport_mut().unwrap(),
+                None,
             );
             gm.events.extend(rest);
             step2(&mut h, &mut g, FIXED_DT as f64 * 1000.0);
             for ev in h.poll_events() {
                 if let SessionEvent::GameMessage { from, payload } = ev {
-                    hrep.on_message(&from, &payload, &mut hm, tp);
+                    hrep.on_message(&from, &payload, &mut hm, tp, None);
                 }
             }
             for ev in g.poll_events() {
                 if let SessionEvent::GameMessage { from, payload } = ev {
-                    grep.on_message(&from, &payload, &mut gm, tp);
+                    grep.on_message(&from, &payload, &mut gm, tp, None);
                 }
             }
         }
@@ -802,13 +809,13 @@ mod tests {
             None,
         );
         assert!(hm.result.is_some(), "the host judged the match");
-        hrep.send_result(&hm, h.transport_mut().unwrap());
+        hrep.send_result(&hm, None, h.transport_mut().unwrap());
         let mut guest_result = false;
         for _ in 0..50 {
             step2(&mut h, &mut g, 1.0);
             for ev in g.poll_events() {
                 if let SessionEvent::GameMessage { from, payload } = ev {
-                    grep.on_message(&from, &payload, &mut gm, tp);
+                    grep.on_message(&from, &payload, &mut gm, tp, None);
                     if gm.result.is_some() {
                         guest_result = true;
                     }
@@ -835,7 +842,8 @@ mod tests {
                 let SessionEvent::GameMessage { from, payload } = ev else {
                     continue;
                 };
-                if grep.on_message(&from, &payload, &mut gm, tp) == Some(ReplicationEvent::MatchEnd)
+                if grep.on_message(&from, &payload, &mut gm, tp, None)
+                    == Some(ReplicationEvent::MatchEnd)
                 {
                     g.end_match();
                     back = true;
@@ -948,6 +956,7 @@ mod tests {
             1,
             &sim,
             &demo.tuning.player,
+            None,
         );
         assert_eq!(m.actors.len(), 1, "the leaving owner's actor is dropped");
         assert_eq!(rep.local_slot("BBBB"), Some(0), "the slot shifts");

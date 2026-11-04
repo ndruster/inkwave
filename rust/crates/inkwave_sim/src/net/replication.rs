@@ -129,7 +129,7 @@ use crate::actor::{Actor, ActorInput, FIXED_DT, SimWorld};
 use crate::bot::{Bot, BotCtx};
 use crate::match_::{Match, MatchEvent, MatchResult, Phase, ZoneOutcome, find_actor};
 use crate::nav::NavGraph;
-use crate::net::playback::Playback;
+use crate::net::playback::{Playback, ang_diff};
 use crate::net::session::{StartCfg, map_no_bots};
 use crate::net::transport::Transport;
 use crate::net::wire::{
@@ -137,9 +137,9 @@ use crate::net::wire::{
     parse_json,
 };
 use crate::net::{
-    ActorSample, ActorStatsRow, BombRecord, DirectMsg, EventRecord, ForwardEvent, HostMsg,
-    KitRecord, KitVal, ProjectileRecord, SessionId, SplatRecord, Tick, TickEvent, TimedEvent,
-    TrigData, TriggerRecord, ZoneRecord, ZonesResult,
+    ActorSample, ActorStatsRow, BombRecord, BossCrab, BossSnap, DirectMsg, EventRecord,
+    ForwardEvent, HostMsg, KitRecord, KitVal, ProjectileRecord, SessionId, SplatRecord, Tick,
+    TickEvent, TimedEvent, TrigData, TriggerRecord, ZoneRecord, ZonesResult,
 };
 use crate::paint::{SplatKind, SplatOpts};
 use crate::tuning::{Difficulty, PlayerTuning, Spritzer, SubSet, WeaponSet};
@@ -252,6 +252,118 @@ pub struct Replication {
     /// `netHurt` on packet arrival (between frames) — the deferral is at
     /// most one frame (recorded deviation).
     pending_sp_hurt: Vec<(u32, f32)>,
+    /// Boss tick counter (JS `this.bossN`, netmatch.js L196) — the host
+    /// increments it every tick the boss is simulating, and packs the boss
+    /// snapshot every 10th tick (`bossN % 10 == 0`).
+    boss_n: u32,
+}
+
+/// One interpolated boss sample — JS `_sampleBoss`'s `at(t, O)` scratch
+/// object (netmatch.js L512-530): the continuous fields plus the segment
+/// indices / blend factor the caller needs for the discrete state and the
+/// crablet interpolation.
+struct BossSampleOut {
+    x: f64,
+    y: f64,
+    z: f64,
+    yaw: f64,
+    bt: f64,
+    vx: f64,
+    vz: f64,
+    u: f64,
+    s0_idx: usize,
+    s1_idx: Option<usize>,
+}
+
+/// JS `_sampleBoss`'s `at(t, O)` (netmatch.js L512-530): segment search →
+/// Hermite x/z (tangent-scaled by the clamped `d`) + linear y/yaw/bt/vx/vz
+/// when a next sample exists; ballistic hold/extrapolate otherwise.
+fn boss_at(buf: &[(f64, BossSnap)], t: f64) -> BossSampleOut {
+    let mut s0_idx = 0usize;
+    let mut s1_idx: Option<usize> = None;
+    for i in 0..buf.len().saturating_sub(1) {
+        if buf[i].0 <= t && buf[i + 1].0 > t {
+            s0_idx = i;
+            s1_idx = Some(i + 1);
+            break;
+        }
+    }
+    if let Some(j) = s1_idx {
+        let a = &buf[s0_idx].1;
+        let b = &buf[j].1;
+        let d = (buf[j].0 - buf[s0_idx].0).max(1e-3);
+        let u = ((t - buf[s0_idx].0) / d).clamp(0.0, 1.0);
+        let u2 = u * u;
+        let u3 = u2 * u;
+        let h00 = 2.0 * u3 - 3.0 * u2 + 1.0;
+        let h10 = u3 - 2.0 * u2 + u;
+        let h01 = -2.0 * u3 + 3.0 * u2;
+        let h11 = u3 - u2;
+        BossSampleOut {
+            x: h00 * f64::from(a.x)
+                + h10 * d * f64::from(a.vx)
+                + h01 * f64::from(b.x)
+                + h11 * d * f64::from(b.vx),
+            z: h00 * f64::from(a.z)
+                + h10 * d * f64::from(a.vz)
+                + h01 * f64::from(b.z)
+                + h11 * d * f64::from(b.vz),
+            y: f64::from(a.y) + (f64::from(b.y) - f64::from(a.y)) * u,
+            yaw: f64::from(a.yaw) + ang_diff(f64::from(a.yaw), f64::from(b.yaw)) * u,
+            bt: f64::from(a.bt) + (f64::from(b.bt) - f64::from(a.bt)) * u,
+            vx: f64::from(a.vx) + (f64::from(b.vx) - f64::from(a.vx)) * u,
+            vz: f64::from(a.vz) + (f64::from(b.vz) - f64::from(a.vz)) * u,
+            u,
+            s0_idx,
+            s1_idx: Some(j),
+        }
+    } else {
+        let last_idx = buf.len() - 1;
+        let e = if t > buf[last_idx].0 {
+            (t - buf[last_idx].0).min(0.15)
+        } else {
+            0.0
+        };
+        let s_idx = if t > buf[last_idx].0 {
+            last_idx
+        } else {
+            s0_idx
+        };
+        let s = &buf[s_idx].1;
+        BossSampleOut {
+            x: f64::from(s.x) + f64::from(s.vx) * e,
+            z: f64::from(s.z) + f64::from(s.vz) * e,
+            y: f64::from(s.y),
+            yaw: f64::from(s.yaw),
+            bt: f64::from(s.bt) + e,
+            vx: f64::from(s.vx),
+            vz: f64::from(s.vz),
+            u: 0.0,
+            s0_idx: s_idx,
+            s1_idx: None,
+        }
+    }
+}
+
+/// JS `_sampleBoss`'s crablet loop (netmatch.js L536-542): pair by id,
+/// lerp x/y/z and shortest-arc yaw by `u`, hp rides the later sample.
+fn interp_crabs(s0: &[BossCrab], s1: Option<&[BossCrab]>, u: f64) -> Vec<BossCrab> {
+    s0.iter()
+        .map(
+            |c| match s1.and_then(|arr| arr.iter().find(|q| q.id == c.id)) {
+                Some(h) => BossCrab {
+                    id: c.id,
+                    x: (f64::from(c.x) + (f64::from(h.x) - f64::from(c.x)) * u) as f32,
+                    y: (f64::from(c.y) + (f64::from(h.y) - f64::from(c.y)) * u) as f32,
+                    z: (f64::from(c.z) + (f64::from(h.z) - f64::from(c.z)) * u) as f32,
+                    yaw: (f64::from(c.yaw) + ang_diff(f64::from(c.yaw), f64::from(h.yaw)) * u)
+                        as f32,
+                    hp: h.hp,
+                },
+                None => *c,
+            },
+        )
+        .collect()
 }
 
 impl Replication {
@@ -279,6 +391,7 @@ impl Replication {
             now: 0.0,
             no_bots: map_no_bots(&cfg.map),
             pending_sp_hurt: Vec::new(),
+            boss_n: 0,
         }
     }
 
@@ -415,6 +528,7 @@ impl Replication {
         w: &WeaponSet,
         sb: &SubSet,
         tr: &mut impl Transport,
+        mut boss: Option<&mut crate::boss::Boss<'_>>,
     ) -> Vec<MatchEvent> {
         self.now += dt as f64;
 
@@ -458,11 +572,31 @@ impl Replication {
             }
         }
 
+        // ---- guest boss-damage uplink (JS `sendBossHit`, netmatch.js
+        // L150-154: point-to-point to the host, not a timeline record). The
+        // guest's `hit()` queues `DirectMsg::BossHit` during `Match::step`;
+        // the drain lands ≤1 frame later (D-T35-3 precedent). The host's
+        // `recBoss(['bm'/'bc'])` drain sits AFTER `send_tick` below — JS
+        // pushes those onto `out` mid-`Match.update` (boss.js L383-388 /
+        // bossBrain L294), i.e. they ride the NEXT tick, never the current
+        // one (same placement as the zone drain and `record_ink`).
+        if !self.is_host()
+            && let Some(b) = boss.as_deref_mut()
+        {
+            for msg in b.drain_guest_hits() {
+                tr.send_to(&self.host_id, &encode_direct(&msg));
+            }
+        }
+
+        // ---- boss path sampling (JS `_sampleBoss(dt)`, netmatch.js
+        // L178/L504-564: after the actor samples, before `_playEvents`).
+        self.sample_boss(boss.as_deref_mut(), dt);
+
         // ---- event timeline replay (JS `_playEvents`, L179: after
         // sampling, before the tick send — so a due splat paints into this
         // frame's grid and a due death already hides the proxy before its
         // sample is applied below).
-        self.play_events(m, sim, t, w, sb);
+        self.play_events(m, sim, t, w, sb, boss.as_deref_mut());
 
         // ---- outgoing tick (L182-187: `tickT -= dt; if (<=0) { += TICK;
         // if (<0) = TICK; _sendTick() }`).
@@ -472,7 +606,44 @@ impl Replication {
             if self.tick_t < 0.0 {
                 self.tick_t = TICK_DT;
             }
-            self.send_tick(m, tr);
+            self.send_tick(m, tr, boss.as_deref_mut());
+        }
+
+        // ---- host boss timeline records (JS `recBoss(['bm'|'bc'])`,
+        // netmatch.js L146 — called by bossBrain `_start` L294 / boss.js
+        // `crabPop` L383-388 DURING `Match.update`, i.e. after this frame's
+        // `_sendTick`, so the records ride the NEXT tick). The Rust driver
+        // steps the boss before `update` (same-frame events surface here);
+        // draining AFTER `send_tick` reproduces JS's one-tick delay exactly
+        // (zone-drain / `record_ink` precedent). FX events (Hit/Phase/Splat)
+        // are pushed back onto `boss.events` for the app-layer consumer
+        // (Task 46) — this drain only claims the timeline pair.
+        if self.is_host()
+            && let Some(b) = &mut boss
+        {
+            for ev in b.drain_events() {
+                match ev {
+                    crate::boss::BossEvent::Move(rec) => {
+                        self.rec(super::TickEvent::BossMove(rec));
+                    }
+                    crate::boss::BossEvent::Bc {
+                        id,
+                        x,
+                        y,
+                        z,
+                        killed,
+                    } => {
+                        self.rec(super::TickEvent::BossCrabBurst {
+                            id,
+                            x,
+                            y,
+                            z,
+                            killed,
+                        });
+                    }
+                    other => b.events.push(other),
+                }
+            }
         }
 
         // ---- Zone Control: the host's rules decisions + count snapshots
@@ -1004,6 +1175,121 @@ impl Replication {
         }));
     }
 
+    /// JS `_sampleBoss(dt)` (netmatch.js L178/L504-564): a guest rebuilds
+    /// the boss's interpolated draw state from the host's snapshot buffer
+    /// (`net.buf`, fed by [`Replication::on_tick`]) and folds the damped
+    /// error into `net.prev`, which [`crate::boss::Boss::follow`] (the
+    /// `sim == false` branch of `Match::step`) consumes. The host never
+    /// samples (its boss is authoritative). Runs after the actor samples and
+    /// before `_playEvents` (JS L178 before L179).
+    fn sample_boss(&mut self, boss: Option<&mut crate::boss::Boss<'_>>, dt: f32) {
+        let Some(b) = boss else { return };
+        if b.sim {
+            return; // JS L506 `if (!b || b.sim) return`
+        }
+        // JS L507-508: `!buf.length || !peer || peer.tr === undefined`.
+        if b.net.buf.is_empty() {
+            return;
+        }
+        let Some(tr) = self.playback.peer_tr(&self.host_id) else {
+            return;
+        };
+        let n = &mut b.net;
+        // JS L510: trim stale leading samples (keep ≥ 2).
+        while n.buf.len() > 2 && n.buf[1].0 < tr - 0.3 {
+            n.buf.remove(0);
+        }
+
+        // ---- S = at(tr): continuous Hermite/linear/extrapolate + discrete
+        // from s0 (JS L511-542). `n.cur` is the scratch object JS reuses.
+        let out = boss_at(&n.buf, tr);
+        let s0snap = n.buf[out.s0_idx].1.clone();
+        let s1snap = out.s1_idx.map(|i| n.buf[i].1.clone());
+        let mut s = s0snap.clone();
+        s.x = out.x as f32;
+        s.y = out.y as f32;
+        s.z = out.z as f32;
+        s.yaw = out.yaw as f32;
+        s.bt = out.bt as f32;
+        s.vx = out.vx as f32;
+        s.vz = out.vz as f32;
+        // JS L534-535: discrete state comes from s0, but a present s1 `move`
+        // record wins (the hazard transition lands one sample ahead).
+        if let Some(s1) = &s1snap
+            && s1.move_rec.is_some()
+        {
+            s.move_rec = s1.move_rec.clone();
+        }
+        // JS L536-542: crablets interpolate by id; hp rides s1's value.
+        s.crabs = interp_crabs(
+            &s0snap.crabs,
+            s1snap.as_ref().map(|x| x.crabs.as_slice()),
+            out.u,
+        );
+        n.cur = Some(s.clone());
+
+        // ---- corrections (JS L543-563). `err`/`err_v` are the persistent
+        // damped error carried from last frame.
+        let mut err = n.err;
+        let mut err_v = n.err_v;
+        if n.handoff {
+            n.handoff = false;
+            if let (Some(prev), true) = (n.prev, n.ready) {
+                err = vec3(prev.x - s.x, prev.y - s.y, prev.z - s.z);
+                if err.length_squared() > 144.0 {
+                    err = Vec3::ZERO;
+                    err_v = Vec3::ZERO;
+                }
+            }
+        } else if let (Some(_prev), Some(prev_t), Some(prev_raw), true) =
+            (n.prev, n.prev_t, n.prev_raw, n.ready)
+        {
+            // JS L548-553: a lost thread (prev jump ≥ 12 m) is shown as a
+            // cut (zero the error); a small jump folds into x/z only.
+            let p = boss_at(&n.buf, prev_t);
+            let jx = f64::from(prev_raw.x) - p.x;
+            let jz = f64::from(prev_raw.z) - p.z;
+            let j2 = jx * jx + jz * jz;
+            if j2 > 1e-6 && j2 < 144.0 {
+                err.x += jx as f32;
+                err.z += jz as f32;
+            } else if j2 >= 144.0 {
+                err = Vec3::ZERO;
+                err_v = Vec3::ZERO;
+            }
+        }
+        // JS L555-556: remember the raw sample + its timestamp for next frame.
+        n.prev_raw = Some(vec3(s.x, s.y, s.z));
+        n.prev_t = Some(tr);
+        // JS L557-561: critically-damped spring pull toward the true path.
+        if err.x != 0.0
+            || err.y != 0.0
+            || err.z != 0.0
+            || err_v.x != 0.0
+            || err_v.y != 0.0
+            || err_v.z != 0.0
+        {
+            let w = 13.0f32;
+            let k = (-w * dt).exp();
+            for c in 0..3 {
+                let x0 = err[c];
+                let v0 = err_v[c];
+                let q = v0 + w * x0;
+                err[c] = (x0 + q * dt) * k;
+                err_v[c] = (v0 - w * q * dt) * k;
+            }
+            if err.length_squared() < 1e-6 && err_v.length_squared() < 1e-4 {
+                err = Vec3::ZERO;
+                err_v = Vec3::ZERO;
+            }
+        }
+        n.err = err;
+        n.err_v = err_v;
+        // JS L562-563: the applied position is the sample plus the error.
+        n.prev = Some(vec3(s.x + err.x, s.y + err.y, s.z + err.z));
+        n.ready = true;
+    }
+
     /// JS `_playEvents` / `_play` (L452-498): dequeue every sender's due
     /// timeline records and apply them in sender-clock order. `'s'` splats
     /// paint through [`crate::paint::PaintGrid::splat`] under
@@ -1022,6 +1308,7 @@ impl Replication {
         t: &PlayerTuning,
         w: &WeaponSet,
         sb: &SubSet,
+        mut boss: Option<&mut crate::boss::Boss<'_>>,
     ) {
         let due = self.playback.due_events();
         if due.is_empty() {
@@ -1390,12 +1677,36 @@ impl Replication {
                             m.end_zones(winner, &reason);
                         }
                     }
-                    // Task 41 batch 2: the boss codec decodes `bm`/`bc`, but
-                    // the Rust sim does not run a boss (Boss Battle sim is a
-                    // later batch) — the records are acknowledged and dropped,
-                    // mirroring JS's `this.match?.boss?.…` no-op when no boss
-                    // sim exists (netmatch.js L494/L496).
-                    TickEvent::BossMove(_) | TickEvent::BossCrabBurst { .. } => {}
+                    // JS `_play` L494/L496: a boss move record feeds
+                    // `onMove`, a crablet burst pops the crab on guests
+                    // only. With no boss (turf / zones) both are no-ops,
+                    // exactly JS's `this.match?.boss?.…` guard.
+                    TickEvent::BossMove(rec) => {
+                        // JS L494 has no `!sim` gate: the host replaying
+                        // its own record is a no-op inside `on_move`'s t0
+                        // idempotency (boss.js L436).
+                        if let Some(b) = boss.as_deref_mut() {
+                            b.on_move(rec);
+                        }
+                    }
+                    TickEvent::BossCrabBurst {
+                        id,
+                        x,
+                        y,
+                        z,
+                        killed,
+                    } => {
+                        // JS L496 `if (!b.sim)`: the host owns crab state,
+                        // only guests pop. `squad: None` defers the burst
+                        // damage to the next `Boss::update` via
+                        // `crab_burst_pending` (the driver runs it inside
+                        // `Match::step` with the full squad).
+                        if let Some(b) = boss.as_deref_mut()
+                            && !b.sim
+                        {
+                            b.crab_burst(id, x, y, z, killed, None);
+                        }
+                    }
                 }
             }
         }
@@ -1469,7 +1780,12 @@ impl Replication {
     /// (`if (!x.remote)`, L192), stamp with the sender clock, ride the
     /// pending event timeline, and for the host the 0.5 s clock snapshot
     /// `c = [state, r2(time)]` (L197-200).
-    fn send_tick(&mut self, m: &Match, tr: &mut impl Transport) {
+    fn send_tick(
+        &mut self,
+        m: &Match,
+        tr: &mut impl Transport,
+        boss: Option<&mut crate::boss::Boss<'_>>,
+    ) {
         let ts = wire::r3(self.now) as f32;
         let mut actors = Vec::new();
         for (i, (a, wr)) in m.actors.iter().zip(&m.runners).enumerate() {
@@ -1492,13 +1808,22 @@ impl Replication {
         } else {
             None
         };
+        // JS `_sendTick` L195-196: the host counts ticks while the boss
+        // simulates and ships a snapshot every 10th (`bossN % 10 == 0`);
+        // guests never pack.
+        let mut b_snap = None;
+        if self.is_host()
+            && let Some(b) = boss
+            && b.sim
+        {
+            self.boss_n += 1;
+            b_snap = Some(b.pack(self.boss_n.is_multiple_of(10)));
+        }
         let tick = Tick {
             ts,
             actors,
             events: std::mem::take(&mut self.out),
-            // The Rust host does not run a boss sim yet (Task 41 batch 2 is
-            // codec + fixtures); non-boss ticks never grow the `B` key.
-            b: None,
+            b: b_snap,
         };
         tr.broadcast(&encode_tick(&tick, clock));
     }
@@ -1548,11 +1873,12 @@ impl Replication {
         payload: &str,
         m: &mut Match,
         t: &PlayerTuning,
+        boss: Option<&mut crate::boss::Boss<'_>>,
     ) -> Option<ReplicationEvent> {
         let v = parse_json(payload)?;
         let k = v.field("k").and_then(JVal::as_str).unwrap_or("");
         match k {
-            "t" => self.on_tick(from, &v, m),
+            "t" => self.on_tick(from, &v, m, boss),
             // The victim's owner applies the damage right away — health must
             // be current, so hits never wait on the playback timeline
             // (netmatch.js L162 comment, `_hit` L630-636).
@@ -1601,9 +1927,28 @@ impl Replication {
                     }
                 }
             }
-            // M2 turf-only: no boss — ignored stub (JS L215 runs
-            // `boss.remoteHit`; spec 收口).
-            "bhit" => {}
+            // JS L215: `{k:'bhit', a, d, weak, w, c}` — a guest's hit on
+            // the boss (or a crablet). The host applies it via
+            // `Boss::remote_hit`; the sim's own `!sim` / `!attacker_exists`
+            // gates inside `remote_hit` (boss.js L352-359) mirror JS's
+            // `!!G.actors.find(a=>a.nid===h.a)` lookup.
+            "bhit" => {
+                if self.is_host()
+                    && let Some(b) = boss
+                    && let Some(DirectMsg::BossHit { a, d, weak, c, .. }) = decode_direct(&v)
+                {
+                    let exists = self.idx_of_nid(a).is_some();
+                    b.remote_hit(
+                        &crate::boss::RemoteHit {
+                            a: a as i32,
+                            d,
+                            weak,
+                            c,
+                        },
+                        exists,
+                    );
+                }
+            }
             "st" => {
                 if from == self.host_id
                     && let Some(HostMsg::State { phase, t: time }) = decode_host(&v)
@@ -1618,10 +1963,10 @@ impl Replication {
                         winner,
                         stats,
                         zones,
-                        ..
+                        bo,
                     }) = decode_host(&v)
                 {
-                    self.host_result(m, coverage, winner, &stats, zones.as_ref());
+                    self.host_result(m, coverage, winner, &stats, zones.as_ref(), bo.as_ref());
                 }
             }
             "end" => {
@@ -1644,7 +1989,13 @@ impl Replication {
     /// trim, L251-253), queue the tick's events on the sender's timeline
     /// (L256, played by Task 23), and steer the guest clock off the host's
     /// `c` (L257).
-    fn on_tick(&mut self, from: &str, v: &JVal, m: &mut Match) {
+    fn on_tick(
+        &mut self,
+        from: &str,
+        v: &JVal,
+        m: &mut Match,
+        boss: Option<&mut crate::boss::Boss<'_>>,
+    ) {
         let (tick, clock) = decode_tick(v);
         self.playback.on_tick(from, tick.ts as f64, self.now);
         self.playback.push_events(from, tick.events);
@@ -1661,6 +2012,24 @@ impl Replication {
                 continue;
             }
             self.playback.push_sample(i, s);
+        }
+        // JS `_tick` L258-263: a guest buffers the host's boss snapshot onto
+        // `net.buf` (monotonic `t` gate + 40-capacity trim) so `_sampleBoss`
+        // can interpolate it. Only the host's ticks feed the buffer, and only
+        // a guest (non-sim) boss consumes it.
+        if let Some(snap) = &tick.b
+            && from == self.host_id
+            && let Some(b) = boss
+            && !b.sim
+        {
+            let t = f64::from(tick.ts);
+            let n = &mut b.net;
+            if n.buf.last().is_none_or(|l| t > l.0) {
+                n.buf.push((t, snap.clone()));
+                while n.buf.len() > 40 {
+                    n.buf.remove(0);
+                }
+            }
         }
     }
 
@@ -1707,6 +2076,7 @@ impl Replication {
         winner: u8,
         stats: &[ActorStatsRow],
         zones: Option<&ZonesResult>,
+        bo: Option<&JVal>,
     ) {
         if self.is_host() {
             return;
@@ -1717,8 +2087,18 @@ impl Replication {
                 a.turf = row.turf as f32;
                 a.splats = row.splats;
                 a.deaths = row.deaths;
+                // JS L659 also lifts `bossDmg`/`weakHits` onto the local
+                // actor stats when defined. The Rust sim keeps boss damage on
+                // the boss's per-nid map (D-T42), so the local `ActorStats`
+                // has no such field — the guest's own boss-side tally is the
+                // authority and the wire columns are informational here.
             }
         }
+        // JS `_result` L661-663 branches on `d.mode`: 'boss' (carries `bo`),
+        // 'zones' (the settlement extras), else turf. The two extras are
+        // mutually exclusive on the wire (`encode_host` writes `mode:'zones'`
+        // only when zones is present, `mode:'boss'` only when `bo` is).
+        let is_boss = bo.is_some() && zones.is_none();
         // The host's stat rows are the authority for the whole point line
         // (a guest only simulates its own actors — see module docs).
         let mut points = [0.0f32; 2];
@@ -1729,12 +2109,31 @@ impl Replication {
         }
         points[0] *= m.points_per_m2;
         points[1] *= m.points_per_m2;
-        m.time = 0.0;
+        // JS L660: a boss win stops the clock where it was — only the
+        // non-boss settlement pins `m.time` to 0.
+        if !is_boss {
+            m.time = 0.0;
+        }
+        // JS `boss: d.bo` (L661): the `{name, win, time, hp, maxHp, phase}`
+        // object, rebuilt into [`crate::boss::BossOutcome`].
+        let boss = bo.and_then(|b| {
+            Some(crate::boss::BossOutcome {
+                name: b.field("name").and_then(JVal::as_str)?.to_string(),
+                win: b.field("win").and_then(JVal::as_bool)?,
+                time: b.field("time").and_then(JVal::as_f64)? as f32,
+                hp: b.field("hp").and_then(JVal::as_f64)? as f32,
+                max_hp: b.field("maxHp").and_then(JVal::as_f64)? as f32,
+                phase: b.field("phase").and_then(JVal::as_f64)? as u32,
+            })
+        });
         m.result = Some(MatchResult {
             coverage,
             winner: winner as usize,
-            points: if zones.is_some() {
-                [0.0, 0.0] // JS zones result has no points line (match.js L256-257)
+            points: if zones.is_some() || boss.is_some() {
+                // JS zones / boss results carry no points line (match.js
+                // L256-257, bossMode.js L48-50) — collapse to [0, 0] like the
+                // zones precedent above.
+                [0.0, 0.0]
             } else {
                 points
             },
@@ -1747,7 +2146,7 @@ impl Replication {
                 overtime: z.overtime,
                 log: z.log.clone(),
             }),
-            boss: None,
+            boss,
         });
         m.set_phase(Phase::End);
     }
@@ -1772,7 +2171,12 @@ impl Replication {
     /// call site is `_judge` (match.js L271) — the app calls this when the
     /// host's match settles; the stat rows ride in roster order. A zones
     /// result carries the `zc/zp/zr/zo/zl` extras (JS L652-653).
-    pub fn send_result(&self, m: &Match, tr: &mut impl Transport) {
+    pub fn send_result(
+        &self,
+        m: &Match,
+        boss: Option<&crate::boss::Boss<'_>>,
+        tr: &mut impl Transport,
+    ) {
         if !self.is_host() {
             return;
         }
@@ -1781,18 +2185,42 @@ impl Replication {
             .actors
             .iter()
             .enumerate()
-            .map(|(i, a)| ActorStatsRow {
-                nid: self.nids[i],
-                turf: wire::round_int(a.turf) as i32,
-                splats: a.splats,
-                deaths: a.deaths,
-                // No boss sim in the Rust host yet (Task 41 batch 2 is codec
-                // + fixtures): JS L654 writes `bossDmg || 0` / `weakHits || 0`
-                // for turf rows, so 0/0 reproduces the pre-Task-41 bytes.
-                boss_dmg: 0,
-                weak_hits: 0,
+            .map(|(i, a)| {
+                // JS L654 writes `Math.round(a.stats.bossDmg || 0)` /
+                // `a.stats.weakHits || 0` for every row. The Rust sim keeps
+                // boss damage on the boss's per-nid map (D-T42), so a boss
+                // match reads it there; a non-boss match (no boss) keeps the
+                // 0/0 turf bytes.
+                let (boss_dmg, weak_hits) = boss.map_or((0, 0), |b| {
+                    let st = b
+                        .stats_by_nid
+                        .get(&i32::from(self.nids[i]))
+                        .copied()
+                        .unwrap_or_default();
+                    (wire::round_int(st.boss_dmg) as i32, st.weak_hits)
+                });
+                ActorStatsRow {
+                    nid: self.nids[i],
+                    turf: wire::round_int(a.turf) as i32,
+                    splats: a.splats,
+                    deaths: a.deaths,
+                    boss_dmg,
+                    weak_hits,
+                }
             })
             .collect();
+        // JS `bo: result.boss` (bossMode.js L48-50): `{name, win, time, hp,
+        // maxHp, phase}` — the key order survives on the wire.
+        let bo = r.boss.as_ref().map(|o| {
+            JVal::Obj(vec![
+                ("name".to_string(), JVal::Str(o.name.clone())),
+                ("win".to_string(), JVal::Bool(o.win)),
+                ("time".to_string(), JVal::Num(f64::from(o.time))),
+                ("hp".to_string(), JVal::Num(f64::from(o.hp))),
+                ("maxHp".to_string(), JVal::Num(f64::from(o.max_hp))),
+                ("phase".to_string(), JVal::Num(f64::from(o.phase))),
+            ])
+        });
         let msg = HostMsg::Result {
             coverage: r.coverage,
             winner: r.winner as u8,
@@ -1804,7 +2232,7 @@ impl Replication {
                 overtime: z.overtime,
                 log: z.log.clone(),
             }),
-            bo: None,
+            bo,
         };
         tr.broadcast(&encode_host(&msg));
     }
@@ -1832,6 +2260,7 @@ impl Replication {
         seed: u64,
         sim: &SimWorld,
         t: &PlayerTuning,
+        boss: Option<&mut crate::boss::Boss<'_>>,
     ) {
         let new_owner = self.host_id.clone();
         // Iterate high→low: the noBots path prunes the parallel arrays.
@@ -1858,6 +2287,16 @@ impl Replication {
             m.follower = false;
             self.clock_t = 0.0;
             self.adopted_host = true;
+        }
+        // JS L683: on a host migration the boss follows the new host — the
+        // new host `adopt()`s (sim on, brain built, error folded), a guest
+        // `handoff()`s (sim off, buffer cleared, draw continues from here).
+        if host_changed && let Some(b) = boss {
+            if self.is_host() {
+                b.adopt();
+            } else {
+                b.handoff();
+            }
         }
     }
 
@@ -1907,6 +2346,7 @@ impl Replication {
         ws: &WeaponSet,
         ranges: &HashMap<String, f32>,
         inputs: &mut [ActorInput],
+        boss: Option<&crate::boss::Boss<'_>>,
     ) {
         if !self.bots.iter().any(|b| b.is_some()) {
             return;
@@ -1967,7 +2407,7 @@ impl Replication {
                     mate_minds: &mate_minds,
                     zones: zone_plan.as_ref(),
                     zctl: m.zones.as_ref(),
-                    boss: None,
+                    boss,
                 };
                 inputs[i] = b.step(FIXED_DT, &mut m.actors[i], &ctx);
             } else {
@@ -2233,7 +2673,7 @@ mod tests {
         // Tick content: the host streams only its owned actors (L192) and
         // rides the clock snapshot (L197-200).
         let mut rec = Rec::default();
-        rh.update(TICK_DT, &mut mh, &sim, t, w, sb, &mut rec);
+        rh.update(TICK_DT, &mut mh, &sim, t, w, sb, &mut rec, None);
         let (to, payload) = rec.find("t").clone();
         assert_eq!(to, None, "ticks are broadcast");
         let v = parse_json(&payload).unwrap();
@@ -2251,16 +2691,16 @@ mod tests {
         for (_, s) in &mut fake.actors {
             s.x += 50.0;
         }
-        rg.on_message("IMPOSTOR", &encode_tick(&fake, None), &mut mg, t);
+        rg.on_message("IMPOSTOR", &encode_tick(&fake, None), &mut mg, t, None);
         assert_eq!(mg.actors[0].pos, before, "owner mismatch drops the sample");
 
         let mut good = fake.clone();
         good.ts += 1.0;
-        rg.on_message(h, &encode_tick(&good, None), &mut mg, t);
+        rg.on_message(h, &encode_tick(&good, None), &mut mg, t, None);
         // Task 22: the sample lands in the playback buffer — advance the
         // clock one frame so the path is sampled and applied (tr sits
         // behind the newest sample → the Early hold shows it verbatim).
-        rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec);
+        rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec, None);
         assert_eq!(
             mg.actors[0].pos.x, good.actors[0].1.x,
             "the owner's word lands"
@@ -2275,8 +2715,8 @@ mod tests {
         // `stale` reuses `good`'s sample timestamps? No — decode stamps
         // `t` from the tick ts, so bump nothing: same ts as `good`.
         stale.ts = good.ts;
-        rg.on_message(h, &encode_tick(&stale, None), &mut mg, t);
-        rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec);
+        rg.on_message(h, &encode_tick(&stale, None), &mut mg, t, None);
+        rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec, None);
         assert_eq!(
             mg.actors[0].pos.x, good.actors[0].1.x,
             "a non-newer sample is dropped (L251)"
@@ -2357,15 +2797,15 @@ mod tests {
                 sent = Some(damage);
             }
             // rh.update consumes the HitSend and routes `{k:'hit'}` to G.
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh, None);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg, None);
             trh.advance(16.0);
             trg.advance(0.0);
             for (from, p) in drain_msgs(&mut trh) {
-                rh.on_message(&from, &p, &mut mh, t);
+                rh.on_message(&from, &p, &mut mh, t, None);
             }
             for (from, p) in drain_msgs(&mut trg) {
-                rg.on_message(&from, &p, &mut mg, t);
+                rg.on_message(&from, &p, &mut mg, t, None);
             }
             if sent.is_some() {
                 assert!(
@@ -2402,15 +2842,15 @@ mod tests {
                 None,
             );
             mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh, None);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg, None);
             trh.advance(16.0);
             trg.advance(0.0);
             for (from, p) in drain_msgs(&mut trh) {
-                rh.on_message(&from, &p, &mut mh, t);
+                rh.on_message(&from, &p, &mut mh, t, None);
             }
             for (from, p) in drain_msgs(&mut trg) {
-                rg.on_message(&from, &p, &mut mg, t);
+                rg.on_message(&from, &p, &mut mg, t, None);
             }
             if !mg.actors[1].alive {
                 splatted = true;
@@ -2430,13 +2870,13 @@ mod tests {
         for _ in 0..120 {
             mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb, None);
             mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh, None);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg, None);
             trh.advance(16.0);
             trg.advance(0.0);
             // The guest's respawned actor-1 sample arrives at the HOST inbox.
             for (from, p) in drain_msgs(&mut trh) {
-                rh.on_message(&from, &p, &mut mh, t);
+                rh.on_message(&from, &p, &mut mh, t, None);
             }
             if mh.actors[1].alive && rh.last_tp(1) == 1 && mh.actors[1].hp > 0.0 {
                 followed = true;
@@ -2476,6 +2916,7 @@ mod tests {
                 w,
                 &f.tuning.weapon_range,
                 &mut inputs,
+                None,
             );
             mh.step_masked(
                 FIXED_DT,
@@ -2489,7 +2930,16 @@ mod tests {
             );
         }
         // The leave: the host stays host, so `host_changed = false`.
-        rh.on_leave(g, false, &mut mh, &f.tuning.difficulty.easy, 5, &sim, t);
+        rh.on_leave(
+            g,
+            false,
+            &mut mh,
+            &f.tuning.difficulty.easy,
+            5,
+            &sim,
+            t,
+            None,
+        );
         assert!(
             !rh.remote_mask()[1],
             "the left player's squidkid is adopted"
@@ -2510,6 +2960,7 @@ mod tests {
                 w,
                 &f.tuning.weapon_range,
                 &mut inputs,
+                None,
             );
             mh.step_masked(
                 FIXED_DT,
@@ -2561,20 +3012,29 @@ mod tests {
         // Intro out on both.
         for _ in 0..(INTRO_TIME * 60.0) as usize + 2 {
             let mut ih = vec![ActorInput::default(); 3];
-            rh.drive_bots(&mut mh, &nav, &sim, t, w, &f.tuning.weapon_range, &mut ih);
+            rh.drive_bots(
+                &mut mh,
+                &nav,
+                &sim,
+                t,
+                w,
+                &f.tuning.weapon_range,
+                &mut ih,
+                None,
+            );
             mh.step_masked(FIXED_DT, &ih, Some(rh.remote_mask()), &sim, t, w, sb, None);
             let mut ig = vec![ActorInput::default(); 3];
             ig[1].move_dir = vec3(0.0, 0.0, -1.0);
             mg.step_masked(FIXED_DT, &ig, Some(rg.remote_mask()), &sim, t, w, sb, None);
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh, None);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg, None);
             trh.advance(16.0);
             trg.advance(0.0);
             for (from, p) in drain_msgs(&mut trh) {
-                rh.on_message(&from, &p, &mut mh, t);
+                rh.on_message(&from, &p, &mut mh, t, None);
             }
             for (from, p) in drain_msgs(&mut trg) {
-                rg.on_message(&from, &p, &mut mg, t);
+                rg.on_message(&from, &p, &mut mg, t, None);
             }
         }
         assert_eq!(mg.phase, Phase::Active);
@@ -2599,7 +3059,16 @@ mod tests {
         assert!(host_changed, "the guest is the new host");
         assert_eq!(left, h);
         rg.set_host(&g);
-        rg.on_leave(&h, true, &mut mg, &f.tuning.difficulty.easy, 9, &sim, t);
+        rg.on_leave(
+            &h,
+            true,
+            &mut mg,
+            &f.tuning.difficulty.easy,
+            9,
+            &sim,
+            t,
+            None,
+        );
 
         // Ownership mapping: the old host's actors (his player + his bot)
         // now belong to the new host and are adopted; the guest's own actor
@@ -2615,9 +3084,18 @@ mod tests {
         let max = ((dur + FINISH_TIME) * 60.0) as usize + 120;
         for _ in 0..max {
             let mut ig = vec![ActorInput::default(); 3];
-            rg.drive_bots(&mut mg, &nav, &sim, t, w, &f.tuning.weapon_range, &mut ig);
+            rg.drive_bots(
+                &mut mg,
+                &nav,
+                &sim,
+                t,
+                w,
+                &f.tuning.weapon_range,
+                &mut ig,
+                None,
+            );
             mg.step_masked(FIXED_DT, &ig, Some(rg.remote_mask()), &sim, t, w, sb, None);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg, None);
             drain_msgs(&mut trg);
             trg.advance(16.0);
             obs.advance(0.0);
@@ -2639,7 +3117,7 @@ mod tests {
         let mut r3 = Replication::new(&cfg, "OBS", &g);
         r3.bind_match(&mut m3);
         m3.phase = Phase::Finish;
-        rg.send_result(&mg, &mut trg);
+        rg.send_result(&mg, None, &mut trg);
         trg.advance(16.0);
         obs.advance(0.0);
         let msgs = drain_msgs(&mut obs);
@@ -2651,7 +3129,7 @@ mod tests {
             })
             .expect("sendResult broadcasts");
         assert_eq!(res.0, g);
-        r3.on_message(&res.0, &res.1, &mut m3, t);
+        r3.on_message(&res.0, &res.1, &mut m3, t, None);
         assert_eq!(m3.phase, Phase::End, "res carries the guest to judge");
         assert_eq!(
             m3.result.as_ref().expect("result").winner,
@@ -2672,7 +3150,7 @@ mod tests {
             })
             .expect("sendEnd broadcasts");
         assert_eq!(
-            r3.on_message(&end.0, &end.1, &mut m3, t),
+            r3.on_message(&end.0, &end.1, &mut m3, t, None),
             Some(ReplicationEvent::MatchEnd)
         );
     }
@@ -2691,7 +3169,16 @@ mod tests {
         let mut rh = Replication::new(&cfg, h, h);
         rh.bind_match(&mut mh);
         assert_eq!(mh.actors.len(), 3);
-        rh.on_leave(g, false, &mut mh, &f.tuning.difficulty.easy, 4, &sim, t);
+        rh.on_leave(
+            g,
+            false,
+            &mut mh,
+            &f.tuning.difficulty.easy,
+            4,
+            &sim,
+            t,
+            None,
+        );
         // JS `_remove` (L686-690): the squidkid is gone from every screen.
         assert_eq!(mh.actors.len(), 2, "the leaver's actor is removed");
         assert_eq!(rh.nid_of(0), Some(0));
@@ -2709,6 +3196,7 @@ mod tests {
                 w,
                 &f.tuning.weapon_range,
                 &mut inputs,
+                None,
             );
             mh.step_masked(
                 FIXED_DT,
@@ -2754,6 +3242,7 @@ mod tests {
             ),
             &mut mg,
             t,
+            None,
         );
         assert_eq!(mg.time, 100.0);
         // |diff| > 0.2: nudge halfway (L642).
@@ -2770,6 +3259,7 @@ mod tests {
             ),
             &mut mg,
             t,
+            None,
         );
         assert!((mg.time - 101.0).abs() < 1e-3, "halfway nudge: {}", mg.time);
         // `st` hard-sets the clock and re-enters the phase (L647-648)…
@@ -2781,6 +3271,7 @@ mod tests {
             }),
             &mut mg,
             t,
+            None,
         );
         assert_eq!(mg.phase, Phase::Finish);
         assert_eq!(mg.time, 0.0);
@@ -2800,6 +3291,7 @@ mod tests {
             }),
             &mut mg,
             t,
+            None,
         );
         assert_eq!(mg.phase, Phase::Finish);
     }
@@ -2823,7 +3315,7 @@ mod tests {
             victim: (1, 0),
             damage: 33.333,
         });
-        let rest = r.update(FIXED_DT, &mut m, &sim, t, w, sb, &mut rec);
+        let rest = r.update(FIXED_DT, &mut m, &sim, t, w, sb, &mut rec, None);
         assert!(
             !rest.iter().any(|e| matches!(e, MatchEvent::HitSend { .. })),
             "HitSend is consumed"
@@ -2859,7 +3351,7 @@ mod tests {
             t: None,
         });
         assert!(!frame.contains("\"t\""), "{frame}");
-        rg.on_message("HOST", &frame, &mut mg, &f.tuning.player);
+        rg.on_message("HOST", &frame, &mut mg, &f.tuning.player, None);
         assert_eq!(mg.time, 42.0, "a missing t must not zero the clock");
         assert_eq!(mg.phase, Phase::Active, "the state is still re-entered");
     }
@@ -2982,7 +3474,16 @@ mod tests {
             for frame in 0..FRAMES {
                 let t0 = Instant::now();
                 let mut ih = vec![ActorInput::default(); 3];
-                rh.drive_bots(&mut mh, &nav, &sim, t, w, &f.tuning.weapon_range, &mut ih);
+                rh.drive_bots(
+                    &mut mh,
+                    &nav,
+                    &sim,
+                    t,
+                    w,
+                    &f.tuning.weapon_range,
+                    &mut ih,
+                    None,
+                );
                 mh.step_masked(FIXED_DT, &ih, Some(rh.remote_mask()), &sim, t, w, sb, None);
                 let ig = vec![ActorInput::default(); 3];
                 mg.step_masked(FIXED_DT, &ig, Some(rg.remote_mask()), &sim, t, w, sb, None);
@@ -3049,13 +3550,13 @@ mod tests {
                         }
                     }
                     _ => {
-                        let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut th);
-                        let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut tg);
+                        let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut th, None);
+                        let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut tg, None);
                         for p in th.out.drain(..) {
-                            rg.on_message(h, &p, &mut mg, t);
+                            rg.on_message(h, &p, &mut mg, t, None);
                         }
                         for p in tg.out.drain(..) {
-                            rh.on_message(g, &p, &mut mh, t);
+                            rh.on_message(g, &p, &mut mh, t, None);
                         }
                     }
                 }
@@ -3181,8 +3682,8 @@ mod tests {
         for _ in 0..600 {
             mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb, None);
             mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh, None);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg, None);
             trh.advance(16.0);
             trg.advance(0.0);
             // Host inbox: B's ticks — scan them for splat records *before*
@@ -3199,10 +3700,10 @@ mod tests {
                         .filter(|e| matches!(e.kind, TickEvent::Splat(_)))
                         .count();
                 }
-                rh.on_message(&from, &p, &mut mh, t);
+                rh.on_message(&from, &p, &mut mh, t, None);
             }
             for (from, p) in drain_msgs(&mut trg) {
-                rg.on_message(&from, &p, &mut mg, t);
+                rg.on_message(&from, &p, &mut mg, t, None);
             }
             if mg.paint.grid() == mh.paint.grid() {
                 settled = true;
@@ -3265,8 +3766,8 @@ mod tests {
         for _ in 0..600 {
             mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb, None);
             mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh, None);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg, None);
             // Render layer drains *after* the replicator recorded / replayed.
             mh.paint.drain_ink();
             mg.paint.drain_ink();
@@ -3284,10 +3785,10 @@ mod tests {
                         .filter(|e| matches!(e.kind, TickEvent::Splat(_)))
                         .count();
                 }
-                rh.on_message(&from, &p, &mut mh, t);
+                rh.on_message(&from, &p, &mut mh, t, None);
             }
             for (from, p) in drain_msgs(&mut trg) {
-                rg.on_message(&from, &p, &mut mg, t);
+                rg.on_message(&from, &p, &mut mg, t, None);
             }
             if mg.paint.grid() == mh.paint.grid() {
                 settled = true;
@@ -3318,17 +3819,17 @@ mod tests {
         for _ in 0..600 {
             mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb, None);
             mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh, None);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg, None);
             mh.paint.drain_ink();
             mg.paint.drain_ink();
             trh.advance(16.0);
             trg.advance(0.0);
             for (from, p) in drain_msgs(&mut trh) {
-                rh.on_message(&from, &p, &mut mh, t);
+                rh.on_message(&from, &p, &mut mh, t, None);
             }
             for (from, p) in drain_msgs(&mut trg) {
-                rg.on_message(&from, &p, &mut mg, t);
+                rg.on_message(&from, &p, &mut mg, t, None);
             }
             if mg.paint.grid() == mh.paint.grid() {
                 converged = true;
@@ -3412,8 +3913,8 @@ mod tests {
                     _ => None,
                 });
             }
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh, None);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg, None);
             if !saw_ghost {
                 saw_ghost = mg
                     .projectiles
@@ -3424,10 +3925,10 @@ mod tests {
             trh.advance(16.0);
             trg.advance(0.0);
             for (from, p) in drain_msgs(&mut trh) {
-                rh.on_message(&from, &p, &mut mh, t);
+                rh.on_message(&from, &p, &mut mh, t, None);
             }
             for (from, p) in drain_msgs(&mut trg) {
-                rg.on_message(&from, &p, &mut mg, t);
+                rg.on_message(&from, &p, &mut mg, t, None);
             }
         }
         let d = dmg.expect("the host round hit the proxy");
@@ -3503,8 +4004,8 @@ mod tests {
                 None,
             );
             mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh, None);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg, None);
             if host_at.is_none() && !mh.paint.ink_stream().is_empty() {
                 host_at = Some(frame);
             }
@@ -3517,10 +4018,10 @@ mod tests {
             trh.advance(16.0);
             trg.advance(0.0);
             for (from, p) in drain_msgs(&mut trh) {
-                rh.on_message(&from, &p, &mut mh, t);
+                rh.on_message(&from, &p, &mut mh, t, None);
             }
             for (from, p) in drain_msgs(&mut trg) {
-                rg.on_message(&from, &p, &mut mg, t);
+                rg.on_message(&from, &p, &mut mg, t, None);
             }
         }
         let hf = host_at.expect("the host round painted the turf");
@@ -3647,8 +4148,8 @@ mod tests {
             if (10..28).contains(&frame) && mh.actors[0].dodge_vel.is_some() {
                 saw_roll = true;
             }
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut rech);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut recg);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut rech, None);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut recg, None);
         }
         assert!(
             saw_roll,
@@ -3696,7 +4197,7 @@ mod tests {
                 sb,
                 None,
             );
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut rech);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut rech, None);
         }
         let s2 = &latest_samples(&rech)
             .into_iter()
@@ -3751,16 +4252,18 @@ mod tests {
             &encode_tick(&junk("mitts", vec![0.0; 7], 0.5), None),
             &mut mg,
             t,
+            None,
         );
         rg.on_message(
             h,
             &encode_tick(&junk("brolly", vec![1.0, 2.0, 3.0], 0.5), None),
             &mut mg,
             t,
+            None,
         );
         for _ in 0..30 {
             mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec, None);
         }
         assert!(
             mg.launched.is_empty(),
@@ -3791,7 +4294,7 @@ mod tests {
             }],
             b: None,
         };
-        rg.on_message(h, &encode_tick(&live, None), &mut mg, t);
+        rg.on_message(h, &encode_tick(&live, None), &mut mg, t, None);
 
         let mut inputs = vec![ActorInput::default(); 3];
         let mut spawned = None;
@@ -3817,7 +4320,7 @@ mod tests {
                 sb,
                 None,
             );
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec, None);
             if spawned.is_none() && !mg.launched.is_empty() {
                 let c = &mg.launched[0];
                 spawned = Some((frame, c.ghost, c.team, c.hp, c.pos, c.dir));
@@ -3937,15 +4440,15 @@ mod tests {
                 sb,
                 None,
             );
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh, None);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg, None);
             trh.advance(16.0);
             trg.advance(0.0);
             for (from, p) in drain_msgs(&mut trh) {
-                rh.on_message(&from, &p, &mut mh, t);
+                rh.on_message(&from, &p, &mut mh, t, None);
             }
             for (from, p) in drain_msgs(&mut trg) {
-                rg.on_message(&from, &p, &mut mg, t);
+                rg.on_message(&from, &p, &mut mg, t, None);
             }
             frame += 1;
         }
@@ -4006,15 +4509,15 @@ mod tests {
                 sb,
                 None,
             );
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh, None);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg, None);
             trh.advance(16.0);
             trg.advance(0.0);
             for (from, p) in drain_msgs(&mut trh) {
-                rh.on_message(&from, &p, &mut mh, t);
+                rh.on_message(&from, &p, &mut mh, t, None);
             }
             for (from, p) in drain_msgs(&mut trg) {
-                rg.on_message(&from, &p, &mut mg, t);
+                rg.on_message(&from, &p, &mut mg, t, None);
             }
             frame += 1;
         }
@@ -4056,15 +4559,15 @@ mod tests {
                 sb,
                 None,
             );
-            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
+            let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh, None);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg, None);
             trh.advance(16.0);
             trg.advance(0.0);
             for (from, p) in drain_msgs(&mut trh) {
-                rh.on_message(&from, &p, &mut mh, t);
+                rh.on_message(&from, &p, &mut mh, t, None);
             }
             for (from, p) in drain_msgs(&mut trg) {
-                rg.on_message(&from, &p, &mut mg, t);
+                rg.on_message(&from, &p, &mut mg, t, None);
             }
             frame += 1;
         }
@@ -4185,12 +4688,12 @@ mod tests {
             id: dev.0,
             d: dev.1,
         });
-        rg.on_message(h, &msg, &mut mg, t);
+        rg.on_message(h, &msg, &mut mg, t, None);
         assert_eq!(
             mg.subs.items[0].hp, hp0,
             "the non-owner screen ignores the 'dh'"
         );
-        rh.on_message(g, &msg, &mut mh, t);
+        rh.on_message(g, &msg, &mut mh, t, None);
         assert_eq!(mh.subs.items[0].hp, 20.0, "the owner applied the hit");
 
         // A second hit kills it: the owner's splice emits the `[2, gid]`
@@ -4200,7 +4703,7 @@ mod tests {
             id: 1,
             d: 30.0,
         });
-        rh.on_message(g, &msg2, &mut mh, t);
+        rh.on_message(g, &msg2, &mut mh, t, None);
         mh.subs.update(
             FIXED_DT,
             sim.collision,
@@ -4268,7 +4771,7 @@ mod tests {
             }],
             b: None,
         };
-        rg.on_message(h, &encode_tick(&tick, None), &mut mg, t);
+        rg.on_message(h, &encode_tick(&tick, None), &mut mg, t, None);
 
         let mut rec = Rec::default();
         let mut saw_ghost = None;
@@ -4276,7 +4779,7 @@ mod tests {
             mg.actors[1].pos = base;
             mg.actors[1].invuln = 0.0;
             mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
-            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec);
+            let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec, None);
             if saw_ghost.is_none() && !mg.projectiles.bombs.is_empty() {
                 saw_ghost = Some(mg.projectiles.bombs[0].ghost);
             }
@@ -4356,7 +4859,7 @@ mod tests {
                 mg.actors[1].pos = foe;
                 mg.actors[1].invuln = 0.0;
                 mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
-                let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec);
+                let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec, None);
                 if echo(mg.subs.drain_events()) {
                     echo_seen = true;
                 }
@@ -4373,6 +4876,7 @@ mod tests {
             ),
             &mut mg,
             t,
+            None,
         );
         let mut spawned = None;
         for frame in 0..60 {
@@ -4400,6 +4904,7 @@ mod tests {
             &encode_tick(&kit(vec![3.0, 1.0, 1.0, p.x, p.y, p.z], 2.5), None),
             &mut mg,
             t,
+            None,
         );
         let mut saw = None;
         for _ in 0..60 {
@@ -4449,6 +4954,7 @@ mod tests {
             ),
             &mut mg,
             t,
+            None,
         );
         for _ in 0..10 {
             step_frame!();
@@ -4476,6 +4982,7 @@ mod tests {
             &encode_tick(&kit(vec![1.0, 1.0, p.x, p.y, p.z, 1.0], 4.0), None),
             &mut mg,
             t,
+            None,
         );
         for _ in 0..30 {
             step_frame!();
@@ -4555,15 +5062,15 @@ mod tests {
                 mh.actors[2].pos = far_b;
                 mh.step_masked(FIXED_DT, &[], Some(rh.remote_mask()), &sim, t, w, sb, None);
                 mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
-                let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
-                let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg);
+                let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh, None);
+                let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut trg, None);
                 trh.advance(16.0);
                 trg.advance(0.0);
                 for (from, p) in drain_msgs(&mut trh) {
-                    rh.on_message(&from, &p, &mut mh, t);
+                    rh.on_message(&from, &p, &mut mh, t, None);
                 }
                 for (from, p) in drain_msgs(&mut trg) {
-                    rg.on_message(&from, &p, &mut mg, t);
+                    rg.on_message(&from, &p, &mut mg, t, None);
                 }
                 if echo(mg.subs.drain_events()) {
                     echo_seen = true;
@@ -4691,14 +5198,14 @@ mod tests {
         // `rg.update` advances the playback clock, so drive a few full
         // round-trip frames (the ghost's 40 s age-out is nowhere near —
         // removal here can only be the op2 splice).
-        let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh);
+        let _ = rh.update(FIXED_DT, &mut mh, &sim, t, w, sb, &mut trh, None);
         trh.advance(16.0);
         trg.advance(0.0);
         for (from, p) in drain_msgs(&mut trh) {
-            rh.on_message(&from, &p, &mut mh, t);
+            rh.on_message(&from, &p, &mut mh, t, None);
         }
         for (from, p) in drain_msgs(&mut trg) {
-            rg.on_message(&from, &p, &mut mg, t);
+            rg.on_message(&from, &p, &mut mg, t, None);
         }
         for _ in 0..60 {
             if mg.subs.waddle_items().is_empty() {
@@ -4792,7 +5299,7 @@ mod tests {
                 mg.actors[1].pos = foe;
                 mg.actors[1].invuln = 0.0;
                 mg.step_masked(FIXED_DT, &[], Some(rg.remote_mask()), &sim, t, w, sb, None);
-                let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec);
+                let _ = rg.update(FIXED_DT, &mut mg, &sim, t, w, sb, &mut rec, None);
                 let evs = mg.subs.drain_events();
                 if echo(evs.clone()) {
                     echo_seen = true;
@@ -4816,6 +5323,7 @@ mod tests {
             ),
             &mut mg,
             t,
+            None,
         );
         let mut spawned = None;
         for frame in 0..60 {
@@ -4901,6 +5409,7 @@ mod tests {
             &encode_tick(&kit(vec![1.0, 1.0, p.x, p.y, p.z, 0.0], 6.0), None),
             &mut mg,
             t,
+            None,
         );
         for _ in 0..30 {
             step_frame!();
@@ -4921,6 +5430,815 @@ mod tests {
         assert!(
             !echo_seen,
             "the ghost emitted no SubSpawn/SubEnd echoes of its own"
+        );
+    }
+
+    // ------------------------------------------------- TR-45.1 / NFR-M4-3 (Task 45)
+
+    /// The 2-slot Boss Battle roster (TR-45.1): host human `nid 0` and guest
+    /// human `nid 1`, both on the squad team (JS `setup()` boss branch,
+    /// match.js L59-62 — one team-0 squad against HULLBREAKER).
+    fn roster_boss(h: &str, g: &str) -> Vec<RosterEntry> {
+        vec![entry(0, h, false, 0, 0), entry(1, g, false, 0, 1)]
+    }
+
+    /// [`StartCfg`] for a Boss Battle (the `mode` line is the app-side match
+    /// selector, JS `startMatch({mode:'boss'})`; the sim tests build the
+    /// [`Match`] directly through [`Match::with_roster_mode`]).
+    fn boss_cfg(roster: Vec<RosterEntry>, host: &str) -> StartCfg {
+        StartCfg {
+            roster,
+            map: "tidewater".into(),
+            time: "day".into(),
+            duration: 60,
+            difficulty: "normal".into(),
+            palette: 0,
+            mode: "boss".into(),
+            host: host.into(),
+            id: "m1".into(),
+        }
+    }
+
+    /// One 60 Hz frame of the boss e2e loop: step both matches with their
+    /// [`crate::boss::BossMode`] handles (host simulates, guest `follow`s),
+    /// run both replicators (host packs snapshots + streams `['bm']` /
+    /// `['bc']`, guest samples the path and uplinks `bhit`), then deliver the
+    /// relay traffic into `on_message`.
+    #[allow(clippy::too_many_arguments)] // the full two-client frame, Task 45 harness
+    fn boss_frame(
+        mh: &mut Match,
+        mg: &mut Match,
+        rh: &mut Replication,
+        rg: &mut Replication,
+        bmh: &mut crate::boss::BossMode<'_>,
+        bmg: &mut crate::boss::BossMode<'_>,
+        sim: &SimWorld,
+        t: &PlayerTuning,
+        w: &WeaponSet,
+        sb: &SubSet,
+        trh: &mut FakeTransport,
+        trg: &mut FakeTransport,
+    ) {
+        let ih = vec![ActorInput::default(); mh.actors.len()];
+        let ig = vec![ActorInput::default(); mg.actors.len()];
+        mh.step_masked(
+            FIXED_DT,
+            &ih,
+            Some(rh.remote_mask()),
+            sim,
+            t,
+            w,
+            sb,
+            Some(bmh),
+        );
+        mg.step_masked(
+            FIXED_DT,
+            &ig,
+            Some(rg.remote_mask()),
+            sim,
+            t,
+            w,
+            sb,
+            Some(bmg),
+        );
+        let _ = rh.update(FIXED_DT, mh, sim, t, w, sb, trh, Some(&mut bmh.boss));
+        let _ = rg.update(FIXED_DT, mg, sim, t, w, sb, trg, Some(&mut bmg.boss));
+        trh.advance(16.0);
+        trg.advance(0.0);
+        for (from, p) in drain_msgs(trh) {
+            rh.on_message(&from, &p, mh, t, Some(&mut bmh.boss));
+        }
+        for (from, p) in drain_msgs(trg) {
+            rg.on_message(&from, &p, mg, t, Some(&mut bmg.boss));
+        }
+    }
+
+    /// A point 3 m beside the boss — the boss's home ground is walkable by
+    /// construction, and it is far outside the brain's pad keep-out
+    /// (bossBrain.js L112), so the squidkid becomes a legal target there.
+    fn off_pad_target(boss: &crate::boss::Boss<'_>) -> Vec3 {
+        vec3(boss.pos.x + 3.0, boss.pos.y + 0.2, boss.pos.z)
+    }
+
+    /// TR-45.1 ①: Rust↔Rust boss snapshot convergence — the guest draws the
+    /// host's HULLBREAKER from the snapshot buffer (`_sampleBoss`,
+    /// netmatch.js L504-564) while both matches run their own `BossMode`.
+    #[test]
+    fn tr45_1_1_boss_path_converges_rust_to_rust() {
+        let f = fix();
+        let sim = f.sim();
+        let t = &f.tuning.player;
+        let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
+        let bnav = crate::boss::nav::BossNav::new(&sim, &f.tuning.boss.nav);
+        let relay = FakeRelay::new();
+        let (mut trh, mut trg) = pair(&relay);
+        let (h, g) = (trh.id(), trg.id());
+        let cfg = boss_cfg(roster_boss(&h, &g), &h);
+        let mut rules = f.tuning.boss.mode;
+        rules.squad = 2;
+        let mut mh = Match::with_roster_mode(
+            60.0,
+            45,
+            &sim,
+            t,
+            &f.tuning.match_config,
+            1,
+            crate::match_::MatchMode::Boss,
+            None,
+            None,
+            Some(rules),
+        );
+        let mut mg = Match::with_roster_mode(
+            60.0,
+            45,
+            &sim,
+            t,
+            &f.tuning.match_config,
+            1,
+            crate::match_::MatchMode::Boss,
+            None,
+            None,
+            Some(rules),
+        );
+        // JS bossMode.js L21-23: two humans weigh 2 units; `sim` = !follower.
+        let units = crate::boss::squad_units(2, 0, &f.tuning.boss.squad_units);
+        let mut bmh =
+            crate::boss::BossMode::new(&sim, &bnav, &f.tuning.boss, units, "normal", true, 45);
+        let mut bmg =
+            crate::boss::BossMode::new(&sim, &bnav, &f.tuning.boss, units, "normal", false, 46);
+        let mut rh = Replication::new(&cfg, &h, &h);
+        let mut rg = Replication::new(&cfg, &g, &h);
+        rh.bind_match(&mut mh);
+        rg.bind_match(&mut mg);
+
+        // Both to Active (the boss reveal rides the match intro, JS
+        // `BOSS_MODE.intro`).
+        let mut pre = 0;
+        while (mh.phase != Phase::Active || mg.phase != Phase::Active) && pre < 1200 {
+            boss_frame(
+                &mut mh, &mut mg, &mut rh, &mut rg, &mut bmh, &mut bmg, &sim, t, w, sb, &mut trh,
+                &mut trg,
+            );
+            pre += 1;
+        }
+        assert_eq!(mh.phase, Phase::Active, "host active after {pre} frames");
+        assert_eq!(mg.phase, Phase::Active, "guest active after {pre} frames");
+        // Send the guest's squidkid off the pad so the brain can target it
+        // (JS `_pickTarget` skips pad-sitting actors, bossBrain.js L112) —
+        // otherwise the boss never moves and the path gate is vacuous.
+        // Invulnerable so the hazard line can't splat a guest-owned actor
+        // out from under the replication mask.
+        let np = off_pad_target(&bmh.boss);
+        mh.actors[1].pos = np;
+        mg.actors[1].pos = np;
+        mh.actors[1].invuln = 1e9;
+        mg.actors[1].invuln = 1e9;
+
+        // 600 frames of live play; a mid-run host-side damage line makes the
+        // hp parity check non-vacuous (JS `_pack` quantizes hp to 0.1).
+        for frame in 0..600u32 {
+            if frame == 300 {
+                let hp = bmh.boss.hp;
+                bmh.boss.apply_damage(
+                    Some(crate::boss::BossAttacker {
+                        nid: 0,
+                        is_remote: false,
+                        is_local: true,
+                        has_nid: true,
+                    }),
+                    hp * 0.5,
+                    false,
+                    None,
+                );
+            }
+            boss_frame(
+                &mut mh, &mut mg, &mut rh, &mut rg, &mut bmh, &mut bmg, &sim, t, w, sb, &mut trh,
+                &mut trg,
+            );
+        }
+
+        // The guest draws the host's path on the playback timeline: the
+        // residual is the eased delay (the 85–300 ms `nfr_m2_2` band) times
+        // the boss speed, so the convergence gate is the *best* recent frame,
+        // not the instantaneous one (a charge transient legitimately lags
+        // further). The final frame still has to stay inside a sane window.
+        let final_diff = bmg.boss.pos.distance(bmh.boss.pos);
+        assert!(
+            final_diff < 6.0,
+            "no gross desync: guest {} vs host {} ({final_diff:.3} m)",
+            bmg.boss.pos,
+            bmh.boss.pos
+        );
+        let mut min_diff = f32::INFINITY;
+        for _ in 0..120 {
+            boss_frame(
+                &mut mh, &mut mg, &mut rh, &mut rg, &mut bmh, &mut bmg, &sim, t, w, sb, &mut trh,
+                &mut trg,
+            );
+            min_diff = min_diff.min(bmg.boss.pos.distance(bmh.boss.pos));
+        }
+        assert!(
+            min_diff < 0.5,
+            "the guest boss path converges within 0.5 m: min {min_diff:.3} m, \
+             final {final_diff:.3} m"
+        );
+        // hp / phase ride the snapshots exactly (one-decimal hp quantization).
+        assert_eq!(bmg.boss.phase, bmh.boss.phase, "phase parity");
+        let want = ((f64::from(bmh.boss.hp) * 10.0).round() / 10.0) as f32;
+        assert!(
+            (bmg.boss.hp - want).abs() < 1e-3,
+            "hp parity: guest {} host {}",
+            bmg.boss.hp,
+            bmh.boss.hp
+        );
+        assert!(
+            bmg.boss.hp < bmg.boss.max_hp,
+            "the damage line reached the guest: {}",
+            bmg.boss.hp
+        );
+    }
+
+    /// TR-45.1 ②: the `bhit` uplink — a guest's hits on the boss ride
+    /// `{k:'bhit'}` to the host (`sendBossHit`, netmatch.js L150-154), the
+    /// host applies them through [`crate::boss::Boss::remote_hit`] and the
+    /// quantized hp flows back on the snapshots.
+    #[test]
+    fn tr45_1_2_guest_bhit_uplink_converges_on_the_host() {
+        let f = fix();
+        let sim = f.sim();
+        let t = &f.tuning.player;
+        let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
+        let bnav = crate::boss::nav::BossNav::new(&sim, &f.tuning.boss.nav);
+        let relay = FakeRelay::new();
+        let (mut trh, mut trg) = pair(&relay);
+        let (h, g) = (trh.id(), trg.id());
+        let cfg = boss_cfg(roster_boss(&h, &g), &h);
+        let mut rules = f.tuning.boss.mode;
+        rules.squad = 2;
+        let mut mh = Match::with_roster_mode(
+            60.0,
+            47,
+            &sim,
+            t,
+            &f.tuning.match_config,
+            1,
+            crate::match_::MatchMode::Boss,
+            None,
+            None,
+            Some(rules),
+        );
+        let mut mg = Match::with_roster_mode(
+            60.0,
+            47,
+            &sim,
+            t,
+            &f.tuning.match_config,
+            1,
+            crate::match_::MatchMode::Boss,
+            None,
+            None,
+            Some(rules),
+        );
+        let units = crate::boss::squad_units(2, 0, &f.tuning.boss.squad_units);
+        let mut bmh =
+            crate::boss::BossMode::new(&sim, &bnav, &f.tuning.boss, units, "normal", true, 47);
+        let mut bmg =
+            crate::boss::BossMode::new(&sim, &bnav, &f.tuning.boss, units, "normal", false, 48);
+        let mut rh = Replication::new(&cfg, &h, &h);
+        let mut rg = Replication::new(&cfg, &g, &h);
+        rh.bind_match(&mut mh);
+        rg.bind_match(&mut mg);
+
+        let mut pre = 0;
+        while (mh.phase != Phase::Active || mg.phase != Phase::Active) && pre < 1200 {
+            boss_frame(
+                &mut mh, &mut mg, &mut rh, &mut rg, &mut bmh, &mut bmg, &sim, t, w, sb, &mut trh,
+                &mut trg,
+            );
+            pre += 1;
+        }
+        // Let the guest's view settle (the `visible` flag gates `hit`, boss.js
+        // L294 — it arrives on the snapshot f bits).
+        for _ in 0..180 {
+            boss_frame(
+                &mut mh, &mut mg, &mut rh, &mut rg, &mut bmh, &mut bmg, &sim, t, w, sb, &mut trh,
+                &mut trg,
+            );
+        }
+        assert!(
+            bmg.boss.visible,
+            "the guest sees the boss before hitting it"
+        );
+
+        let atk = crate::boss::BossAttacker {
+            nid: 1,
+            is_remote: false,
+            is_local: true,
+            has_nid: true,
+        };
+        let hp0 = bmh.boss.hp;
+        bmg.boss.hit(
+            Some(atk),
+            120.0,
+            crate::boss::HitTarget::None,
+            "shooter",
+            None,
+        );
+        bmg.boss.hit(
+            Some(atk),
+            80.0,
+            crate::boss::HitTarget::None,
+            "shooter",
+            None,
+        );
+        assert_eq!(bmg.boss.log.sent, 2, "both hits queued the uplink");
+
+        for _ in 0..30 {
+            boss_frame(
+                &mut mh, &mut mg, &mut rh, &mut rg, &mut bmh, &mut bmg, &sim, t, w, sb, &mut trh,
+                &mut trg,
+            );
+        }
+        assert_eq!(bmh.boss.log.recv, 2, "the host applied both hits");
+        assert!(
+            (bmh.boss.log.recv_dmg - bmg.boss.log.sent_dmg).abs() < 1e-3,
+            "recv/sent damage agree: {} vs {}",
+            bmh.boss.log.recv_dmg,
+            bmg.boss.log.sent_dmg
+        );
+        assert!(
+            (hp0 - bmh.boss.hp - bmg.boss.log.sent_dmg).abs() < 1e-3,
+            "the host hp line moved by exactly the uplinked damage"
+        );
+        let st = bmh.boss.stats_by_nid.get(&1).copied().unwrap_or_default();
+        assert!(
+            (st.boss_dmg - bmg.boss.log.sent_dmg).abs() < 1e-3,
+            "per-nid attribution: {} vs {}",
+            st.boss_dmg,
+            bmg.boss.log.sent_dmg
+        );
+        // The guest's own hp line converges to the host's quantized value.
+        for _ in 0..30 {
+            boss_frame(
+                &mut mh, &mut mg, &mut rh, &mut rg, &mut bmh, &mut bmg, &sim, t, w, sb, &mut trh,
+                &mut trg,
+            );
+        }
+        let want = ((f64::from(bmh.boss.hp) * 10.0).round() / 10.0) as f32;
+        assert!(
+            (bmg.boss.hp - want).abs() < 1e-3,
+            "guest hp {} host {}",
+            bmg.boss.hp,
+            bmh.boss.hp
+        );
+    }
+
+    /// TR-45.1 ③: host migration — when the host leaves, the new host
+    /// `adopt()`s the boss (sim on, brain built, playback error folded to
+    /// zero, JS netmatch.js L683 / boss.js L475-480) and keeps simulating
+    /// from exactly where it was drawn.
+    #[test]
+    fn tr45_1_3_host_migration_adopts_the_boss() {
+        let f = fix();
+        let sim = f.sim();
+        let t = &f.tuning.player;
+        let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
+        let bnav = crate::boss::nav::BossNav::new(&sim, &f.tuning.boss.nav);
+        let relay = FakeRelay::new();
+        let (mut trh, mut trg) = pair(&relay);
+        let (h, g) = (trh.id(), trg.id());
+        let cfg = boss_cfg(roster_boss(&h, &g), &h);
+        let mut rules = f.tuning.boss.mode;
+        rules.squad = 2;
+        let mut mh = Match::with_roster_mode(
+            60.0,
+            49,
+            &sim,
+            t,
+            &f.tuning.match_config,
+            1,
+            crate::match_::MatchMode::Boss,
+            None,
+            None,
+            Some(rules),
+        );
+        let mut mg = Match::with_roster_mode(
+            60.0,
+            49,
+            &sim,
+            t,
+            &f.tuning.match_config,
+            1,
+            crate::match_::MatchMode::Boss,
+            None,
+            None,
+            Some(rules),
+        );
+        let units = crate::boss::squad_units(2, 0, &f.tuning.boss.squad_units);
+        let mut bmh =
+            crate::boss::BossMode::new(&sim, &bnav, &f.tuning.boss, units, "normal", true, 49);
+        let mut bmg =
+            crate::boss::BossMode::new(&sim, &bnav, &f.tuning.boss, units, "normal", false, 50);
+        let mut rh = Replication::new(&cfg, &h, &h);
+        let mut rg = Replication::new(&cfg, &g, &h);
+        rh.bind_match(&mut mh);
+        rg.bind_match(&mut mg);
+
+        let mut pre = 0;
+        while (mh.phase != Phase::Active || mg.phase != Phase::Active) && pre < 1200 {
+            boss_frame(
+                &mut mh, &mut mg, &mut rh, &mut rg, &mut bmh, &mut bmg, &sim, t, w, sb, &mut trh,
+                &mut trg,
+            );
+            pre += 1;
+        }
+        // 180 frames of playback: the guest holds a snapshot buffer and a
+        // live (possibly non-zero) error spring.
+        for _ in 0..180 {
+            boss_frame(
+                &mut mh, &mut mg, &mut rh, &mut rg, &mut bmh, &mut bmg, &sim, t, w, sb, &mut trh,
+                &mut trg,
+            );
+        }
+        assert!(!bmg.boss.net.buf.is_empty(), "the guest buffered snapshots");
+
+        // The host leaves; the app re-elects first (`set_host`, then
+        // `on_leave(id, hostChanged=true)`).
+        rg.set_host(&g);
+        let pos0 = bmg.boss.pos;
+        let bt0 = bmg.boss.bt;
+        rg.on_leave(
+            &h,
+            true,
+            &mut mg,
+            &f.tuning.difficulty.easy,
+            49,
+            &sim,
+            t,
+            Some(&mut bmg.boss),
+        );
+        assert!(bmg.boss.sim, "the guest now runs the boss (JS L683 adopt)");
+        assert_eq!(bmg.boss.net.err, Vec3::ZERO, "the error spring is folded");
+        assert_eq!(bmg.boss.net.err_v, Vec3::ZERO);
+        assert!(bmg.boss.brain.is_some(), "the adopt brain exists");
+        assert!(!mg.follower, "the new host stops following");
+        assert!(rg.adopted_host);
+        assert!(
+            !rg.remote_mask()[0],
+            "the left player's squidkid is adopted"
+        );
+
+        // Solo frames: the new host keeps simulating from the shown position.
+        for _ in 0..60 {
+            let ig = vec![ActorInput::default(); mg.actors.len()];
+            mg.step_masked(
+                FIXED_DT,
+                &ig,
+                Some(rg.remote_mask()),
+                &sim,
+                t,
+                w,
+                sb,
+                Some(&mut bmg),
+            );
+            let _ = rg.update(
+                FIXED_DT,
+                &mut mg,
+                &sim,
+                t,
+                w,
+                sb,
+                &mut trg,
+                Some(&mut bmg.boss),
+            );
+        }
+        assert!(
+            bmg.boss.bt > bt0 + 0.5,
+            "the boss clock runs on the new host: {bt0} → {}",
+            bmg.boss.bt
+        );
+        assert!(
+            bmg.boss.pos.distance(pos0) < 6.0,
+            "no position pop at migration: {:?} → {:?}",
+            pos0,
+            bmg.boss.pos
+        );
+    }
+
+    /// TR-45.1 ④: the `['bm']` move timeline — every move the host brain
+    /// launches rides the tick events (`recBoss`, netmatch.js L195-203) and
+    /// replays into the guest's hazard timeline in order (`on_move` →
+    /// `hz_add` idempotency, bossHazards.js L80-85).
+    #[test]
+    fn tr45_1_4_boss_move_timeline_replays_on_the_guest() {
+        let f = fix();
+        let sim = f.sim();
+        let t = &f.tuning.player;
+        let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
+        let bnav = crate::boss::nav::BossNav::new(&sim, &f.tuning.boss.nav);
+        let relay = FakeRelay::new();
+        let (mut trh, mut trg) = pair(&relay);
+        let (h, g) = (trh.id(), trg.id());
+        let cfg = boss_cfg(roster_boss(&h, &g), &h);
+        let mut rules = f.tuning.boss.mode;
+        rules.squad = 2;
+        let mut mh = Match::with_roster_mode(
+            60.0,
+            51,
+            &sim,
+            t,
+            &f.tuning.match_config,
+            1,
+            crate::match_::MatchMode::Boss,
+            None,
+            None,
+            Some(rules),
+        );
+        let mut mg = Match::with_roster_mode(
+            60.0,
+            51,
+            &sim,
+            t,
+            &f.tuning.match_config,
+            1,
+            crate::match_::MatchMode::Boss,
+            None,
+            None,
+            Some(rules),
+        );
+        let units = crate::boss::squad_units(2, 0, &f.tuning.boss.squad_units);
+        let mut bmh =
+            crate::boss::BossMode::new(&sim, &bnav, &f.tuning.boss, units, "normal", true, 51);
+        let mut bmg =
+            crate::boss::BossMode::new(&sim, &bnav, &f.tuning.boss, units, "normal", false, 52);
+        let mut rh = Replication::new(&cfg, &h, &h);
+        let mut rg = Replication::new(&cfg, &g, &h);
+        rh.bind_match(&mut mh);
+        rg.bind_match(&mut mg);
+
+        let mut pre = 0;
+        while (mh.phase != Phase::Active || mg.phase != Phase::Active) && pre < 1200 {
+            boss_frame(
+                &mut mh, &mut mg, &mut rh, &mut rg, &mut bmh, &mut bmg, &sim, t, w, sb, &mut trh,
+                &mut trg,
+            );
+            pre += 1;
+        }
+        // Off-pad target so the brain actually launches moves (see
+        // `tr45_1_1` — bossBrain.js L112 skips pad-sitting actors).
+        let np = off_pad_target(&bmh.boss);
+        mh.actors[1].pos = np;
+        mg.actors[1].pos = np;
+        mh.actors[1].invuln = 1e9;
+        mg.actors[1].invuln = 1e9;
+        for _ in 0..900 {
+            boss_frame(
+                &mut mh, &mut mg, &mut rh, &mut rg, &mut bmh, &mut bmg, &sim, t, w, sb, &mut trh,
+                &mut trg,
+            );
+        }
+        // Quiesce the in-flight records.
+        for _ in 0..120 {
+            boss_frame(
+                &mut mh, &mut mg, &mut rh, &mut rg, &mut bmh, &mut bmg, &sim, t, w, sb, &mut trh,
+                &mut trg,
+            );
+        }
+        assert!(
+            !bmh.boss.log.moves.is_empty(),
+            "the host brain launched moves across 15 s of play"
+        );
+        assert_eq!(
+            bmg.boss.log.moves, bmh.boss.log.moves,
+            "the ['bm'] records replay the host's move list in order"
+        );
+        assert_eq!(
+            bmg.boss.moves.len(),
+            bmh.boss.moves.len(),
+            "the hazard timelines hold the same records"
+        );
+    }
+
+    /// TR-45.1 ⑤: the boss settlement on the wire — `send_result` ships the
+    /// `bo` payload + the `bossDmg`/`weakHits` stat columns (JS L654), the
+    /// guest rebuilds the outcome verbatim and keeps its clock (JS L660 pins
+    /// the turf clock to 0, the boss clock stays where the kill left it).
+    #[test]
+    fn tr45_1_5_boss_result_settles_the_guest() {
+        let f = fix();
+        let sim = f.sim();
+        let t = &f.tuning.player;
+        let w = &f.tuning.weapons;
+        let sb = &f.tuning.subs;
+        let bnav = crate::boss::nav::BossNav::new(&sim, &f.tuning.boss.nav);
+        let relay = FakeRelay::new();
+        let (mut trh, mut trg) = pair(&relay);
+        let (h, g) = (trh.id(), trg.id());
+        let cfg = boss_cfg(roster_boss(&h, &g), &h);
+        let mut rules = f.tuning.boss.mode;
+        rules.squad = 2;
+        let mut mh = Match::with_roster_mode(
+            60.0,
+            53,
+            &sim,
+            t,
+            &f.tuning.match_config,
+            1,
+            crate::match_::MatchMode::Boss,
+            None,
+            None,
+            Some(rules),
+        );
+        let mut mg = Match::with_roster_mode(
+            60.0,
+            53,
+            &sim,
+            t,
+            &f.tuning.match_config,
+            1,
+            crate::match_::MatchMode::Boss,
+            None,
+            None,
+            Some(rules),
+        );
+        let units = crate::boss::squad_units(2, 0, &f.tuning.boss.squad_units);
+        let mut bmh =
+            crate::boss::BossMode::new(&sim, &bnav, &f.tuning.boss, units, "normal", true, 53);
+        let mut bmg =
+            crate::boss::BossMode::new(&sim, &bnav, &f.tuning.boss, units, "normal", false, 54);
+        let mut rh = Replication::new(&cfg, &h, &h);
+        let mut rg = Replication::new(&cfg, &g, &h);
+        rh.bind_match(&mut mh);
+        rg.bind_match(&mut mg);
+
+        let mut pre = 0;
+        while (mh.phase != Phase::Active || mg.phase != Phase::Active) && pre < 1200 {
+            boss_frame(
+                &mut mh, &mut mg, &mut rh, &mut rg, &mut bmh, &mut bmg, &sim, t, w, sb, &mut trh,
+                &mut trg,
+            );
+            pre += 1;
+        }
+        for _ in 0..60 {
+            boss_frame(
+                &mut mh, &mut mg, &mut rh, &mut rg, &mut bmh, &mut bmg, &sim, t, w, sb, &mut trh,
+                &mut trg,
+            );
+        }
+
+        // The squad kills the boss on the host (JS routes it through the
+        // weapon hit path; the sim driver applies the lethal line directly).
+        let hp = bmh.boss.hp;
+        bmh.boss.apply_damage(
+            Some(crate::boss::BossAttacker {
+                nid: 0,
+                is_remote: false,
+                is_local: true,
+                has_nid: true,
+            }),
+            hp,
+            false,
+            None,
+        );
+        assert!(bmh.boss.dead, "the lethal line defeats HULLBREAKER");
+
+        // The host settles through the 5.2 s win window (JS `finishWin`).
+        let mut frames = 0;
+        while mh.phase != Phase::End && frames < 600 {
+            boss_frame(
+                &mut mh, &mut mg, &mut rh, &mut rg, &mut bmh, &mut bmg, &sim, t, w, sb, &mut trh,
+                &mut trg,
+            );
+            frames += 1;
+        }
+        assert_eq!(mh.phase, Phase::End, "the host judged after the finish");
+        let r = mh.result.clone().expect("host judged");
+        let bo = r.boss.clone().expect("boss outcome");
+        assert!(bo.win, "a dead boss is a squad win");
+        assert_eq!(bo.hp, 0.0);
+        assert_eq!(bo.name, "HULLBREAKER");
+
+        // The result frame: `bo` + the boss stat columns.
+        let gt = mg.time;
+        rh.send_result(&mh, Some(&bmh.boss), &mut trh);
+        trh.advance(16.0);
+        trg.advance(0.0);
+        let msgs = drain_msgs(&mut trg);
+        let payload = msgs
+            .iter()
+            .find(|(_, p)| {
+                parse_json(p).and_then(|v| v.field("k").and_then(JVal::as_str).map(String::from))
+                    == Some("res".to_string())
+            })
+            .map(|(_, p)| p.clone())
+            .expect("the res frame reached the guest");
+        let v = parse_json(&payload).expect("res payload");
+        let rows = match v.field("st") {
+            Some(JVal::Arr(rows)) => rows.clone(),
+            other => panic!("stat rows on the wire, got {other:?}"),
+        };
+        let row0 = rows
+            .iter()
+            .find(|r| {
+                matches!(r, JVal::Arr(x) if matches!(x.first(), Some(JVal::Num(n)) if *n == 0.0))
+            })
+            .expect("the nid-0 stat row");
+        if let JVal::Arr(x) = row0 {
+            let dmg = x
+                .get(4)
+                .and_then(JVal::as_f64)
+                .expect("the bossDmg column (JS L654)");
+            assert!(
+                (dmg - f64::from(hp).round()).abs() < 1.0,
+                "bossDmg rides the wire: {dmg} vs {hp}"
+            );
+        }
+        rg.on_message(&h, &payload, &mut mg, t, None);
+        let gr = mg.result.clone().expect("the guest settled");
+        assert_eq!(gr.boss, Some(bo.clone()), "the outcome rebuilt verbatim");
+        assert_eq!(gr.winner, r.winner);
+        assert_eq!(gr.coverage, r.coverage);
+        assert_eq!(gr.points, [0.0, 0.0], "boss results carry no points line");
+        assert_eq!(mg.phase, Phase::End);
+        assert!(
+            (mg.time - gt).abs() < 1e-6,
+            "a boss result must NOT pin the guest clock to 0 (JS L660): {gt} → {}",
+            mg.time
+        );
+    }
+
+    /// NFR-M4-3: one 20 Hz tick carrying a worst-case full boss snapshot
+    /// (8 crablets + a move record) alongside the squad's actor samples stays
+    /// inside the 64 KB relay frame budget.
+    #[test]
+    fn nfr_m4_3_boss_tick_stays_in_the_bandwidth_budget() {
+        let f = fix();
+        let m = match111(&f, 3, 60.0);
+        let crabs = (0..8u32)
+            .map(|i| BossCrab {
+                id: i,
+                x: 10.0 + i as f32,
+                y: 0.05,
+                z: -4.0,
+                yaw: 1.5,
+                hp: 90,
+            })
+            .collect();
+        let snap = BossSnap {
+            bt: 123.456,
+            x: 5.25,
+            y: 0.0,
+            z: -3.75,
+            yaw: 1.234,
+            vx: 3.25,
+            vz: -1.75,
+            hp: 41234.5,
+            phase: 2,
+            f: 9,
+            mv: 120.5,
+            anim: 0,
+            turn: 0.75,
+            flash: 512,
+            weak: 96,
+            killer: -1,
+            crabs,
+            max_hp: 93600,
+            move_rec: Some(JVal::Obj(vec![
+                ("id".to_string(), JVal::Str("charge".to_string())),
+                ("t0".to_string(), JVal::Num(120.5)),
+                ("s".to_string(), JVal::Num(1.0)),
+                ("d".to_string(), JVal::Num(2.4)),
+                (
+                    "p".to_string(),
+                    JVal::Arr(vec![JVal::Num(5.25), JVal::Num(-3.75)]),
+                ),
+            ])),
+        };
+        let actors: Vec<(u8, ActorSample)> = m
+            .actors
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                (
+                    i as u8,
+                    ActorSample::from_actor(a, &m.runners[i], m.kinds[i], a.net_tp, 12.345),
+                )
+            })
+            .collect();
+        let tick = Tick {
+            ts: 12.345,
+            actors,
+            events: Vec::new(),
+            b: Some(snap),
+        };
+        let bytes = encode_tick(&tick, Some(("playing", 40.0))).len();
+        assert!(
+            bytes < 65536,
+            "a worst-case boss tick is {bytes} B (budget 65536)"
         );
     }
 }

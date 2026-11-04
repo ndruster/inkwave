@@ -690,6 +690,7 @@ fn dispatch(
                 seed,
                 sim,
                 &tuning.player,
+                None,
             );
             host_changed[i] = false;
             // Review m-8 (`match_link.rs` L260-290): a humans-only prune
@@ -705,7 +706,7 @@ fn dispatch(
             if gone[i] {
                 return;
             }
-            if rep[i].on_message(&from, &payload, &mut m[i], &tuning.player)
+            if rep[i].on_message(&from, &payload, &mut m[i], &tuning.player, None)
                 == Some(ReplicationEvent::MatchEnd)
             {
                 // JS netmatch.js L218 `case 'end'` → `netMatchEnd()`.
@@ -1008,6 +1009,7 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
                 ws,
                 &tuning.weapon_range,
                 &mut inputs[i],
+                None,
             );
             // Task 39 §5-TR-39.1③: one-shot sub press → release → special
             // press over three frames for this client's local human (ink /
@@ -1042,6 +1044,7 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
                 ws,
                 sb,
                 sess[i].transport_mut().expect("live transport"),
+                None,
             );
             m[i].events.extend(rest);
             if opts.stats {
@@ -1195,7 +1198,7 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
         .find(|i| !gone[*i] && rep[*i].is_host())
         .expect("a live host");
     if m[host_i].result.is_some() && !result_sent[host_i] {
-        rep[host_i].send_result(&m[host_i], sess[host_i].transport_mut().unwrap());
+        rep[host_i].send_result(&m[host_i], None, sess[host_i].transport_mut().unwrap());
         result_sent[host_i] = true;
     }
     for _ in 0..2000 {
@@ -1210,7 +1213,7 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
             if let SessionEvent::GameMessage { from, payload } = ev
                 && !gone[i]
             {
-                rep[i].on_message(&from, &payload, &mut m[i], tp);
+                rep[i].on_message(&from, &payload, &mut m[i], tp, None);
             }
         }
     }
@@ -1273,7 +1276,7 @@ pub fn run_match(opts: &MatchOpts) -> MatchReport {
         for (i, ev) in drain(&mut sess, 10.0) {
             if let SessionEvent::GameMessage { from, payload } = ev
                 && !gone[i]
-                && rep[i].on_message(&from, &payload, &mut m[i], tp)
+                && rep[i].on_message(&from, &payload, &mut m[i], tp, None)
                     == Some(ReplicationEvent::MatchEnd)
             {
                 sess[i].end_match();

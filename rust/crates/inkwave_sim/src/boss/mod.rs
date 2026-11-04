@@ -299,8 +299,16 @@ pub struct BossNet {
     pub err: Vec3,
     /// Error velocity (JS `errV`).
     pub err_v: Vec3,
-    /// Last applied sample (JS `prev`).
-    pub prev: Option<BossSnap>,
+    /// Last applied position (JS `prev`, a `Vector3`: `_sampleBoss` reads only
+    /// its x/y/z in the handoff branch, netmatch.js L546-547).
+    pub prev: Option<Vec3>,
+    /// Timestamp the last sample was taken at (JS lazy scratch `n.prevT`,
+    /// netmatch.js L548/556 — made explicit here; `_sampleBoss` reads it for
+    /// the prev-jump correction).
+    pub prev_t: Option<f64>,
+    /// Raw sampled position at `prev_t`, before the damped error was folded in
+    /// (JS lazy scratch `n.prevRaw`, netmatch.js L551/555).
+    pub prev_raw: Option<Vec3>,
     pub ready: bool,
     pub handoff: bool,
     /// This frame's sampled state (`netmatch._sampleBoss` fills it; JS
@@ -1555,7 +1563,7 @@ impl<'a> Boss<'a> {
     /// JS `_crabBurst(id, x, y, z, killed)` (L390-402): the burst itself,
     /// everyone — guests get it on the host's timeline.
     #[allow(clippy::too_many_arguments)]
-    fn crab_burst(
+    pub(crate) fn crab_burst(
         &mut self,
         id: u32,
         x: f32,

@@ -335,3 +335,65 @@ tuning v3（boss 全数据表入产物）+ wire 金标准（B/bhit/bm/bc/res-bos
 - **评审处置**：P0=0；P1-1 已修（D-T44-9）；P1-2 误报（`bot/boss.rs` L673 `mod tests` 4 测试覆盖 TR-44.2 四组：crablet 感知/refill 门/slam 反应门/集火选形）；P1-3/4/5 由本 §8 覆盖（§7 为占位）；P2-1/2-6 误报（`update` 返回 bool；`self.th` 被 L1021 测试读取）；P2-3 不可达边缘（嵌入 tuning 恒非空，注释声明）；P2-4 已注释（Task 45）；P2-5/7/8 留档不修。
 - **门禁**：`task44-gates-*.log`（raw-file 捕获形态）——FMT/CLIPPY/TEST/WASM32/TREE/确定性/hitPos 交叉验证/HEADLESS 全 0；TRUNK rc=1×3 尝试（wasm-bindgen OOM SIGKILL，D-T40-1 先例 DEGRADED 非阻塞）；JS 树干净。
 - **基线**：`inkwave_sim` 560→572 passed（+12：TR-44.1×2 + TR-44.2×4 + session boss×3 + tuning 锚点×2 + mode hp×1）；`inkwave` 69 passed；全 workspace 零失败。
+
+## Task 45 实施设计（2026-11-04，实读锚点后定稿）
+
+### §0 目标
+Boss 联网语义全量接线（协议不改，Rust 对齐 JS）：host tick `msg.B` 发布（`bossN%10` full/delta）、`recBoss(['bm'|'bc'])` 事件时间线、guest `d.B` 快照缓冲 + `_sampleBoss` 播放（Hermite/同 playback 时钟/>12m 断线滑移/阻尼修正）、`'bhit'` 上行 + host `remoteHit` + log 对账、`['bm']/['bc']` 时间线重放、host 迁移 `adopt/handoff`、res boss 形态收发（`bo`/mode/st 六列/boss 胜停钟）。net-harness Rust↔Rust 完整 boss 局（含中途迁移）+ scenario E（JS host boss ↔ Rust guest，DEGRADED 口径）+ 带宽压测（NFR-M4-3）。
+
+### §1 JS 锚点（本窗口实读）
+- netmatch.js：`recBoss` L146（`isHost && G.netm===this → _rec(e)`）；`sendBossHit` L150-154（guest-only、`attacker.nid===undefined` 挡、`log.sent++/sentDmg+=d`（raw d）、上线 `r2(d)`、`c` 默认 -1）；`update` L172-188 时序（advance→sample actors→**`_sampleBoss(dt)` L178**→`_playEvents(t)` L179→tick 定时器 `_sendTick`）；`_sendTick` L190-203（`boss=this.match?.boss; if(isHost&&boss&&boss.sim){bossN=(bossN||0)+1; msg.B=boss.pack(bossN%10===0)}`——guest 有 boss 但 !sim 不发布）；`case 'bhit'` L215（host `match?.boss?.remoteHit(d)`）；`_tick` L258-263（`d.B && from===hostId && boss && !boss.sim` → `Boss.unpack(d.B, d.ts)` → `net.buf` push（单调 t 门 + 40 上限 trim））；`case 'bm'` L494（`boss?.onMove(e[2])`——**无 !sim 门**）；`case 'bc'` L496（`b && !b.sim → _crabBurst(e[2..6], !!e[6])`——有 !sim 门）；`_sampleBoss` L504-564（guard `!b||b.sim` return；`peer=peers.get(hostId)`，`!buf.length||!peer||peer.tr===undefined` return；trim `while(buf.length>2 && buf[1].t<tr-0.3) shift`；`at(t,O)`：段查找 s0/s1，Hermite h00=2u³−3u²+1/h10=u³−2u²+u/h01=−2u³+3u²/h11=u³−u²，x/z 用 `h·s + h'·d·v`，y/bt/vx/vz 线性、yaw `angDiff`，返回 0；无 s1：`e=t>last.t ? min(t−last.t,0.15):0`、`s=t>last.t?last:s0`、`O.bt=s.bt+e`、返回 e>0?2:1；离散态 `for k of [hp,phase,f,mv,anim,turn,fl,wk,killer,maxHp,move] S[k]=s0[k]`、`s1&&s1.move→S.move=s1.move`；crabs 按 id 配对插值（x/y/z 线性·u、yaw angDiff·u、hp 取 c1）；修正：handoff 支（`err=prev−S`，`len²>144`→双清零）、prev 跳变支（`at(prevT,P)`、`j=prevRaw−P`（x/z）、`1e-6<j2<144`→`err.x+=jx;err.z+=jz`、`j2>=144`→双清零）；`prevRaw=(S.x,S.y,S.z)`、`prevT=tr`；阻尼 `w=13,k=exp(−w·dt)`，逐分量 `q=v0+w·x0; x'=(x0+q·dt)k; v'=(v0−w·q·dt)k`，`|err|²<1e-6&&|ev|²<1e-4`→清零；`prev=S+err`、`ready=true`）；`sendResult` L650-654（`bo:result.boss`、mode、st 六列 `round(bossDmg||0)/weakHits||0`）；`_result` L656-664（st 行 `bossDmg!==undefined` 才覆盖、`d.mode!=='boss'→m.time=0`（boss 胜停钟）、`result={mode:'boss',coverage,winner,boss:d.bo}`、setState judge）；`onLeave` L681-683（`hostChanged && boss`：新 host `adopt()`、其余 `handoff()`）。
+- boss.js：`net` L64（buf/err/errV/prev/ready/handoff——`prevT/prevRaw/_P/fl/wk/crabSeen` 为 _sampleBoss/_follow 惰性挂的 scratch）；`pack` L422-431、`unpack` L432-434（Rust BossSnap 已对齐，Task 41/42）；`onMove` L436（t0 幂等 hz.add）；`_follow` L439-472（Rust `Boss::follow` 已在）；`adopt` L475-480（`!sim→sim=true`、err/errV 清零、`new BossBrain(this,{adopt:true})`）；`handoff` L482（buf 清 + handoff=true）；`remoteHit` L352-359（log.recv/recvDmg、c≥0→_hitCrab(fromNet) 否则 applyDamage(min(d,2000))）；`crabPop` L383-388（recBoss ['bc']）；brain `_start` L294（recBoss ['bm']）。
+- bots.js L345：`G.boss` 短路——host 的 bot 经 `BotCtx.boss` 感知（Task 44 已平移 `_bossTick`，联网 host 需把 boss 传入 `drive_bots`）。
+
+### §2 设计
+- **Boss 句柄线程化**（沿 D-T44-1 驱动层模式）：`Replication` 不持有 Boss（借用面冲突），`update/send_tick/on_tick/play_events/on_message/on_leave/drive_bots/send_result` 增 `boss: Option<&mut Boss<'_>>` 形参（非 boss 局恒 None，既有调用点机械适配零波及）。`Boss<'a>` 借 `nav/tb/world`（皆 &），与 update 的 `sim:&SimWorld`（&）无冲突；`&mut Boss` 与 `&mut Match` 不同对象。
+- **时序对齐**（评审 P1-1 修正定稿）：实驱动序（harness `boss_frame` 与 app `match_link`）= `m.step(...)` → `rep.update(...)`。JS 中 `['bm']/['bc']` 在 Match.update 期间 recBoss 入 `out`、ride **下一** tick（_sendTick 已跑）；Rust 中 boss 事件在 `m.step` 产生，`rep.update` 于 **send_tick 之后** drain `boss.drain_events()`（zone drain/`record_ink` 同位先例）：`Move(rec)→rec(TickEvent::BossMove)`、`Bc→rec(TickEvent::BossCrabBurst)`——本帧记录 ride 下一 tick，逐 JS 等价；FX 事件（Hit/Phase/Splat）**回推** `boss.events` 供 app 层消费者（Task 46），本 drain 只取时间线对（评审 P1-2）。guest `guest_hits`（sendBossHit 队列，点对点直发非时间线）update 开头 drain → `tr.send_to(host_id, encode_direct)`（≤1 帧延迟，D-T35-3 先例注记）。
+- **`boss_n: u32`** 入 Replication（JS `this.bossN` L196）；`send_tick`：`is_host && boss.sim → boss_n+=1; b=Some(boss.pack(boss_n%10==0))`。
+- **`on_tick` B 消费** ≡ L258-263：`tick.b && from==host_id && boss && !boss.sim` → `net.buf` push `(tick.ts as f64, snap)`（单调 t 门 + 40 trim）。
+- **`sample_boss(&mut self, boss)`** ≡ `_sampleBoss`：`BossNet` 扩 `prev_t: Option<f64>`、`prev_raw: Option<Vec3>`（JS 惰性 scratch 显式化）；`peer_tr = self.playback.peer_tr(&self.host_id)`；Hermite `at(t)` 闭包（段查找/三次基函数/angDiff——复用 playback 的 `ang_diff` helper，实读后定）；离散态 + crab 插值填 `net.cur`（BossSnap 形）；修正三段（handoff/prev 跳变/阻尼 w=13）；`follow(dt)` 由驱动层在 `m.step` 内执行（Task 43 接线 `Boss::update` sim=false 分支已调 follow——联网 guest 的 boss 步进即 `m.step(Some(&mut bm))`，bm.update→b.update→follow，无需 replication 直调）。
+- **play_events**：`BossMove → boss.on_move(rec)`（JS L494 无 !sim 门，逐字）；`BossCrabBurst → !boss.sim 时 crab_burst(...)`（JS L496 门）。
+- **on_message 'bhit'** ≡ L215：`is_host && boss → decode DirectMsg::BossHit → RemoteHit{a,d,weak,c} → boss.remote_hit(&h, attacker_exists)`（attacker_exists=`idx_of_nid(a).is_some()`——JS remoteHit 按 nid 找 actor 传 attacker，实读 Rust `remote_hit` 形参语义后接线）。
+- **on_leave** ≡ L683：`host_changed && boss` → `is_host ? boss.adopt() : boss.handoff()`；新 host 的 BossMode 由 app 层已持有（sim=false 构造），adopt 翻 sim 建 brain。
+- **drive_bots**：`BotCtx.boss = boss.map(|b| &**b)`（JS L345 G.boss；host 的 bot 打 boss）。
+- **res boss 形态**：`send_result`——`r.boss: Option<BossOutcome>` → `mode:"boss"` + `bo` JVal（键序 ≡ bossMode.js L44-52 `{name,win,time,hp,maxHp,phase}`）+ st 行 `boss_dmg/weak_hits` 从 `boss.stats_by_nid`（JS `a.stats.bossDmg||0`——Rust 该统计挂 boss 侧 per-nid，D-T42 先例，取数路径换算注记）；`host_result`——`bo` JVal 解回 `BossOutcome`、`mode!="boss"` 才 `m.time=0`（JS L660 boss 胜停钟）、points [0,0]（JS boss result 无 points，zones 折叠先例）、st 行 boss 列 `bossDmg!==undefined` 才覆盖。
+- **app 层（match_link.rs）**：`cfg.mode=="boss"` 时构造 `BossNav::new(&sim,&tuning.boss.nav)` + `BossMode::new(..., sim=!follower, seed)`；每帧 `rep.update(..., boss)`、`m.step(..., Some(&mut bm))`、`drive_bots/on_leave/send_result` 传 `Some(&mut bm.boss)`；host `maxHp` 按 squad_units 公式（JS bossMode L21-22；roster humans/bots 计数 D-T44-4）。
+- **测试**：TR-45.1 e2e（replication.rs tests，FakeRelay pair 先例）——①host↔guest boss 局逐 tick：guest `boss.pos/hp/phase/mv` 对 host 真值播放门限内（沿用 Task 25 定标口径：`nfr_m2_2` 的 overlay 门限先例，boss 位差钉 <0.5m 稳态）；②`'bhit'` 收敛：guest 射击 boss → host `log.recv/recv_dmg` 与 guest `log.sent/sent_dmg` 对账（r2 量化容差）；③迁移：host 离开→guest adopt 后 boss 继续步进、hp/pos 无缝（err 清零 + brain 建立断言）；④`['bm']` 重放：guest `hz.moves` 收到 record、hazard 几何与 host 同 t0；⑤res boss：host judge → guest `m.result.boss` 逐项 + 停钟断言。NFR-M4-3 带宽：boss 局 full tick 字节 < 64KB（MSG_MAX）断言。TR-45.2 scenario E：net-smoke.mjs 扩 `--scenario E`（JS host boss ↔ Rust guest wasm，C/D 先例复用 serve.py :8490）；沙箱 DEGRADED 口径如实记录，可断言子项=握手/roster/boss 快照到达（console 计数）。
+
+### §3 实施批次（委派）
+- A：sim 接线（BossNet 扩 + Replication 八处 + res 形态）+ 单元/集成测试（TR-45.1 ①-⑤ + 带宽）——核心批次。
+- B：app 层 match_link.rs boss 驱动 + inkwave crate 适配——依赖 A 签名。
+- C：net-smoke.mjs scenario E——独立（仅工具层）。
+- 主上下文核验 → 独立评审 → 修复 → 九段门禁。
+
+### §4 测试
+- TR-45.1 harness e2e 全绿（①-⑤）；既有 572 基线不破（boss 参 None 机械适配）。
+- TR-45.2 scenario E 实跑 dump（DEGRADED 如实）+ 带宽压测断言。
+- 基线：inkwave_sim 572→≥600、workspace 递增；`cargo tree -p inkwave_sim` 依赖面不变；wire.rs 协议零改动（仅消费面）。
+
+### §5 风险
+- `_sampleBoss` 的 `at()` 借用冲突（Rust 闭包读 buf 又写 O）——以本地函数 + 输出结构体实现，行为逐式。
+- guest 局 `m.step` 内 boss.update→follow 消费 `net.cur`——实驱动序 step→update 使 follow 消费**上一帧** update 填入的 cur（JS 同帧 sample→follow）：16ms 滞后在播放缓冲语义内良性（评审核过），注记即可。
+- res `bo` JVal 键序与 bossMode.js L44-52 逐字（fixture 已钉 wire 形，Task 41）。
+- trunk 段沙箱 OOM 持续 → DEGRADED 口径沿用。
+
+### §6 验收
+九段门禁全绿（TRUNK DEGRADED 口径同 D-T40-1）；TR-45.1/45.2 全绿；JS 树零改动；基线递增；wire.rs/协议零改动。
+
+### §7 定案（实施后回填 §8）
+
+### §8 定案（Task 45，2026-11-04）
+- **D-T45-1 Boss 句柄线程化**：`Replication` 不持 Boss（借用面冲突，沿 D-T44-1 驱动层模式）；`update/play_events/send_tick/on_tick/on_message/on_leave` 增 `boss: Option<&mut Boss<'_>>`、`drive_bots/send_result` 增 `Option<&Boss>`（只读即可）、`host_result` 增 `bo: Option<&JVal>`。非 boss 局恒 None——572 基线逐字节不变（inkwave_sim tests 103 处 + special/tests.rs 1 处 + match_link 22 处 + net-harness 7 处机械补 None）。
+- **D-T45-2 时序定稿（评审 P1-1 修复）**：实驱动序 = `m.step` → `rep.update`（harness `boss_frame` 与 app `match_link` 两路一致）。host `recBoss(['bm'|'bc'])` drain 置于 **send_tick 之后**（zone drain/`record_ink` 同位先例）——本帧 step 产生的事件 ride 下一 tick，逐 JS 等价（JS recBoss 在 Match.update 期间入 out、ride 下一 _sendTick）；首版误置 update 开头（早乘一 tick），评审发现后当场修正，§2 论述同步更正。guest `guest_hits` 直发 drain 留 update 开头（点对点非时间线，≤1 帧延迟，D-T35-3 先例）。
+- **D-T45-3 FX 事件回推（评审 P1-2 修复）**：host drain 只取时间线对（Move/Bc），`other => b.events.push(other)` 回推 Hit/Phase/Splat 供 app 层消费者（Task 46 fx/UI 不饿死）。
+- **D-T45-4 BossNet 形态**：`prev: Option<BossSnap>`→`Option<Vec3>`（JS `n.prev` 是 Vector3，`_sampleBoss` 只读 x/y/z L546-547；评核实核 follow() 仅消费 cur/err，无破坏）；新增 `prev_t: Option<f64>`、`prev_raw: Option<Vec3>`（JS 惰性 scratch n.prevT/n.prevRaw 显式化）。
+- **D-T45-5 `sample_boss` ≡ `_sampleBoss` L504-564**：Hermite 基函数（h00/h10/h01/h11、`d=max(1e-3,Δt)`）、y/bt/vx/vz 线性、yaw `ang_diff`（复用 playback helper ≡ JS L38）、外推 `e=min(t−last.t,0.15)`、离散 11 键自 s0 + move 覆盖、crab 按 id 配对插值（hp 取 c1）、三段修正（handoff `>144` 归零 / prev 跳变 `1e-6<j2<144` 仅 x/z / 阻尼 w=13 临界式）、`prev=S+err`。评审逐式全对齐（0 P0）。
+- **D-T45-6 发布/消费门**：`send_tick` `boss_n.is_multiple_of(10)` full（≡L196；guest !sim 不发布不计数）；`on_tick` B 消费 `from==host_id && !b.sim` + 单调 t 门 + 40 trim（≡L260-262）；`play_events` 'bm' 无 !sim 门（≡L494）、'bc' 有门（≡L496）；`on_message` 'bhit' is_host + `remote_hit(&h, attacker_exists)`（attacker_exists=`idx_of_nid(a).is_some()` ≡ JS 按 nid 查 actor）。
+- **D-T45-7 迁移**：`on_leave` host_changed 时 `is_host ? adopt() : handoff()`（≡L683）；adopt 翻 sim 建 brain 清零 err（Task 42 实体面），handoff 清 buf 置旗标。
+- **D-T45-8 res boss 形态**：`send_result`——`bo` JVal 键序 ≡ bossMode.js L44-52 `{name,win,time,hp,maxHp,phase}`、mode 推 "boss"、st 行 `boss_dmg/weak_hits` 自 `stats_by_nid`（JS `a.stats.bossDmg` 挂 actor——Rust 该统计存于 boss 侧 per-nid，D-T42-4 先例，取数路径换算）；`host_result`——`bo` 解回 `BossOutcome`、`mode!="boss"` 才 `m.time=0`（JS L660 boss 胜停钟）、points [0,0]（JS boss result 无 points，zones 折叠先例）、st 行 `bossDmg!==undefined` 才覆盖（JS L659）、不回写本地 stats（审计留 boss 侧）。
+- **D-T45-9 app 层 BossMode 跨帧持有不可行（批次 B 实读借用面）**：`Boss<'a>` 持 `nav/tb/world` 三借用（mod.rs L478-481）；`SimWorld<'a>` 不含 tb（actor.rs L80-86 仅 collision+Copy 字段）；Bevy `Resource: 'static` 且 `NetMatchState`/`DemoSim` 互借在系统签名下无法表达；每帧重构造丢 Boss 全状态且 sim 无 save/restore API。未做 unsafe、未动 sim——**app 层 boss 实体驱动（含 host maxHp squad 公式接线、drive_bots/on_leave/send_result 传 Some）留 Task 46**；本任务 inkwave crate 全 None 适配、非 boss 局行为逐字节不变。
+- **D-T45-10 nettest boss 放行**：`netmode` 门放开 `turf|zones|boss`（经 `SessionCmd::SetMode`→`set_settings`，session.rs 已接受三模式 + noBoss 图回退）；`tr39_parse_loadout_knobs` 改断言 `netmode=boss` 透传、`netmode=duel` 废值（无新门洞）。
+- **D-T45-11 scenario E（批次 C）**：net-smoke.mjs `bossScenario`（C/D 先例复刻）——JS host `setSettings({mode:'boss'})` ↔ Rust guest wasm；断言面=握手（`[nettest] loadout` 行含 `mode=boss` echo）+ roster 跨认 + **host 侧 `__G.netm.bossN>0`**（sim 层已消费 B，但 wasm seam 传 None 无 guest 探针——评审 P2-2 后注释更正为 D-T45-9 口径；guest B 到达留 REVIEW_CHECKLIST）。沙箱实跑：Rust guest tab 被 SwiftShader wgpu 杀死 → **DEGRADED ok=true**（B 场景同历史表现，未伪造 PASS），dump `rust/tools/verify/logs/net-smoke-2026-11-04T08-19-23-*.json`。
+- **D-T45-12 测试定标**：TR-45.1 ① 路径收敛取「近 120 帧最优差 <0.5m + 末帧 <6m」（播放延迟 85-300ms × boss 速度，12m 断线滑移准下 6m 可接受，评审 P2-4 在案）；② bhit 对账（log.recv/sent、recv_dmg/sent_dmg、host hp 差、stats_by_nid 归属）；③ 迁移无缝（sim/err/brain/follower/pos 连续/bt 推进六断言）；④ ['bm'] 重放逐条 (t0,id) 相等；⑤ res 结算逐项 + 时钟不钉零；NFR-M4-3 最坏满快照（8 小蟹+move_rec）tick <65536B。harness 注：guest actor 需传送至 boss 旁 3m + invuln（bossBrain L112 pad 排除会跳过蹲出生点的待机 actor，否则 boss 永不索敌）。
+- **D-T45-13 评审处置**：0 P0；P1-1 时序（drain 移 send_tick 后 + spec §2/§5 更正 + 注释重写）、P1-2 FX 回推——当场修复并复验；P2-1 本节回填、P2-2 net-smoke 注释更正、P2-3 注释行号 L544→L546-547、P2-4 门限在案（不改）。
+- **基线**：`inkwave_sim` 572→**578** passed（+6：tr45_1_1~5 + nfr_m4_3）；`inkwave` 69 passed；workspace 675 全绿；`cargo tree -p inkwave_sim` 依赖面不变；wire.rs/JS 树/server/ 零改动。
