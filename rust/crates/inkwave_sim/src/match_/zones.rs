@@ -929,16 +929,24 @@ impl ZoneControl {
     /// countdown by that delay exactly as [`Self::_tick`] would, so the
     /// replayed penalty matches the host instead of drifting stale until the
     /// next correction. `lag <= 0` (a clock that has not caught up yet) is a
-    /// no-op; the penalty floors at 0 like `_tick`'s `min(d)`.
+    /// no-op; the penalty floors at 0 like `_tick`'s `min(d)`. The catch-up
+    /// window records the tie point exactly like [`Self::_tick`] L246-248: a
+    /// jump that crosses the opponent's count sets `tie_end` so the next
+    /// `_penalise` uses the same `end` as the host would.
     fn catch_up(&mut self, lag: f32) {
         if self.owner < 0 || lag <= 0.0 {
             return;
         }
         let t = self.owner as usize;
         let d = self.z_rate(t) * lag;
+        let before = self.count[t];
+        let opp = self.count[1 - t];
         let from_pen = self.penalty[t].min(d);
         self.penalty[t] -= from_pen;
         self.count[t] = (self.count[t] - (d - from_pen)).max(0.0);
+        if self.tie_end[t].is_none() && before > opp && self.count[t] <= opp {
+            self.tie_end[t] = Some(opp);
+        }
     }
 
     /// JS `_fillSpecials` (L252-263): the disadvantaged team's gauges fill.

@@ -34,5 +34,5 @@
 - **复核项**：确认端点门恢复属实、±17s 噪声底下的裕量 +3.3s 是否需要扩种子（8→16）复测由用户定夺。
 
 ### Task 47 偏差登记复核（2026-11-05 评审轮登记；spec.md D-T47-11/12）
-- **D-T47-11 zones catch_up 时延补偿**：`match_/zones.rs` 的 `'zo` field2 / `'zs` field10 时钟戳 + follower `catch_up` 回放补偿是 JS 无对应的新逻辑（tr37 frame 6913 `pen` 差 0.083=5/60 复现证据、修复方式、互操作安全结论见 spec.md 条目）。需用户评审：接受该 sim 侧网络路径偏差，或要求 JS 同步补同款补偿。
+- **D-T47-11 zones catch_up 时延补偿**：`match_/zones.rs` 的 `'zo` field2 / `'zs` field10 时钟戳 + follower `catch_up` 回放补偿是 JS 无对应的新逻辑（tr37 frame 6913 `pen` 差 0.083=5/60 复现证据、修复方式、互操作安全结论见 spec.md 条目）。**专项评审已完成（2026-11-05）**：机制正确性 6 项核对通过；F-1 保真缺口（catch_up 缺 `_tick` tie-point 边沿检测）已修复并复验（sim 592/net-harness 20 全绿，spec.md D-T47-11a）；F-2（`+FIXED_DT` 时序假设）留档。仍需用户裁定：①接受该 sim 侧网络路径偏差（或要求 JS 同步补同款补偿）②协议面单向增强定位（Rust 记录字段为 JS 兼容超集，非字节等价）③性质定位（网络一致性强化而非 JS 保真修复；备选=回退补偿+放宽 tr37 容差 ≥0.1s）。
 - **D-T47-12 rebuild_shields 每帧重建**：JS 仅 scan 时刷新成员、Rust 每帧重建（canopy 出现/消失至多早一个 scan 周期 ≤0.25s）。评审已定级 P1 可接受，留档备查。
