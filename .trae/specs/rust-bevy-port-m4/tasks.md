@@ -171,8 +171,8 @@
 - **mitts/blade 深战术 ✅**：`bot/blade_tactics.rs` ≡ blade.js L455-620 botTactics 全文（SKILL/DIVE 档位、pre-charge/连斩/掩护/flank、`_bl_hold` 记账→blade.rs L914 同钟比较）；mitts ≡ L755-835（leap 规划 `predict_leap` 恢复、fight/paint 全分支 escape/pounce/wall/cling/travel、release gate）；`BotCtx` 扩 `time`、`ActorInput.bl_hold/mitts_req` 等（serde default，快照兼容）。
 - **TR-47.1 ✅**：`bot/threat_tests.rs` 8 项（score 分支/scan 过滤/pick_evade 干地/dev_trigger 6 分支/shield flank+压火/canopy steer+break/stamp 锥+A/B 开关逐位对照）+ `bot/tests.rs` mitts pounce/blade 连斩 2 项；`inkwave_sim` 582→**592**（+10），3 轮无 flaky。
 - **tr38 ladder 延续 ✅**：easy 1599.1s/normal 1631.7s/hard 1602.4s——端点门 hard≥easy **通过**（+3.3s）、kills 单调 **通过**（59/71/77）；严格 survival 单调 false 与基线同态（spec §5 记录并评审口径，REVIEW_CHECKLIST 在案：B/C 曾翻转→D 后恢复，A/B 实验证明源自 threat 行为本身且逐分支保真）。
-- **tr37 回归修复 ✅**：threat AI 改变捕获相位暴露 zones follower 预测时延（frame 6913 pen 差 0.083=5/60）——`match_/zones.rs` 'zo' field2/'zs' field10 host 时钟 + `catch_up` 补偿（Rust 内部 JSON 面，互操作安全经评审确认；**JS 无对应新逻辑**，登记 D-T47-11 待评审）。
-- **catch_up 专项评审 + F-1 修复 ✅（2026-11-05）**：机制 6 项核对通过；F-1（catch_up 缺 `_tick` tie-point 边沿检测）已补同式置位并复验（sim 592/net-harness 20 全绿、fmt/clippy 净，spec.md D-T47-11a）；协议面单向增强/性质定位待用户裁定。
+- **tr37 回归修复 ✅**：threat AI 改变捕获相位暴露 zones follower 预测时延（frame 6913 pen 差 0.083=5/60）——`match_/zones.rs` 'zo' field2/'zs' field10 host 时钟 + `catch_up` 补偿（Rust 内部 JSON 面，互操作安全经评审确认；**JS 无对应新逻辑**，登记 D-T47-11；裁定闭环见下行）。
+- **catch_up 专项评审 + F-1 修复 ✅（2026-11-05）**：机制 6 项核对通过；F-1（catch_up 缺 `_tick` tie-point 边沿检测）已补同式置位并复验（sim 592/net-harness 20 全绿、fmt/clippy 净，spec.md D-T47-11a）；用户裁定=兼容超集定位+网络一致性强化，D-T47-11 闭环（PORT_MAP 在案）。
 - **评审**：独立评审 2 P0（P0-1 时钟接线/P0-2 ladder 门红=过期登记条目）+ 2 P1（catch_up/rebuild_shields 偏差登记 D-T47-11/12）+ 3 P2（日志清理等）→ 全处置闭环。
 - **基线**：`inkwave_sim` 592/`inkwave` 101/workspace **721 passed** 全绿；`cargo tree -p inkwave_sim` 依赖面不变；JS 树/`server/`/wire.rs/PROTO/fixture 零改动。
 - **九段门禁**：`rust/tools/verify/logs/task47-gates-20261104T223313Z.log` — FMT/CLIPPY/TEST(592+101+…=721)/WASM/TREE/DETERM(重跑逐字节一致)/XCHK(10/10 sockets)/HEADLESS(turf 完成+boss 600 帧 bt=10/hp 满/events=3)/JS_TREE_CLEAN 全绿；**TRUNK attempt 1 成功 rc=0**（非 D-T40-1 DEGRADED 口径）。
