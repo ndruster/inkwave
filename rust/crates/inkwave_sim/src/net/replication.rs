@@ -2408,6 +2408,8 @@ impl Replication {
                     zones: zone_plan.as_ref(),
                     zctl: m.zones.as_ref(),
                     boss,
+                    launched: &m.launched,
+                    time: m.projectiles.time,
                 };
                 inputs[i] = b.step(FIXED_DT, &mut m.actors[i], &ctx);
             } else {

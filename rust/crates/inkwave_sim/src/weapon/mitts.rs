@@ -12,9 +12,10 @@
 //!   - `stepFist` L197-246                 -> [`MittsFist::step`] (the boss
 //!     L219-222 and device/special blocks L224-226 are not ported)
 //!   - `leapVelocity` L275-287             -> [`leap_velocity`]
-//!   - `predictLeap` L294-342 / `telegraph` L415-424 / local preview
-//!     L492-544                            -> not ported (D-T33-1: the leap
-//!     lands where real physics contact says, no prediction)
+//!   - `predictLeap` L294-342              -> [`predict_leap`] (restored by
+//!     Task 47 batch D for the bot leap planning; D-T33-1's "no prediction"
+//!     held while no bot used it — real physics still decides the landing);
+//!     `telegraph` L415-424 / local preview L492-544 remain not ported
 //!   - `clingableAt` L345-353              -> [`clingable_at`] (the rail /
 //!     grate block flags are not carried by the Rust layout — see the fn)
 //!   - `startCharge` L355-362 / `cancelCharge` L363-366 ->
@@ -42,10 +43,12 @@
 //!   - The leap-charge state (`charging` / `charge` / `chargeT`) lives on
 //!     the kit, not the runner (JS keeps it on `k` and mirrors `k.charge`
 //!     onto `r.charge` for the `ch` tick slot — mirrored here too).
-//!   - `a.specialActive` (L552) and the bot branches (`botWant` / `botHold`
-//!     / `botReleaseOk`, L574-577 / L628 / L654-658) are Task 39 / Task 35;
-//!     the sim has no specials and no bot leap driving, so the structure
-//!     that reads them is kept where it costs nothing.
+//!   - `a.specialActive` (L552) is Task 35 — the sim has no specials. The
+//!     bot branches (`botWant` / `botHold` / `botReleaseOk`, L574-577 / L628
+//!     / L654-658) are restored by Task 47 batch D: the brain cannot reach
+//!     the kit mutably, so leaps / drops ride [`crate::actor::MittsReq`]
+//!     through [`MittsKit::jump`], and the JS `Math.random()` draws for
+//!     `botHold` (L466) run only for bots (a local player never reads it).
 //!   - `a.fireFacing` writes (L561/L600/L634) are presentation-only in the
 //!     sim (private facing-lerp input, never set by kits upstream of the
 //!     sim) — dropped.
@@ -153,6 +156,28 @@ pub struct MittsKit {
     pub cling_pt: Vec3,
     /// JS `W().leapInkMin` cache for the jump hook (deviation).
     pub ink_min: f32,
+    /// JS `k.botWant` (L673 / L698): the charge fraction the bot planned,
+    /// `-1` = no bot leap armed. Task 47 batch D.
+    #[serde(default = "neg1_f32")]
+    pub bot_want: f32,
+    /// JS `k.botYaw` (L670 / L697).
+    #[serde(default)]
+    pub bot_yaw: f32,
+    /// JS `k.botPitch` (L670 / L697).
+    #[serde(default)]
+    pub bot_pitch: f32,
+    /// JS `k.botKind === 'wall'` (L699 / L705).
+    #[serde(default)]
+    pub bot_kind_wall: bool,
+    /// JS `k.botHold` (L466 / L628 / L770 / L822): seconds a bot means to
+    /// keep hanging on the wall (the kit's cling backstop drops at `-0.6`).
+    #[serde(default)]
+    pub bot_hold: f32,
+}
+
+/// Serde default for [`MittsKit::bot_want`]: JS arms no bot leap at `-1`.
+fn neg1_f32() -> f32 {
+    -1.0
 }
 
 impl Default for MittsKit {
@@ -188,6 +213,11 @@ impl MittsKit {
             cling_n: Vec3::X,
             cling_pt: Vec3::ZERO,
             ink_min: 0.0,
+            bot_want: -1.0,
+            bot_yaw: 0.0,
+            bot_pitch: 0.0,
+            bot_kind_wall: false,
+            bot_hold: 0.0,
         }
     }
 
@@ -229,24 +259,66 @@ impl MittsKit {
     }
 
     /// JS `jump(r, intent)` L650-660 — the actor.js L311-313 hook. Returns
-    /// whether the jump press is swallowed (never becomes a jump). Bots are
-    /// Task 39: the `a.isBot` guards collapse to their local-player values.
-    pub fn jump(&mut self, a: &mut Actor, intent_fire: bool) -> bool {
+    /// whether the jump press is swallowed (never becomes a jump). Task 47
+    /// batch D: a bot starts leaps and lets go of walls through
+    /// [`crate::actor::MittsReq`] on the intent (the brain holds the runner
+    /// immutably; JS calls `startCharge` / `dropCling` directly from
+    /// `MAIN_KITS.mitts.bot`).
+    pub fn jump(&mut self, a: &mut Actor, input: &crate::actor::ActorInput) -> bool {
         if self.charging || self.leaping {
             return true;
         }
-        if self.cling {
-            if intent_fire && a.ink >= self.ink_min {
-                self.start_charge(a);
+        if let Some(req) = input.mitts_req {
+            if req.drop {
+                // JS L776 / L822: `dropCling(r, k, 'jump')` from the bot.
+                if self.cling {
+                    self.drop_cling(a, "jump");
+                }
+                return true;
+            }
+            // JS `botLeap` L696-701: arm the scratch, start the charge.
+            self.bot_yaw = req.yaw;
+            self.bot_pitch = req.pitch;
+            self.bot_kind_wall = req.wall;
+            if self.start_charge(a) {
+                self.bot_want = req.want;
             } else {
+                self.bot_want = -1.0;
+            }
+            return true;
+        }
+        if self.cling {
+            if input.fire && !a.is_bot && a.ink >= self.ink_min {
+                self.start_charge(a);
+            } else if !a.is_bot || !input.fire {
                 self.drop_cling(a, "jump");
             }
             return true;
         }
-        if !intent_fire || !a.grounded || a.form != Form::Kid {
+        if a.is_bot || !input.fire || !a.grounded || a.form != Form::Kid {
             return false;
         }
         self.start_charge(a)
+    }
+
+    /// JS `botReleaseOk(a, k)` L703-706: at release, does the leap still come
+    /// down where the bot planned (it may have been nudged while crouching)?
+    /// Deviation: the kit has no nav graph, so the JS `landingOk` nav check
+    /// (L690-694) is skipped — the bot validated the landing at plan time
+    /// (`landing_ok`, bot.rs) and the same charge re-predicts the same arc.
+    fn bot_release_ok(
+        &self,
+        a: &Actor,
+        world: &CollisionWorld,
+        t: &PlayerTuning,
+        w: &Mitts,
+    ) -> bool {
+        let pred = predict_leap(a.pos, leap_velocity(a, self, self.charge, w), world, t);
+        if self.bot_kind_wall {
+            pred.kind == LeapKind::Wall
+        } else {
+            pred.kind == LeapKind::Ground && (pred.pos.y - a.pos.y).abs() <= 4.0
+        }
     }
 }
 
@@ -255,16 +327,32 @@ fn cancel_charge(r: &mut WeaponRunner, k: &mut MittsKit) {
     k.charging = false;
     k.charge = 0.0;
     k.charge_t = 0.0;
+    // JS L364: a cancelled charge disarms the bot's release plan.
+    k.bot_want = -1.0;
     r.charge = 0.0;
 }
 
-/// JS `leapVelocity(a, k, c, out)` L275-287 (the bot yaw/pitch override is
-/// Task 39). The wall-exit guard (L282-285) keeps a cling leap from
-/// launching back into the wall.
+/// JS `leapVelocity(a, k, c, out)` L275-287 (the bot yaw / pitch override,
+/// L277, is restored by Task 47 batch D). The wall-exit guard (L282-285)
+/// keeps a cling leap from launching back into the wall.
 #[must_use]
 pub fn leap_velocity(a: &Actor, k: &MittsKit, c: f32, w: &Mitts) -> Vec3 {
+    // JS L277: while a bot leap is armed (`botWant >= 0`) the launch flies on
+    // the brain's yaw / pitch, not the aim spring.
+    let (yaw, pitch) = if k.bot_want >= 0.0 {
+        (k.bot_yaw, k.bot_pitch)
+    } else {
+        (a.aim_yaw, a.aim_pitch)
+    };
+    leap_velocity_at(yaw, pitch, k, c, w)
+}
+
+/// The velocity core shared by [`leap_velocity`] and the bot's plan probe
+/// (JS `leapVelocity` L278-286).
+#[must_use]
+fn leap_velocity_at(yaw: f32, pitch: f32, k: &MittsKit, c: f32, w: &Mitts) -> Vec3 {
     let ang = clamp_f(
-        w.leap_angle * DEG + a.aim_pitch * w.leap_pitch_k,
+        w.leap_angle * DEG + pitch * w.leap_pitch_k,
         w.leap_angle_min * DEG,
         w.leap_angle_max * DEG,
     );
@@ -276,8 +364,8 @@ pub fn leap_velocity(a: &Actor, k: &MittsKit, c: f32, w: &Mitts) -> Vec3 {
     .sqrt();
     let vy = (v * ang.sin()).min(w.leap_vy_max);
     let vh = v * ang.cos();
-    let mut dx = a.aim_yaw.sin();
-    let mut dz = a.aim_yaw.cos();
+    let mut dx = yaw.sin();
+    let mut dz = yaw.cos();
     if k.cling {
         let dn = dx * k.cling_n.x + dz * k.cling_n.z;
         if dn < 0.35 {
@@ -290,6 +378,145 @@ pub fn leap_velocity(a: &Actor, k: &MittsKit, c: f32, w: &Mitts) -> Vec3 {
         }
     }
     vec3(dx * vh, vy, dz * vh)
+}
+
+/// JS `leapVelocity` called with the bot's explicit yaw / pitch (`botPlan`
+/// arms `k.botWant` / `k.botYaw` / `k.botPitch` before predicting, L670-674)
+/// — the brain-side plan probe: the kit's scratch stays disarmed (Task 47
+/// batch D). The cling push-off rides `k` (a bot plans from the wall too,
+/// L771-774).
+#[must_use]
+pub(crate) fn plan_velocity(k: &MittsKit, c: f32, yaw: f32, pitch: f32, w: &Mitts) -> Vec3 {
+    leap_velocity_at(yaw, pitch, k, c, w)
+}
+
+/// What a predicted leap hits (JS `predictLeap`'s `out.kind`, L294-342).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeapKind {
+    /// L340: nothing in 3.5 s — the arc just ends.
+    None,
+    /// L327-331: the feet found ground.
+    Ground,
+    /// L319: the chest hit a clingable wall.
+    Wall,
+    /// L319: the chest hit a wall the sponge can't stick to.
+    Bump,
+    /// L335-337: fell past the death line with no ground below.
+    Sea,
+}
+
+/// One predicted leap landing (JS `_bp` L294-342; the `pts` arc-preview half
+/// is not ported — D-T33-1).
+#[derive(Debug, Clone)]
+pub struct LeapPred {
+    pub kind: LeapKind,
+    /// JS `out.pos`: where the kid's feet end up.
+    pub pos: Vec3,
+    /// JS `out.normal`: the surface's flattened normal (ground: the hit's).
+    pub normal: Vec3,
+    /// JS `out.hitPt`.
+    pub hit_pt: Vec3,
+    /// JS `out.t`: flight seconds.
+    pub t: f32,
+    /// JS `out.block`.
+    pub block: i32,
+}
+
+/// JS `predictLeap(from, v0, out, null)` L294-342: the actor's own integrator
+/// (gravity with the fall / apex multipliers; the kit holds the horizontal
+/// speed) swept against the level — the head for ceilings, the chest for
+/// walls, the feet for ground. Restored by Task 47 batch D (the bot leap
+/// planning; D-T33-1's "no prediction" held while no bot used it).
+#[must_use]
+pub fn predict_leap(from: Vec3, v0: Vec3, world: &CollisionWorld, t: &PlayerTuning) -> LeapPred {
+    // JS L293 `PRED_DT = 1/60`.
+    const PRED_DT: f32 = 1.0 / 60.0;
+    let mut out = LeapPred {
+        kind: LeapKind::None,
+        pos: from,
+        normal: Vec3::ZERO,
+        hit_pt: Vec3::ZERO,
+        t: 0.0,
+        block: -1,
+    };
+    let (mut x, mut y, mut z) = (from.x, from.y, from.z);
+    let (vx, vz) = (v0.x, v0.z);
+    let mut vy = v0.y;
+    let hs = vx.hypot(vz);
+    let (dx, dz) = if hs > 1e-4 {
+        (vx / hs, vz / hs)
+    } else {
+        (0.0, 0.0)
+    };
+    for i in 1..=210 {
+        let mut g = t.gravity;
+        if vy < 0.0 {
+            g *= t.fall_gravity_mul;
+        }
+        if vy.abs() < t.apex_band {
+            g *= t.apex_gravity_mul;
+        }
+        vy = (-t.max_fall).max(vy - g * PRED_DT);
+        let nx = x + vx * PRED_DT;
+        let nz = z + vz * PRED_DT;
+        let mut ny = y + vy * PRED_DT;
+        // JS L306-311: head against a ceiling — stop rising.
+        if vy > 0.0 {
+            let h = world.segment(vec3(x, y + t.height, z), vec3(nx, ny + t.height, nz), false);
+            if h.hit && h.normal.y < -0.5 {
+                vy = 0.0;
+                ny = y;
+            }
+        }
+        // JS L312-322: chest against a wall.
+        let h = world.segment(
+            vec3(x, y + 0.8, z),
+            vec3(nx + dx * t.radius, ny + 0.8, nz + dz * t.radius),
+            false,
+        );
+        if h.hit && h.normal.y.abs() < 0.55 {
+            let n = vec3(h.normal.x, 0.0, h.normal.z).normalize_or(Vec3::X);
+            out.normal = n;
+            out.block = h.block;
+            out.hit_pt = vec3(h.point.x, ny + 0.8, h.point.z);
+            out.pos = vec3(h.point.x + n.x * t.radius, ny, h.point.z + n.z * t.radius);
+            out.kind = if clingable_at(out.pos, out.normal, world, t) {
+                LeapKind::Wall
+            } else {
+                LeapKind::Bump
+            };
+            out.t = i as f32 * PRED_DT;
+            return out;
+        }
+        // JS L323-332: feet onto the ground (falling).
+        if vy <= 0.5 {
+            let h = world.segment(vec3(x, y + 0.3, z), vec3(nx, ny - 0.02, nz), false);
+            if h.hit && h.normal.y > 0.55 {
+                out.kind = LeapKind::Ground;
+                out.pos = h.point;
+                out.normal = h.normal;
+                out.hit_pt = h.point;
+                out.block = h.block;
+                out.t = i as f32 * PRED_DT;
+                return out;
+            }
+        }
+        x = nx;
+        y = ny;
+        z = nz;
+        // JS L335-338: past the death line with nothing under the feet — sea.
+        let gh = world.ground_height(x, z, y + 0.6, false);
+        if y < t.fall_death_y && gh.is_infinite() && gh < 0.0 {
+            out.kind = LeapKind::Sea;
+            out.pos = vec3(x, t.water_y, z);
+            out.normal = Vec3::Y;
+            out.hit_pt = out.pos;
+            out.t = i as f32 * PRED_DT;
+            return out;
+        }
+    }
+    out.pos = vec3(x, y, z);
+    out
 }
 
 /// JS `clingableAt(pos, n, blockId)` L345-353: solid, rising past the head,
@@ -330,6 +557,9 @@ fn release_leap(
     a.ink = (a.ink - lerp(w.leap_ink_min, w.leap_ink_max, c)).max(0.0);
     a.note_fired();
     let v = leap_velocity(a, k, c, w);
+    // JS L378: the leap is away — the bot plan is spent (after the launch
+    // velocity, so the pounce still flies on the brain's yaw / pitch).
+    k.bot_want = -1.0;
     let from_wall = k.cling;
     if from_wall {
         k.cling = false;
@@ -609,6 +839,11 @@ fn start_cling(
     a.vel = Vec3::ZERO;
     a.grounded = false;
     k.land_t = 0.0;
+    if a.is_bot {
+        // JS L466: how long a bot means to hang before leaping / dropping
+        // (drawn before the splash, like JS).
+        k.bot_hold = 1.3 + ps.rng.next_f32() * 1.7;
+    }
     // JS L471: the wall hit's landing splash, at the glove's contact point.
     land_splash(
         a, k.cling_pt, k.cling_n, w, world, paint, t, ps, foes, remote,
@@ -1021,8 +1256,20 @@ pub fn update(
         } else {
             k.charge_air = 0.0;
         }
-        if k.charging && !jump_held {
-            release_leap(r, &mut k, w, a, world, paint, ps);
+        // JS L573-578 (Task 47 batch D): a bot releases at its planned charge
+        // fraction once the leap still lands where it aimed; the local-player
+        // `!jumpHeld` release is unchanged.
+        if k.charging {
+            let go = if k.bot_want >= 0.0 {
+                k.charge >= k.bot_want.min(max_c) - 1e-3 || k.charge_t > w.leap_charge_time + 0.6
+            } else {
+                !jump_held
+            };
+            if go && k.bot_want >= 0.0 && !k.bot_release_ok(a, world, t, w) {
+                cancel_charge(r, &mut k); // JS L575: a bot never leaps somewhere unplanned
+            } else if go {
+                release_leap(r, &mut k, w, a, world, paint, ps);
+            }
         }
     }
 
@@ -1133,6 +1380,15 @@ pub fn update(
             k.drop_cling(a, "empty");
         } else if a.grounded || !wall_there || !a.alive {
             k.drop_cling(a, "lost");
+        } else if a.is_bot {
+            // JS L628 (Task 47 batch D): the bot backstop — the fight hook
+            // leaps / lets go at `botHold <= 0`, this drops by -0.6 s at the
+            // latest. The decrement rides the else-chain: only while still
+            // hanging.
+            k.bot_hold -= dt;
+            if k.bot_hold < -0.6 {
+                k.drop_cling(a, "jump");
+            }
         }
     }
 

@@ -65,6 +65,8 @@ fn main() {
                     zones: None,
                     zctl: None,
                     boss: None,
+                    launched: &m.launched,
+                    time: m.projectiles.time,
                 };
                 inputs[i] = bots[i].step(FIXED_DT, &mut m.actors[i], &ctx);
             }

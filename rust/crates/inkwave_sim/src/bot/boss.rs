@@ -363,7 +363,7 @@ impl Bot {
         // JS L1977: the 6-arg `_tail` call → `enemyVisible` is undefined
         // (false); the `aimDist` argument has no Rust counterpart.
         self.tail(
-            dt, a, ctx, &move_v, want_yaw, want_pitch, want_move, false, &mut it, kind, wr,
+            dt, a, ctx, &move_v, want_yaw, want_pitch, want_move, false, &mut it, kind, wr, None,
         );
         if self.mode == BotMode::Fight {
             self.mode = BotMode::Boss;
@@ -818,6 +818,8 @@ mod tests {
             zones: None,
             zctl: None,
             boss,
+            launched: &[],
+            time: 0.0,
         }
     }
 

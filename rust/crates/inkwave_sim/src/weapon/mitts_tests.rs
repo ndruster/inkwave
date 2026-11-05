@@ -717,17 +717,23 @@ fn tr33_2_jump_hook_swallows_and_starts() {
     let mut a = kid(&f);
     let mut k = kit(w);
     k.charging = true;
-    assert!(k.jump(&mut a, false), "charging swallows the press");
+    assert!(
+        k.jump(&mut a, &ActorInput::default()),
+        "charging swallows the press"
+    );
     k.charging = false;
     k.leaping = true;
-    assert!(k.jump(&mut a, false), "leaping swallows the press");
+    assert!(
+        k.jump(&mut a, &ActorInput::default()),
+        "leaping swallows the press"
+    );
 
     // Clinging: no fire → hop off the wall (JS `dropCling('jump')` L484).
     let mut k2 = kit(w);
     k2.cling = true;
     k2.cling_n = Vec3::NEG_X;
     let mut a2 = kid(&f);
-    assert!(k2.jump(&mut a2, false));
+    assert!(k2.jump(&mut a2, &ActorInput::default()));
     assert!(!k2.cling);
     assert!((a2.vel - vec3(-3.4, 4.6, 0.0)).length() <= MM);
 
@@ -735,25 +741,46 @@ fn tr33_2_jump_hook_swallows_and_starts() {
     let mut k3 = kit(w);
     k3.cling = true;
     let mut a3 = kid(&f);
-    assert!(k3.jump(&mut a3, true));
+    assert!(k3.jump(
+        &mut a3,
+        &ActorInput {
+            fire: true,
+            ..Default::default()
+        }
+    ));
     assert!(k3.charging, "fire+jump off the wall charges");
     assert!(k3.cling);
 
     // Ground: no fire intent → a plain jump (not swallowed).
     let mut k4 = kit(w);
     let mut a4 = kid(&f);
-    assert!(!k4.jump(&mut a4, false));
+    assert!(!k4.jump(&mut a4, &ActorInput::default()));
     assert!(!k4.charging);
 
     // Ground + fire + enough ink → the crouch; too little ink → not.
     let mut k5 = kit(w);
     let mut a5 = kid(&f);
-    assert!(k5.jump(&mut a5, true));
+    assert!(k5.jump(
+        &mut a5,
+        &ActorInput {
+            fire: true,
+            ..Default::default()
+        }
+    ));
     assert!(k5.charging);
     let mut k6 = kit(w);
     let mut a6 = kid(&f);
     a6.ink = w.leap_ink_min - 0.1;
-    assert!(!k6.jump(&mut a6, true), "under leapInkMin the jump is free");
+    assert!(
+        !k6.jump(
+            &mut a6,
+            &ActorInput {
+                fire: true,
+                ..Default::default()
+            }
+        ),
+        "under leapInkMin the jump is free"
+    );
 }
 
 // actor.js L311-313 via `Actor::step`: a fire+jump press becomes the crouch,
@@ -817,7 +844,16 @@ fn tr33_2_leap_charge_release() {
     let mut a = kid(&f);
     let mut r = WeaponRunner::new();
     let mut k = kit(w);
-    assert!(k.jump(&mut a, true), "fire+jump starts the crouch");
+    assert!(
+        k.jump(
+            &mut a,
+            &ActorInput {
+                fire: true,
+                ..Default::default()
+            }
+        ),
+        "fire+jump starts the crouch"
+    );
     r.mitts = Some(Box::new(k));
     let mut ps = ProjectileSim::new(0x1E4F);
     let mut pg = PaintGrid::new(&f.world);
@@ -1125,7 +1161,7 @@ fn tr33_2_cling_exit_causes() {
     // 'jump' — the hook hops off the wall.
     let (mut a, mut r) = clinging(&f, 100.0);
     let k = r.mitts.as_mut().unwrap();
-    assert!(k.jump(&mut a, false));
+    assert!(k.jump(&mut a, &ActorInput::default()));
     assert!((a.vel - vec3(-3.4, 4.6, 0.0)).length() <= MM);
 
     // 'empty' — the 8/s drain runs the tank out.

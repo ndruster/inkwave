@@ -160,6 +160,9 @@ pub fn map_input(
         special: keys.pressed(KeyCode::KeyF) || keys.pressed(KeyCode::KeyQ),
         // JS player.js L129: "Yeah!" cheer is a one-frame pulse on the C key.
         cheer: keys.just_pressed(KeyCode::KeyC),
+        // Task 47 batch D: bot-only intent channels — a human never uses them.
+        bl_hold: None,
+        mitts_req: None,
     };
 }
 

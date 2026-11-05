@@ -309,6 +309,8 @@ impl DemoSim {
                     zones: None,
                     zctl: None,
                     boss: boss_ent,
+                    launched: &self.m.launched,
+                    time: self.m.projectiles.time,
                 };
                 self.inputs[i] = self.bots[i].step(FIXED_DT, &mut self.m.actors[i], &ctx);
             }

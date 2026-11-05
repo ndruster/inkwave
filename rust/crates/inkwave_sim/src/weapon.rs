@@ -2447,6 +2447,28 @@ impl WeaponRunner {
         self.flick >= 0.0
     }
 
+    /// TR-47.1 test-only: a runner with the charge-knob state pinned, so
+    /// `Bot::dev_trigger`'s charge branches (bots.js L1493-1501) can be
+    /// probed without running the weapon sim. Production never builds a
+    /// runner this way.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn test_charge(
+        charging: bool,
+        charge: f32,
+        cooldown: f32,
+        burst_t: f32,
+        streaming: bool,
+    ) -> Self {
+        let mut r = Self::new();
+        r.charging = charging;
+        r.charge = charge;
+        r.cooldown = cooldown;
+        r.burst_t = burst_t;
+        r.streaming = streaming;
+        r
+    }
+
     /// The mitts kit, created lazily like JS `K(r)` (mitts.js L48-67) —
     /// the jump hook (`actor.js` L313 → [`mitts::MittsKit::jump`]) can run before
     /// the first [`mitts::update`], and `ink_min` must already read the

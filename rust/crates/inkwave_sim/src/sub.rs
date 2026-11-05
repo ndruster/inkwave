@@ -778,6 +778,13 @@ impl SubSystem {
         &self.waddle
     }
 
+    /// TR-47.1 test-only: mutable waddle access so a threat scenario can pin
+    /// a locked walker without running the sub physics.
+    #[cfg(test)]
+    pub(crate) fn waddle_items_mut(&mut self) -> &mut Vec<waddle::WaddleItem> {
+        &mut self.waddle
+    }
+
     /// Test-only, see [`Self::waddle_items`].
     #[cfg(test)]
     pub(crate) fn torpedo_items(&self) -> &[torpedo::TorpedoItem] {
@@ -3016,6 +3023,249 @@ mod tests {
             e.iter()
                 .any(|ev| matches!(ev, SimEvent::SubEnd { data, .. } if *data == [2.0, 1.0]))
         );
+    }
+}
+
+// ============================================================ threat view (Task 47)
+// JS `SUB_KITS[k].threats?.(L)` fan (bots.js `_threatScan` L1275): the
+// read-only device descriptors the bot brain scores and acts on. The JS
+// descriptors are live getter objects cached on the item (`it.thr`,
+// waddle.js L664-685 / torpedo.js L709-726); the sim rebuilds a value view
+// per scan and re-resolves the held one by [`ThreatRef`] every frame (a
+// removed / dead device resolving to `None` is JS `!d.live`). The JS
+// descriptor's `hp` / `hover` / `owner` / `obj` fields are never read by
+// bots.js and are dropped.
+
+/// Which device kind a [`ThreatView`] describes (JS `d.kind`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ThreatKind {
+    /// `waddle` — the walking bomb (JS `kits/waddle.js threatOf`).
+    Waddle,
+    /// `torpedo` — the homing torpedo (JS `kits/torpedo.js threatOf`).
+    Torpedo,
+}
+
+/// JS `d.state` across both kits: the two kits' state enums share `fly` and
+/// never overlap the rest (`_threatScore` / `_threatCtl` branch on the
+/// string).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThreatState {
+    /// `fly` — both kits' post-throw arc.
+    Fly,
+    /// `sense` — waddle only.
+    Sense,
+    /// `wake` — waddle only.
+    Wake,
+    /// `walk` — waddle only.
+    Walk,
+    /// `unfold` — torpedo only.
+    Unfold,
+    /// `launch` — torpedo only.
+    Launch,
+}
+
+/// One device snapshot (JS `threatOf(it)` / `threatOf(t)`).
+#[derive(Debug, Clone, Copy)]
+pub struct ThreatView {
+    /// JS `d.kind`.
+    pub kind: ThreatKind,
+    /// JS `it.owner` — actor-list index (part of the cross-frame identity).
+    pub owner_idx: usize,
+    /// JS `it.gid` (part of the cross-frame identity; unique per owner,
+    /// D-T34-5 keying).
+    pub gid: u32,
+    /// JS `d.team`.
+    pub team: usize,
+    /// JS `d.pos`.
+    pub pos: Vec3,
+    /// JS `d.aimY` — the hit-centre height over `pos.y` (waddle `MID`,
+    /// torpedo `0`).
+    pub aim_y: f32,
+    /// JS `d.radius`.
+    pub radius: f32,
+    /// JS `d.trigger` (waddle `s.triggerDist`; torpedo `HIT_R +
+    /// PLAYER.radius`; the `|| 1.2` fallback sites never fire).
+    pub trigger: f32,
+    /// JS `d.speed` (waddle `s.speed`; torpedo `s.launchSpeed`).
+    pub speed: f32,
+    /// JS `d.senseRadius` — `Some` for waddles only (JS `undefined` torpedoes
+    /// hit the `|| 7` / `|| 6.5` fallbacks).
+    pub sense_radius: Option<f32>,
+    /// JS `d.lockRange` — `Some` for torpedoes only.
+    pub lock_range: Option<f32>,
+    /// JS `d.ground`.
+    pub ground: bool,
+    /// JS `d.state`.
+    pub state: ThreatState,
+    /// JS `d.shootable`.
+    pub shootable: bool,
+    /// JS `d.locked`.
+    pub locked: bool,
+    /// JS `d.target` — state-gated. The getter's `alive(target)` term is
+    /// redundant here: the only consumer is `d.target === a` and the reader
+    /// is alive while it thinks.
+    pub target: Option<usize>,
+    /// JS `d.vel`.
+    pub vel: Vec3,
+    /// JS `d.left` — `None` for torpedoes (JS `undefined`; the
+    /// `d.left !== undefined` branch skips).
+    pub left: Option<f32>,
+}
+
+impl ThreatView {
+    /// This view's cross-frame identity.
+    #[must_use]
+    pub fn r#ref(&self) -> ThreatRef {
+        ThreatRef {
+            kind: self.kind,
+            owner_idx: self.owner_idx,
+            gid: self.gid,
+        }
+    }
+}
+
+/// Cross-frame device identity (JS descriptor object identity via `it.thr`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ThreatRef {
+    /// Which kit list to look in.
+    pub kind: ThreatKind,
+    /// The owner's actor-list index.
+    pub owner_idx: usize,
+    /// The item's `gid` (unique per owner).
+    pub gid: u32,
+}
+
+/// JS `kits/waddle.js threatOf` (L664-685). `MID` = `0.11 * WSCALE` = 0.198
+/// (waddle.js L35); the `hop` term of the `vel` getter is absent per D-T34-7
+/// (the sim's waddle never hops).
+fn waddle_threat(sb: &SubSet, it: &waddle::WaddleItem) -> ThreatView {
+    let s = &sb.waddle;
+    let state = match it.state {
+        waddle::WaddleState::Fly => ThreatState::Fly,
+        waddle::WaddleState::Sense => ThreatState::Sense,
+        waddle::WaddleState::Wake => ThreatState::Wake,
+        waddle::WaddleState::Walk => ThreatState::Walk,
+        waddle::WaddleState::Dead => ThreatState::Walk, // unreachable (`threats` filters dead)
+    };
+    let locked = matches!(
+        it.state,
+        waddle::WaddleState::Wake | waddle::WaddleState::Walk
+    );
+    let vel = if it.state == waddle::WaddleState::Walk && !it.air {
+        vec3(it.heading.sin() * s.speed, 0.0, it.heading.cos() * s.speed)
+    } else if it.state == waddle::WaddleState::Fly || it.air {
+        it.vel
+    } else {
+        Vec3::ZERO
+    };
+    let left = if it.state == waddle::WaddleState::Walk {
+        Some(
+            (s.life - it.walk_t)
+                .min((s.max_travel - it.travel) / s.speed)
+                .max(0.0),
+        )
+    } else {
+        Some(s.life)
+    };
+    ThreatView {
+        kind: ThreatKind::Waddle,
+        owner_idx: it.owner_idx,
+        gid: it.gid,
+        team: it.team,
+        pos: it.pos,
+        aim_y: 0.11 * 1.8,
+        radius: s.radius,
+        trigger: s.trigger_dist,
+        speed: s.speed,
+        sense_radius: Some(s.sense_radius),
+        lock_range: None,
+        ground: true,
+        state,
+        shootable: it.state != waddle::WaddleState::Fly,
+        locked,
+        target: if locked { it.target } else { None },
+        vel,
+        left,
+    }
+}
+
+/// JS `kits/torpedo.js threatOf` (L709-726).
+fn torpedo_threat(sb: &SubSet, player_radius: f32, t: &torpedo::TorpedoItem) -> ThreatView {
+    let s = &sb.torpedo;
+    let state = match t.state {
+        torpedo::TorpedoState::Fly => ThreatState::Fly,
+        torpedo::TorpedoState::Unfold => ThreatState::Unfold,
+        torpedo::TorpedoState::Launch => ThreatState::Launch,
+        torpedo::TorpedoState::Dead => ThreatState::Fly, // unreachable (`threats` filters dead)
+    };
+    let locked = t.locked();
+    let vel = match t.state {
+        torpedo::TorpedoState::Launch => t.dir * t.speed,
+        torpedo::TorpedoState::Fly => t.vel,
+        _ => Vec3::ZERO,
+    };
+    ThreatView {
+        kind: ThreatKind::Torpedo,
+        owner_idx: t.owner_idx,
+        gid: t.gid,
+        team: t.team,
+        pos: t.pos,
+        aim_y: 0.0,
+        radius: s.radius,
+        trigger: torpedo::HIT_R + player_radius,
+        speed: s.launch_speed,
+        sense_radius: None,
+        lock_range: Some(s.lock_range),
+        ground: false,
+        state,
+        shootable: true, // JS `live(t)` — the list already excludes dead
+        locked,
+        target: if locked { t.target } else { None },
+        vel,
+        left: None,
+    }
+}
+
+impl SubSystem {
+    /// JS `SUB_KITS[k].threats?.(L)` fan (bots.js L1275): every live device
+    /// in kit registration order (waddle, then torpedo — the only kits with
+    /// a `threats` hook). Ghosts are included (JS does not filter them).
+    #[must_use]
+    pub fn threats(&self, sb: &SubSet, player_radius: f32) -> Vec<ThreatView> {
+        let mut out = Vec::new();
+        for it in &self.waddle {
+            if it.state != waddle::WaddleState::Dead {
+                out.push(waddle_threat(sb, it));
+            }
+        }
+        for t in &self.torpedo {
+            if t.live() {
+                out.push(torpedo_threat(sb, player_radius, t));
+            }
+        }
+        out
+    }
+
+    /// Re-resolve a [`ThreatRef`] to a live view (JS reads the descriptor's
+    /// `live` getter; a removed / dead device resolves to `None`).
+    #[must_use]
+    pub fn find_threat(&self, r: ThreatRef, sb: &SubSet, player_radius: f32) -> Option<ThreatView> {
+        match r.kind {
+            ThreatKind::Waddle => self
+                .waddle
+                .iter()
+                .find(|it| {
+                    it.owner_idx == r.owner_idx
+                        && it.gid == r.gid
+                        && it.state != waddle::WaddleState::Dead
+                })
+                .map(|it| waddle_threat(sb, it)),
+            ThreatKind::Torpedo => self
+                .torpedo
+                .iter()
+                .find(|t| t.owner_idx == r.owner_idx && t.gid == r.gid && t.live())
+                .map(|t| torpedo_threat(sb, player_radius, t)),
+        }
     }
 }
 

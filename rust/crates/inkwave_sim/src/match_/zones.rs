@@ -59,6 +59,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::actor::Actor;
 use crate::actor::ActorEvent;
+use crate::actor::FIXED_DT;
 use crate::collision::CollisionWorld;
 use crate::geometry::{ZoneDef, ZoneLayout};
 use crate::net::wire::{JVal, dec, js_round, r3};
@@ -825,7 +826,14 @@ impl ZoneControl {
             self.last_owner = o;
         }
         self.hold_t = [0.0, 0.0];
-        self._net(JVal::Arr(vec![JVal::Str("zo".to_string()), jn(o as i64)]));
+        self._net(JVal::Arr(vec![
+            JVal::Str("zo".to_string()),
+            jn(o as i64),
+            // Task 47 follow-up: the zone clock at record time (field 2) —
+            // stamped BEFORE this frame's `_tick`, so the follower's catch-up
+            // adds one dt (see [`ZoneControl::catch_up`]).
+            jf(self.clock),
+        ]));
         self.events_out.push(ZoneEvent::Control {
             owner: o,
             prev,
@@ -899,6 +907,38 @@ impl ZoneControl {
         if self.tie_end[t].is_none() && before > opp && self.count[t] <= opp {
             self.tie_end[t] = Some(opp);
         }
+    }
+
+    /// JS `_tick` (L238-243): the centre / own-half / enemy-half countdown
+    /// rate for team `t` on the active objective.
+    fn z_rate(&self, t: usize) -> f32 {
+        let home = self.objectives[self.active].home;
+        if home < 0 {
+            self.zt.rate_center
+        } else if home == t as i8 {
+            self.zt.rate_home
+        } else {
+            self.zt.rate_away
+        }
+    }
+
+    /// Task 47 follow-up (deviation from JS, zones.js L272 / L401-407): the
+    /// follower adopted a `['zs']` / `['zo']` value stamped at the host's
+    /// record frame, but the host kept counting down through the delivery
+    /// delay (one tick interval plus relay slack). Advance the holder's
+    /// countdown by that delay exactly as [`Self::_tick`] would, so the
+    /// replayed penalty matches the host instead of drifting stale until the
+    /// next correction. `lag <= 0` (a clock that has not caught up yet) is a
+    /// no-op; the penalty floors at 0 like `_tick`'s `min(d)`.
+    fn catch_up(&mut self, lag: f32) {
+        if self.owner < 0 || lag <= 0.0 {
+            return;
+        }
+        let t = self.owner as usize;
+        let d = self.z_rate(t) * lag;
+        let from_pen = self.penalty[t].min(d);
+        self.penalty[t] -= from_pen;
+        self.count[t] = (self.count[t] - (d - from_pen)).max(0.0);
     }
 
     /// JS `_fillSpecials` (L252-263): the disadvantaged team's gauges fill.
@@ -992,6 +1032,9 @@ impl ZoneControl {
                 jf(self.neutral_t),
                 jf(self.hold_t[0]),
                 jf(self.hold_t[1]),
+                // Task 47 follow-up: the zone clock at record time (field 10,
+                // AFTER this frame's `_tick`) — see [`ZoneControl::catch_up`].
+                jf(self.clock),
             ]));
         }
         // JS L283-288: rotation — none in overtime, none once the last FINAL
@@ -1266,6 +1309,14 @@ impl ZoneControl {
                         prev,
                         objective: self.objectives[self.active].name.to_string(),
                     });
+                    // Task 47 follow-up: the host's `_tick` ran from its own
+                    // capture frame (recorded BEFORE that tick — hence the
+                    // extra dt) through ours; our prediction started with the
+                    // replay, so catch the new holder's countdown up.
+                    if o >= 0 && arr.len() > 2 {
+                        let lag = self.clock - n(2) as f32 + FIXED_DT;
+                        self.catch_up(lag);
+                    }
                 }
             }
             "zp" => {
@@ -1332,6 +1383,14 @@ impl ZoneControl {
                 self.overtime_t = n(6) as f32;
                 self.neutral_t = n(7) as f32;
                 self.hold_t = [n(8) as f32, n(9) as f32];
+                // Task 47 follow-up: the snapshot is stamped at the host's
+                // record frame (field 10, AFTER that frame's `_tick`); the
+                // host kept counting down until this replay landed, so catch
+                // the holder's countdown up by the delivery delay.
+                if arr.len() > 10 {
+                    let lag = self.clock - n(10) as f32;
+                    self.catch_up(lag);
+                }
             }
             "ze" => {
                 // JS L408-411

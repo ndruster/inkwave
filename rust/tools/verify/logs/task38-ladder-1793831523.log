@@ -1,0 +1,40 @@
+Task 38 TR-38.1 difficulty ladder — turf (zones off), tidewater, 1 client; rung = team-1 bots
+(4) riding the ladder difficulty vs. the pinned-hard team-0 yardstick (3 bots + 1 idle host); 
+seeds [42, 777, 12345, 2026, 314159, 271828, 1604, 95], duration 60s (fixed frame budget), dev-profile virtual clock.
+
+  easy    · runs 8 · bot-alive 1599.1s · kills 59 · deaths 62 · paint 0.0037/s
+  normal  · runs 8 · bot-alive 1631.7s · kills 71 · deaths 53 · paint 0.0036/s
+  hard    · runs 8 · bot-alive 1602.4s · kills 77 · deaths 62 · paint 0.0033/s
+
+survival monotone hard>=normal>=easy: false  << REVIEW per spec §5
+  easy 1599.1s · normal 1631.7s · hard 1602.4s
+survival endpoint hard>=easy (gated): true
+kills monotone hard>=normal>=easy: true
+  easy 59 · normal 71 · hard 77
+paint rate (reported, not gated): easy 0.00372 · normal 0.00355 · hard 0.00335 coverage-fraction/s
+
+per-run evidence (difficulty, seed, alive-s, kills, deaths, paint/s):
+  easy    seed 42      alive  155.1s kills   5 deaths  16 paint 0.00231
+  easy    seed 777     alive  172.9s kills   1 deaths  13 paint 0.00150
+  easy    seed 12345   alive  219.0s kills  11 deaths   5 paint 0.00476
+  easy    seed 2026    alive  207.1s kills   6 deaths   6 paint 0.00343
+  easy    seed 314159  alive  218.1s kills  13 deaths   4 paint 0.00561
+  easy    seed 271828  alive  207.1s kills   8 deaths   6 paint 0.00446
+  easy    seed 1604    alive  207.2s kills   6 deaths   6 paint 0.00294
+  easy    seed 95      alive  212.6s kills   9 deaths   6 paint 0.00475
+  normal  seed 42      alive  176.7s kills   3 deaths  12 paint 0.00250
+  normal  seed 777     alive  163.1s kills   2 deaths  14 paint 0.00151
+  normal  seed 12345   alive  212.6s kills  17 deaths   5 paint 0.00416
+  normal  seed 2026    alive  212.6s kills  10 deaths   5 paint 0.00356
+  normal  seed 314159  alive  212.6s kills  13 deaths   5 paint 0.00516
+  normal  seed 271828  alive  234.6s kills  12 deaths   1 paint 0.00403
+  normal  seed 1604    alive  212.6s kills   6 deaths   5 paint 0.00288
+  normal  seed 95      alive  207.1s kills   8 deaths   6 paint 0.00463
+  hard    seed 42      alive  182.7s kills   6 deaths  12 paint 0.00289
+  hard    seed 777     alive  129.7s kills   1 deaths  22 paint 0.00094
+  hard    seed 12345   alive  213.4s kills  15 deaths   5 paint 0.00454
+  hard    seed 2026    alive  223.6s kills  10 deaths   3 paint 0.00371
+  hard    seed 314159  alive  215.3s kills  13 deaths   5 paint 0.00436
+  hard    seed 271828  alive  201.6s kills   8 deaths   7 paint 0.00330
+  hard    seed 1604    alive  207.1s kills   8 deaths   6 paint 0.00270
+  hard    seed 95      alive  229.1s kills  16 deaths   2 paint 0.00436

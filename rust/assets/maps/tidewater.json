@@ -12032,7 +12032,7 @@
   ],
   "schema": "inkwave.stage_layout.v1",
   "source": {
-    "commit": "a33370da1c9b971eb43dbf42ebad44e1f250a1d7",
+    "commit": "74e7030fff8186125a79521f330678452ac4f092",
     "path": "src/world/stages/tidewater/layout.js"
   },
   "stage": {

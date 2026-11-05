@@ -144,6 +144,8 @@ fn ctx_of<'a>(
         zones: None,
         zctl: None,
         boss: None,
+        launched: &[],
+        time: 0.0,
     }
 }
 
@@ -662,6 +664,7 @@ fn tail_two_frame_sub_release() {
         &mut it,
         WeaponKind::Shooter,
         &wr,
+        None,
     );
     assert!(it.sub, "press frame holds the sub button");
     assert!(!it.squid, "press frame leaves squid form");
@@ -684,6 +687,7 @@ fn tail_two_frame_sub_release() {
         &mut it2,
         WeaponKind::Shooter,
         &wr,
+        None,
     );
     assert!(!it2.sub && !it2.squid, "release frame drops both");
     assert!(!bot.release_bomb);
@@ -887,6 +891,7 @@ fn special_ctl_barrage_presses_sub_and_chains_release() {
         &mut it3,
         WeaponKind::Shooter,
         &wr,
+        None,
     );
     assert!(it3.sub && !it3.squid);
     let mut it4 = ActorInput::default();
@@ -902,6 +907,7 @@ fn special_ctl_barrage_presses_sub_and_chains_release() {
         &mut it4,
         WeaponKind::Shooter,
         &wr,
+        None,
     );
     assert!(!it4.sub, "the barrage throw goes off");
 }
@@ -1052,10 +1058,13 @@ fn kit_fight_hooks_gate_by_kit_state() {
         charging: true,
         ..Default::default()
     }));
-    assert!(!bot.mitts_fight(2.0, 3.5, &wrm), "no punch mid-charge");
+    assert!(
+        !bot.mitts_fight(&a, &ctx, DT, 2.0, 3.5, &mut it, 1, &wrm),
+        "no punch mid-charge"
+    );
     wrm.mitts = Some(Box::new(MittsKit::default()));
-    assert!(bot.mitts_fight(3.6, 3.5, &wrm));
-    assert!(!bot.mitts_fight(4.0, 3.5, &wrm));
+    assert!(bot.mitts_fight(&a, &ctx, DT, 3.6, 3.5, &mut it, 1, &wrm));
+    assert!(!bot.mitts_fight(&a, &ctx, DT, 4.0, 3.5, &mut it, 1, &wrm));
 }
 
 // MAIN_KITS.blade/bow/mitts `paint` gates (blade.js L726-741, bow.js
@@ -1079,11 +1088,13 @@ fn kit_paint_hooks_blade_bow_mitts() {
     let snap = vec![a.clone()];
     let ctx = ctx_of(&f, &nav, &paint, &sim, &snap, &mates);
     let wr = WeaponRunner::new();
+    let mut it = ActorInput::default();
+    let mv = Vec3::ZERO;
 
     // blade: quick cuts alternate the press while moving
     bot.bl_wave_t = 3.0;
-    assert!(bot.blade_paint(&a, &ctx, DT, true, 0.5, true, &wr));
-    assert!(!bot.blade_paint(&a, &ctx, DT, true, 0.5, true, &wr));
+    assert!(bot.blade_paint(&a, &ctx, DT, &mut it, true, 0.5, true, &wr));
+    assert!(!bot.blade_paint(&a, &ctx, DT, &mut it, true, 0.5, true, &wr));
     // a full charge looses the wave instead: false + the 3.5..6.5 timer
     let mut wrb = WeaponRunner::new();
     wrb.blade = Some(Box::new(BladeKit {
@@ -1091,7 +1102,7 @@ fn kit_paint_hooks_blade_bow_mitts() {
         full: true,
         ..Default::default()
     }));
-    assert!(!bot.blade_paint(&a, &ctx, DT, true, 0.5, true, &wrb));
+    assert!(!bot.blade_paint(&a, &ctx, DT, &mut it, true, 0.5, true, &wrb));
     assert!(
         (3.5..6.5).contains(&bot.bl_wave_t),
         "wave timer rearmed: {}",
@@ -1103,7 +1114,7 @@ fn kit_paint_hooks_blade_bow_mitts() {
         full: false,
         ..Default::default()
     }));
-    assert!(bot.blade_paint(&a, &ctx, DT, true, 0.5, true, &wrb));
+    assert!(bot.blade_paint(&a, &ctx, DT, &mut it, true, 0.5, true, &wrb));
 
     // bow: the four-condition gate, then the draw starts
     assert!(!bot.bow_paint(&a, &ctx, false, 0.9, &wr));
@@ -1120,11 +1131,17 @@ fn kit_paint_hooks_blade_bow_mitts() {
         leaping: true,
         ..Default::default()
     }));
-    assert!(!bot.mitts_paint(true, 0.9, true, &wrm));
+    assert!(!bot.mitts_paint(&a, &ctx, DT, &mv, &mut it, true, 0.9, true, &wrm));
     wrm.mitts = Some(Box::new(MittsKit::default()));
-    assert!(bot.mitts_paint(true, 0.9, true, &wrm));
-    assert!(!bot.mitts_paint(true, 0.05, true, &wrm), "ink reserve");
-    assert!(!bot.mitts_paint(true, 0.9, false, &wrm), "must be moving");
+    assert!(bot.mitts_paint(&a, &ctx, DT, &mv, &mut it, true, 0.9, true, &wrm));
+    assert!(
+        !bot.mitts_paint(&a, &ctx, DT, &mv, &mut it, true, 0.05, true, &wrm),
+        "ink reserve"
+    );
+    assert!(
+        !bot.mitts_paint(&a, &ctx, DT, &mv, &mut it, true, 0.9, false, &wrm),
+        "must be moving"
+    );
 }
 
 // blade.js L710-725: stayIn at blade reach (full charge widens it) and the
@@ -1439,6 +1456,8 @@ fn zone_matrix_run(
                 zones: zone_plan.as_ref(),
                 zctl: m.zones.as_ref(),
                 boss: None,
+                launched: &m.launched,
+                time: m.projectiles.time,
             };
             inputs[i] = bots[i].step(DT, &mut m.actors[i], &ctx);
         }
@@ -1496,4 +1515,102 @@ fn tr38_zone_bots_survive_the_sub_special_matrix() {
         }
         zone_matrix_run(&fx, 0x38_8000 + ci as u64, &loadouts, 120);
     }
+}
+
+// ------------------------------------------------------------------ TR-47.1
+// batch D: blade / mitts deep-tactics behaviour on fixed synthetic scenes.
+
+/// JS `MAIN_KITS.mitts.bot.fight` pounce branch (mitts.js L789-797, Task 47
+/// batch D): grounded, leap off cooldown, foe at mid range, enough ink and a
+/// clear line — the gated roll eventually fires the leap, which sets the
+/// jump intent and the `mitts_req` scratch on the actor input.
+#[test]
+fn tr471_mitts_fight_pounces_mid_range() {
+    use crate::weapon::mitts::MittsKit;
+    let f = flat_fix();
+    let nav = NavGraph::without_layout(
+        &f.world,
+        [vec3(0.0, 0.0, -5.0), vec3(0.0, 0.0, 5.0)],
+        4.2,
+        &f.tuning.player,
+    );
+    let paint = PaintGrid::new(&f.world);
+    let sim = SimWorld::new(&f.world, &f.layout);
+    let mut a = kid(&f.tuning, 0, 0, vec3(0.0, 0.0, -5.0), 0.0);
+    a.grounded = true;
+    a.ink = 100.0;
+    let foe = kid(&f.tuning, 1, 0, vec3(0.0, 0.0, 2.0), std::f32::consts::PI);
+    let mut bot = Bot::new(&a, &f.tuning.difficulty.hard, 4711, 0);
+    let mates = vec![None; 2];
+    let snap = vec![a.clone(), foe.clone()];
+    let ctx = ctx_of(&f, &nav, &paint, &sim, &snap, &mates);
+    let mut wrm = WeaponRunner::new();
+    wrm.mitts = Some(Box::new(MittsKit::default()));
+
+    let mut pounced = false;
+    for _ in 0..700 {
+        // JS L789: the pounce gate needs the leap off cooldown — pin it open
+        // so only the `rng < dt * 3` roll decides (mitts.js L790).
+        bot.mitts_cd_state();
+        bot.mitts_cd.as_mut().unwrap().leap_cd = 0.0;
+        let mut it = ActorInput::default();
+        bot.mitts_fight(&a, &ctx, DT, 7.0, 3.5, &mut it, 1, &wrm);
+        if it.jump && it.mitts_req.is_some() {
+            pounced = true;
+            break;
+        }
+    }
+    assert!(pounced, "the mid-range pounce fires within 700 frames");
+    assert!(
+        bot.mitts_cd.as_ref().unwrap().leap_cd > 0.0,
+        "the pounce arms the leap cooldown (mitts.js L790)"
+    );
+}
+
+/// JS `botTactics` up-close combo (blade.js L571-581, Task 47 batch D): in
+/// the cut window on level ground with the aim squared, every other call
+/// pulses the press — fire true / false / true — without touching the charge.
+#[test]
+fn tr471_blade_tactics_close_cut_pulse() {
+    use crate::weapon::blade::BladeKit;
+    let mut f = flat_fix();
+    f.kinds = vec![WeaponKind::Blade, WeaponKind::Shooter];
+    let nav = NavGraph::without_layout(
+        &f.world,
+        [vec3(0.0, 0.0, -5.0), vec3(0.0, 0.0, 5.0)],
+        4.2,
+        &f.tuning.player,
+    );
+    let paint = PaintGrid::new(&f.world);
+    let sim = SimWorld::new(&f.world, &f.layout);
+    let mut a = kid(&f.tuning, 0, 0, vec3(0.0, 0.0, -5.0), 0.0);
+    a.grounded = true;
+    a.ink = 100.0;
+    let foe = kid(&f.tuning, 1, 0, vec3(0.0, 0.0, -2.0), std::f32::consts::PI);
+    let mut bot = Bot::new(&a, &f.tuning.difficulty.hard, 4712, 0);
+    bot.react = 0.0;
+    let mates = vec![None; 2];
+    let snap = vec![a.clone(), foe.clone()];
+    let ctx = ctx_of(&f, &nav, &paint, &sim, &snap, &mates);
+    let mut wrb = WeaponRunner::new();
+    wrb.blade = Some(Box::new(BladeKit::default()));
+
+    let mut mv = Vec3::new(0.0, 0.0, 1.0);
+    for k in 0..3 {
+        let mut it = ActorInput::default();
+        bot.blade_tactics(
+            &a, &ctx, DT, 3.0, &mut mv, &mut it, 1, &wrb, true, true, false,
+        );
+        if k % 2 == 0 {
+            assert!(it.fire, "cut {k}: the press pulses on the rising edge");
+        } else {
+            assert!(!it.fire, "cut {k}: the press latches off between cuts");
+        }
+        assert!(!it.squid, "the combo never squids");
+        assert_eq!(it.bl_hold, Some(-1.0), "no charge is held");
+    }
+    assert!(
+        mv.x.abs() + mv.z.abs() > 0.1,
+        "the combo circles the target, got {mv}"
+    );
 }

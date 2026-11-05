@@ -108,3 +108,9 @@ M1 渲染为**固定简化档**，唯一运行时可调项：
 | （Rust 新增）`rust/tools/net-fixtures/gen.mjs` | 金标准捕获：node 侧 import 真实 `src/net/` packer → `rust/assets/net-fixtures.json` | M2 done（Task 17）· M3 Task 36（+ `zone_seq` 257 条逐字节稳定） |
 | （Rust 新增）`rust/tools/relay-shim/` | 仅测试用原生 relay（复刻 `server/` 房间语义：fan-out/选举/lock/ping/sweep；**非部署替代**） | M2 done（Task 19） |
 | （Rust 新增）`rust/tools/net-harness/` | 网络集成测试 harness（FakeRelay + 虚拟时钟；`tests/acceptance.rs`、`tests/e2e_match.rs` 完整局） | M2 done（Task 19/25）· M3 Tasks 36–39（zones/新图/loadout/ladder e2e scenario） |
+| `src/game/bots.js` L1260-1620（threat 段/_shieldFight/_canopyCtl/_range）、L460-470（stamp steer）、L525/L621-630/L635-660（接线/tail snappy）、L779-783（_dryLine）、L1781-1793（_fatLos） | `inkwave_sim::bot::threat`（threat.rs 1331 行 + THREAT_AI/THREAT_STATS/AimHold/ShieldView） | M4 Task 47 done（D-T47-1..12；A/B 开关+固定种子 TR-47.1） |
+| `src/game/kits/waddle.js` L664-685 / `torpedo.js` L709-726（threatOf） | `inkwave_sim::sub::{ThreatView,ThreatRef}` + `SubSystem::threats/find_threat`（值视图重建 ≡ JS getter 描述符） | M4 Task 47 done |
+| `src/game/kits/brolly.js` L172-190（heldPose/refreshShields）/L604-627（shieldOf） | `bot/threat.rs` `rebuild_shields` + `ShieldRef{Held,Launched}`（held=`held_shield`、launched=`LaunchedCanopy.cur_c/cur_n`；swap-remove 滤己队序复刻） | M4 Task 47 done |
+| `src/game/kits/blade.js` L388-620（botTactics 全文/_blHold/botHolds） | `inkwave_sim::bot::blade_tactics`（新）+ `weapon/blade.rs` 救援窗（`_bl_hold` 同钟比较 ≡ projectiles.time） | M4 Task 47 done（Task 38 batch-2 裁剪项收口） |
+| `src/game/kits/mitts.js` L755-835（bot.fight/paint：leap/cling/pounce） | `bot.rs` Mitts 段 + `weapon/mitts.rs`（`predict_leap` 恢复、`MittsReq/bot_want`） | M4 Task 47 done（Task 38 batch-2 裁剪项收口） |
+| `src/game/zones.js` L272/L376/L401-407（follower `_tick` 预测） | `inkwave_sim::match_::zones` `'zo'` field2/`'zs'` field10 + `catch_up` 时延补偿 | M4 Task 47（**JS 无对应新逻辑**，D-T47-11 登记待评审） |

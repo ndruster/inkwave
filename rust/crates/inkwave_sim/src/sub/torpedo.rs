@@ -77,7 +77,7 @@ use crate::weapon::{Bomb, SimEvent, segment_capsule_dist, throw_velocity};
 use super::{Ctx, DOWN, GRAV, TAU, clamp, lerp, r2};
 
 /// JS `HIT_R` (L36): the shot-down / contact radius of the torpedo (m).
-const HIT_R: f32 = 0.3;
+pub(crate) const HIT_R: f32 = 0.3;
 /// JS `MAX_DROPS` (L220): the module-wide droplet cap.
 const MAX_DROPS: usize = 96;
 

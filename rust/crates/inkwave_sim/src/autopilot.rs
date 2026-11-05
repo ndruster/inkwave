@@ -163,6 +163,8 @@ pub fn run(
                         zones: zone_plan.as_ref(),
                         zctl: m.zones.as_ref(),
                         boss: None,
+                        launched: &m.launched,
+                        time: m.projectiles.time,
                     };
                     inputs[i] = bots[i].step(FIXED_DT, &mut m.actors[i], &ctx);
                 }
@@ -347,6 +349,8 @@ pub fn run_boss(
                     zctl: None,
                     // JS `G.boss` (bots.js L345): the brains fight the boss.
                     boss: Some(&bm.boss),
+                    launched: &m.launched,
+                    time: m.projectiles.time,
                 };
                 inputs[i] = bots[i].step(FIXED_DT, &mut m.actors[i], &ctx);
             }

@@ -515,6 +515,7 @@ fn tr36_08_zs_snapshot_carries_ten_r3_fields() {
             num(0.1),    // r3(neutralT)
             num(7.778),  // r3(holdT0)
             num(8.889),  // r3(holdT1)
+            num(0.1),    // Task 47 follow-up: zone clock at record time
         ])]
     );
     // a finite nextSwap rides the same slot

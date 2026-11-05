@@ -118,6 +118,34 @@ pub struct ActorInput {
     /// tops up a teammate booyah's charge.
     #[serde(default)]
     pub cheer: bool,
+    /// JS `brain._blHold` (blade.js L611 / L642 `botHolds`), routed through the
+    /// intent: `Some(G.time)` while a bot holds a Cutlass charge, `Some(-1.0)`
+    /// otherwise. Task 47 batch D: the bot writes it, [`Actor::bl_hold`]
+    /// carries it to the blade kit.
+    #[serde(default)]
+    pub bl_hold: Option<f32>,
+    /// Task 47 batch D: the Mitts bot's leap request (JS `botLeap` /
+    /// `dropCling(r, k, 'jump')` from `MAIN_KITS.mitts.bot`), routed through
+    /// the jump hook — the brain cannot reach the kit mutably.
+    #[serde(default)]
+    pub mitts_req: Option<MittsReq>,
+}
+
+/// A Mitts bot's one-frame leap request (Task 47 batch D; JS `k.botWant` /
+/// `k.botYaw` / `k.botPitch` / `k.botKind` set by `botLeap`, mitts.js L696-701,
+/// and the `dropCling(r, k, 'jump')` releases, L776 / L822).
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MittsReq {
+    /// JS `k.botWant`: the charge fraction to release at (`-1` = none).
+    pub want: f32,
+    /// JS `k.botYaw`.
+    pub yaw: f32,
+    /// JS `k.botPitch`.
+    pub pitch: f32,
+    /// JS `k.botKind === 'wall'`.
+    pub wall: bool,
+    /// Drop off a wall cling instead of leaping (JS `dropCling(..., 'jump')`).
+    pub drop: bool,
 }
 
 /// Cause of a splat (JS `splat(attacker, cause)`).
@@ -664,7 +692,23 @@ pub struct Actor {
     /// JS `stats.specials` (L65/L840): specials this actor has fired.
     #[serde(default)]
     pub specials_used: u32,
+    /// JS `a.bot._blHold` (blade.js L611 / L642): the match-clock stamp of a
+    /// bot holding a Cutlass charge (`-1` = not holding). Task 47 batch D: fed
+    /// by [`ActorInput::bl_hold`], read by the blade kit's fire rescue.
+    #[serde(default = "neg1_f32")]
+    pub bl_hold: f32,
+    /// JS `a.isBot` / `a.bot` (bots.js): set by [`crate::bot::Bot::step`] for
+    /// every brain-driven actor. Task 47 batch D: the kit-side bot branches
+    /// (Mitts leap / cling, blade `lungeSafe` ledge guard) read it.
+    #[serde(default)]
+    pub is_bot: bool,
     events: Vec<ActorEvent>,
+}
+
+/// Serde default for [`Actor::bl_hold`]: JS initialises `brain._blHold` to `-1`
+/// (blade.js L642 `botHolds` then never passes the `-0.3` window).
+fn neg1_f32() -> f32 {
+    -1.0
 }
 
 impl Actor {
@@ -740,6 +784,8 @@ impl Actor {
             sp_superjump_land: false,
             super_jump: None,
             specials_used: 0,
+            bl_hold: -1.0,
+            is_bot: false,
             events: Vec::new(),
         };
         a.reset(t);
@@ -976,6 +1022,13 @@ impl Actor {
     /// throw pose at 0.3 s): the weapon runner writes the facing hold timer.
     pub(crate) fn set_fire_facing(&mut self, secs: f32) {
         self.fire_facing = secs;
+    }
+
+    /// JS `a.fireFacing` read (bots.js L1382 / L1438: the threat square-up
+    /// takes `max(fireFacing, 0.25)`).
+    #[must_use]
+    pub(crate) fn fire_facing(&self) -> f32 {
+        self.fire_facing
     }
 
     /// Rising edge of the jump intent this frame (JS `actor.js` L310 gates the
@@ -1486,6 +1539,11 @@ impl Actor {
             "Actor::step must run at the fixed 60 Hz step, got dt={dt}"
         );
         self.time += dt;
+        // Task 47 batch D: the bot's Cutlass charge-hold stamp (JS
+        // `brain._blHold`, blade.js L611) rides the intent onto the actor.
+        if let Some(v) = input.bl_hold {
+            self.bl_hold = v;
+        }
         // safety net: a non-finite state must never poison physics or camera
         if !(self.pos.is_finite()
             && self.vel.is_finite()
@@ -1640,7 +1698,7 @@ impl Actor {
         if self.jump_buffer > 0.0
             && self.form != Form::Squid
             && let Some(k) = mitts.as_mut()
-            && k.jump(self, input.fire)
+            && k.jump(self, input)
         {
             self.jump_buffer = 0.0;
         }

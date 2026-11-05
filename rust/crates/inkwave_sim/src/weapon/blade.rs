@@ -6,8 +6,8 @@
 //!   - `cancelCharge` L49-53               -> [`cancel_charge`]
 //!   - `tap` L72-86                        -> [`tap`]
 //!   - `heavy` L87-102                     -> [`heavy`]
-//!   - `lungeSafe` L103-111                -> [`lunge_safe`] (bot ledge branch
-//!     dropped — bots are Task 39)
+//!   - `lungeSafe` L103-111                -> [`lunge_safe`] (the bot ledge
+//!     branch is restored by Task 47 batch D)
 //!   - `runSwing` L114-127                 -> [`run_swing`]
 //!   - `fireDrops` L131-178                -> [`fire_drops`]
 //!   - `groundStroke` L181-194             -> [`ground_stroke`]
@@ -27,9 +27,9 @@
 //! Intentional deviations from JS (recorded for review):
 //!   - `cutYaw` (L65-71): the sim's `aimPoint` is always `None` (spec §1),
 //!     so the cut heading is the aim yaw — `a.yaw` (the JS fallback branch).
-//!   - `coreDriven` / `botHolds` (L74-78, L640-642): bot-driven trigger logic
-//!     is Task 39; `auto` is `false` and the bot-hold patch is dropped
-//!     (spec D-T32-3).
+//!   - `coreDriven` / `botHolds` (L74-78, L640-642): `auto` stays `false`
+//!     (the sim has no climb-aim override); the `botHolds` fire rescue is
+//!     restored by Task 47 batch D via [`Actor::bl_hold`].
 //!   - `raw` (L630) reads the *ungated* intent fire flag — the sim passes
 //!     the raw input through (spec D-T32-2).
 //!   - Presentation state (`flashT`, `taps`, `heavies`, `sp`, hums, FX,
@@ -448,8 +448,9 @@ fn tap(r: &mut WeaponRunner, k: &mut BladeKit, w: &Blade, a: &mut Actor, ps: &mu
     r.firing_t = 0.4;
 }
 
-/// JS `heavy` (L87-102): the overhead cut with the short lunge.
-fn lunge_safe(
+/// JS `lungeSafe` (L103-111): the overhead cut's short lunge probe (used by
+/// `heavy` L96 and the bot tactics' cut-range test, L542).
+pub(crate) fn lunge_safe(
     a: &Actor,
     fx: f32,
     fz: f32,
@@ -457,9 +458,11 @@ fn lunge_safe(
     world: &CollisionWorld,
     t: &PlayerTuning,
 ) -> bool {
-    // JS L103-111: three samples along the lunge must not stand in the sea
-    // (the bot ledge guard is Task 39). JS `groundHeight(x, z, yMax)` has no
-    // grate flag — the sim passes `skip_grates = false`.
+    // JS L103-111: three samples along the lunge must not stand in the sea,
+    // and a bot never lunges off a ledge (Task 47 batch D — JS `a.bot &&
+    // !a.isLocal`: every brain-driven actor is non-local in the sim). JS
+    // `groundHeight(x, z, yMax)` has no grate flag — the sim passes
+    // `skip_grates = false`.
     for k in [0.5_f32, 1.0, 1.4] {
         let gy = world.ground_height(
             a.pos.x + fx * w.lunge_dist * k,
@@ -468,6 +471,9 @@ fn lunge_safe(
             false,
         );
         if gy <= t.water_y + 0.25 {
+            return false;
+        }
+        if a.is_bot && gy < a.pos.y - 1.6 {
             return false;
         }
     }
@@ -900,7 +906,14 @@ pub fn update(
         return;
     }
     k.store = 0.0;
-    let fire = gate.fire;
+    let mut fire = gate.fire;
+    // JS L642: a bot holding a charge keeps the trigger alive even when the
+    // emerge gate dropped it this frame (`botHolds`: `a.bot._blHold > G.time
+    // - 0.3`, Task 47 batch D). The `coreDriven` auto branch (L640) stays
+    // false — the sim's climb / refill override never drives the trigger.
+    if !fire && k.charging && a.bl_hold > ps_time - 0.3 {
+        fire = true;
+    }
     // JS L644: press edge (the `coreDriven` auto branch is Task 39 — spec
     // D-T32-3).
     if gate.pressed {

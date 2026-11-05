@@ -24,3 +24,15 @@
 - **HUD boss 条**：top 布局、chip 白条/红 HP 条叠放宽度、stun 条、OPEN!/callout 定位、title card/banner/ending 全屏文本、`is-zero` 闪与 hover cue 未移植（DOM 效应，D-T46-9）——均为文本/矩形占位档（参照 hud-boss.js 全 524 行）。
 - **结算 boss 行**：PHASE 列 + per-player dmg/weak/splats + Σ 总计行对齐（参照 main.js L960-961、menus.js L4031-4040）。
 - **bossAudio 占位**：本档仅事件→cue 记录表（无真合成，听感验收属 Task 50）；cue 触发序/去重门已由单测钉值，无需 GPU 复核。
+
+### Task 47 威胁 AI：tr38 ladder survival 端点门曾翻转（2026-11-05 登记，批次 D 后已恢复门过；待用户评审）
+- **现象（批次 B+C 时）**：`tr38_difficulty_ladder_monotonic` 的 hard≥easy survival 端点断言失败：开启态 hard 1593.4s < easy 1603.0s（HEAD 基线 hard 1658.8 / easy 1600.3，裕量 +58.5s）。kills 门仍单调（55/75/78）。日志：`rust/tools/verify/logs/task38-ladder-1793819794.log`。
+- **A/B 实验**（同 8 种子，`set_threat_ai(false)` 对照，临时测试已回收）：OFF 态 hard 1608.6 > easy 1567.2（裕量 +41.4，门通过）→ 第 7 预抽 `r_thr_scan` 的 RNG 流移单独不翻转门；翻转源自威胁 AI 行为本身。
+- **保真复查**：evade 方向（背离设备）、sidestep（垂直设备速度、偏己侧）、drift、scan 的 team+live 过滤、shoot 分支移动改写（站定/kite/×0.25）、aim 误差与 fire 门、`it.sub/bombAim` 压制、flank/steer/break、stamp steer、tail snappy——逐分支与 JS 一致，未发现 bug。
+- **统计论证**：ON vs OFF 逐 seed：easy 净 +35.6s（弱 bot 生存收益，符合设计意图）、hard 净 -15.2s，其中 seed 777 单点 -30.6s（死亡螺旋 15→22 死），其余 7 seed 净 +15.4s。8 种子端点门噪声底实测 ±17s 以上（HEAD→OFF 裕量漂移），单个离群 seed 足以翻转 -9.6s 裕量。
+- **最终事实（批次 D + 评审 P0-1 修复后）**：端点门已恢复通过——easy 1599.1s / normal 1631.7s / hard 1602.4s，hard≥easy 裕量 +3.3s（日志 `rust/tools/verify/logs/task38-ladder-1793831523.log`；P0-1 `BotCtx.time` 接 `projectiles.time` 的修复对 ladder 逐位无影响，ladder 装具无 blade）。严格单调 hard≥normal≥easy 仍 false（normal 高于两端），与 HEAD 基线同态，沿用 spec §5「违规记录并评审」口径，非新增违例。
+- **复核项**：确认端点门恢复属实、±17s 噪声底下的裕量 +3.3s 是否需要扩种子（8→16）复测由用户定夺。
+
+### Task 47 偏差登记复核（2026-11-05 评审轮登记；spec.md D-T47-11/12）
+- **D-T47-11 zones catch_up 时延补偿**：`match_/zones.rs` 的 `'zo` field2 / `'zs` field10 时钟戳 + follower `catch_up` 回放补偿是 JS 无对应的新逻辑（tr37 frame 6913 `pen` 差 0.083=5/60 复现证据、修复方式、互操作安全结论见 spec.md 条目）。需用户评审：接受该 sim 侧网络路径偏差，或要求 JS 同步补同款补偿。
+- **D-T47-12 rebuild_shields 每帧重建**：JS 仅 scan 时刷新成员、Rust 每帧重建（canopy 出现/消失至多早一个 scan 周期 ≤0.25s）。评审已定级 P1 可接受，留档备查。
