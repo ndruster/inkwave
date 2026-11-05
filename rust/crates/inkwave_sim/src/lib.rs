@@ -41,8 +41,23 @@ pub const TIDEWATER_JSON: &str = include_str!("../../../assets/maps/tidewater.js
 /// Extracted Saltpan Basin layout (`rust/assets/maps/saltpan.json`).
 pub const SALTPAN_JSON: &str = include_str!("../../../assets/maps/saltpan.json");
 
+/// Extracted Kelpline Terminal layout (`rust/assets/maps/kelpline.json`).
+pub const KELPLINE_JSON: &str = include_str!("../../../assets/maps/kelpline.json");
+
+/// Extracted Halyard Marina layout (`rust/assets/maps/halyard.json`).
+pub const HALYARD_JSON: &str = include_str!("../../../assets/maps/halyard.json");
+
 /// Extracted Crossroads Market layout (`rust/assets/maps/crossmarket.json`).
 pub const CROSSMARKET_JSON: &str = include_str!("../../../assets/maps/crossmarket.json");
+
+/// Extracted Lockgate Canals layout (`rust/assets/maps/lockgate.json`).
+pub const LOCKGATE_JSON: &str = include_str!("../../../assets/maps/lockgate.json");
+
+/// Extracted Terrace Heights layout (`rust/assets/maps/terraces.json`).
+pub const TERRACES_JSON: &str = include_str!("../../../assets/maps/terraces.json");
+
+/// Extracted Cargo Terminal layout (`rust/assets/maps/cargo.json`).
+pub const CARGO_JSON: &str = include_str!("../../../assets/maps/cargo.json");
 
 /// Tuning compiled into the binary; panics only if the extracted artifact is
 /// malformed (the pipeline output is schema-tested in CI).
@@ -66,6 +81,20 @@ pub fn embedded_saltpan() -> geometry::StageLayout {
         .expect("assets/maps/saltpan.json must be a valid stage layout document")
 }
 
+/// Kelpline layout compiled into the binary.
+#[must_use]
+pub fn embedded_kelpline() -> geometry::StageLayout {
+    geometry::layout_from_str(KELPLINE_JSON)
+        .expect("assets/maps/kelpline.json must be a valid stage layout document")
+}
+
+/// Halyard layout compiled into the binary.
+#[must_use]
+pub fn embedded_halyard() -> geometry::StageLayout {
+    geometry::layout_from_str(HALYARD_JSON)
+        .expect("assets/maps/halyard.json must be a valid stage layout document")
+}
+
 /// Crossmarket layout compiled into the binary.
 #[must_use]
 pub fn embedded_crossmarket() -> geometry::StageLayout {
@@ -73,7 +102,28 @@ pub fn embedded_crossmarket() -> geometry::StageLayout {
         .expect("assets/maps/crossmarket.json must be a valid stage layout document")
 }
 
-/// The embedded layout for a stage id (Task 37: the extracted stages).
+/// Lockgate layout compiled into the binary.
+#[must_use]
+pub fn embedded_lockgate() -> geometry::StageLayout {
+    geometry::layout_from_str(LOCKGATE_JSON)
+        .expect("assets/maps/lockgate.json must be a valid stage layout document")
+}
+
+/// Terraces layout compiled into the binary.
+#[must_use]
+pub fn embedded_terraces() -> geometry::StageLayout {
+    geometry::layout_from_str(TERRACES_JSON)
+        .expect("assets/maps/terraces.json must be a valid stage layout document")
+}
+
+/// Cargo layout compiled into the binary.
+#[must_use]
+pub fn embedded_cargo() -> geometry::StageLayout {
+    geometry::layout_from_str(CARGO_JSON)
+        .expect("assets/maps/cargo.json must be a valid stage layout document")
+}
+
+/// The embedded layout for a stage id (Task 37 / Task 48: all eight extracted stages).
 ///
 /// # Panics
 /// Panics when `id` is not one of the embedded stage layouts.
@@ -81,8 +131,13 @@ pub fn embedded_crossmarket() -> geometry::StageLayout {
 pub fn embedded_layout(id: &str) -> geometry::StageLayout {
     match id {
         "tidewater" => embedded_tidewater(),
+        "kelpline" => embedded_kelpline(),
+        "halyard" => embedded_halyard(),
         "saltpan" => embedded_saltpan(),
         "crossmarket" => embedded_crossmarket(),
+        "lockgate" => embedded_lockgate(),
+        "terraces" => embedded_terraces(),
+        "cargo" => embedded_cargo(),
         other => panic!("no embedded stage layout for id `{other}`"),
     }
 }

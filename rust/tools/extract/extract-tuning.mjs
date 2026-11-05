@@ -3,18 +3,21 @@
 // extended by Task 42 batch A with the boss nav plan constants and the
 // boss.hit rest-model-space sphere positions (schema v4),
 // extended by Task 43 batch A with the brain PREF table (schema v5),
-// extended by Task 44 batch A with the MAPS stage rule flags (schema v6).
+// extended by Task 44 batch A with the MAPS stage rule flags (schema v6),
+// extended by Task 48 batch C with the MAPS theme/times environment fields
+// (schema v7).
 //
 // Imports the upstream tuning module verbatim (src/config.js — never modified,
 // AC-1/TR-2.4) and emits the full gameplay tuning set into
-// rust/assets/tuning.json (schema inkwave.tuning.v6):
+// rust/assets/tuning.json (schema inkwave.tuning.v7):
 //   PLAYER, WEAPONS (the 12 roster weapons per WEAPON_ORDER — the retired
 //   dualies/slosher/splatling defs are NOT emitted, TR-28.2), WEAPON_ORDER,
 //   weaponRange() evaluated per weapon, SUBS (15, per SUB_ORDER),
 //   SPECIALS (19, per SPECIAL_ORDER), ZONES, MATCH, TEAM_PALETTES,
 //   DIFFICULTY (easy/normal/hard), BOSS (the Task 41 boss section),
-//   MAPS rule flags (the Task 44 section — id + onlineOnly/noBots/noBoss;
-//   the display fields name/blurb/theme/times stay in JS, theme is Task 48).
+//   MAPS rule flags + environment fields (the Task 44 section — id +
+//   onlineOnly/noBots/noBoss; extended by Task 48 with theme/times; only the
+//   display fields name/blurb stay in JS).
 // The retired M1 `spritzer` top-level alias was removed in Task 29 — the
 // consumers read `weapons.shooter` directly.
 //
@@ -280,18 +283,27 @@ const srcMAPS = sliceBlock(configJsSrc, 'config.js', 'MAPS', 'export const MAPS 
 assertContains(srcMAPS, "{ id: 'tidewater', name: 'Tidewater Plaza',", 'config.js MAPS');
 assertContains(srcMAPS, "{ id: 'cargo', name: 'Cargo Terminal',", 'config.js MAPS');
 assertContains(srcMAPS, 'onlineOnly: true, noBots: true, noBoss: true', 'config.js MAPS');
+// Task 48 batch C: pin the theme/times shape the artifact now carries — an
+// upstream re-spelling of the day/dusk table fails the pipeline here.
+assertContains(srcMAPS, "theme: 'day', times: { day: 'day', dusk: 'sunset' }", 'config.js MAPS');
+assertContains(srcMAPS, "theme: 'golden', times: { day: 'golden', dusk: 'sunset' }", 'config.js MAPS');
 const MAPS = new Function(`${deExport(srcMAPS)}\nreturn MAPS;`)();
-// Only the rule flags (config.js L527-530) reach the artifact; missing flags
-// default to false, matching the JS `!!m.flag` reads (L532-534).
+// The rule flags (config.js L527-530) and the environment fields (`theme` /
+// `times`, L510-513, Task 48 batch C) reach the artifact; missing flags
+// default to false, matching the JS `!!m.flag` reads (L532-534). A stage with
+// no `times` object emits no `times` key (mapTheme falls back to `theme`,
+// config.js L513). name/blurb stay display-only in JS.
 const maps = MAPS.map((m) => ({
   id: m.id,
   onlineOnly: !!m.onlineOnly,
   noBots: !!m.noBots,
   noBoss: !!m.noBoss,
+  theme: m.theme,
+  ...(m.times ? { times: m.times } : {}),
 }));
 
 const tuning = {
-  schema: 'inkwave.tuning.v6',
+  schema: 'inkwave.tuning.v7',
   source: { commit, path: 'src/config.js + src/boss/*.js' },
   player: PLAYER,
   weaponOrder: WEAPON_ORDER,

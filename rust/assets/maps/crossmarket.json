@@ -3651,7 +3651,7 @@
   ],
   "schema": "inkwave.stage_layout.v1",
   "source": {
-    "commit": "74e7030fff8186125a79521f330678452ac4f092",
+    "commit": "5343cd2eedfcf86202a567c6cd5d8a8e69c5df1c",
     "path": "src/world/stages/crossmarket/layout.js"
   },
   "stage": {

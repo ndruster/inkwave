@@ -1,4 +1,4 @@
-# tuning.json — 字段模式（schema `inkwave.tuning.v6`）
+# tuning.json — 字段模式（schema `inkwave.tuning.v7`）
 
 由 `rust/tools/extract/extract-tuning.mjs` 从上游 `src/config.js` 提取（v3 起另含 `src/boss/*.js`
 的 boss 数据表，切源+eval 方式，不经 ESM import），**不要手改**。
@@ -19,13 +19,15 @@ v4→v5（Task 43 批次 A）：`boss.brain` 新增 `pref` 字段（JS `PREF`，
 的偏好距离"，见下）；其余各节数值不变。
 v5→v6（Task 44 批次 A）：新增顶层 `maps` 节（`MAPS` 8 项规则旗标，config.js L515-525 字面块
 切源 eval，见下）；其余各节数值不变。
+v6→v7（Task 48 批次 C）：`maps` 各项新增环境字段 `theme`（字符串）与 `times`（对象，上游缺省
+时不写该键，config.js L510-513，见下）；其余各节数值不变。
 权威数值以本 JSON 为准（本文档只描述字段与语义，逐值锚定见 `inkwave_sim` 单测）。
 
 ## 顶层
 
 | 字段 | 含义 |
 | --- | --- |
-| `schema` | 模式标识 `inkwave.tuning.v6`，Rust 侧由单测 `schema_and_provenance` 精确断言 |
+| `schema` | 模式标识 `inkwave.tuning.v7`，Rust 侧由单测 `schema_and_provenance` 精确断言 |
 | `source.commit` / `source.path` | 数据出处（git commit 与 JS 文件），用于上游同步审查 |
 | `player` | `PLAYER`（config.js L21-90）：角色物理/手感全部常量，见下 |
 | `weaponOrder` | `WEAPON_ORDER`（L303）：12 武器出场顺序 |
@@ -227,9 +229,11 @@ JSON 键为蛇形（`barrage_sticky` 等），Rust 侧显式 rename。
 
 ## maps（src/config.js `MAPS` L515-525 规则旗标，Task 44 批次 A 新增）
 
-数组，顺序即 JS `MAPS` 数组序（8 项）；每项仅含模拟侧需要的规则旗标
-`{id, onlineOnly, noBots, noBoss}`（缺省=false，对应 JS `!!m.flag` 读法 L532-534）。
-展示字段 `name/blurb/theme/times` 不进入产物（theme 归 Task 48）。旗标语义（config.js L527-530）：
+数组，顺序即 JS `MAPS` 数组序（8 项）；每项含模拟侧需要的规则旗标
+`{id, onlineOnly, noBots, noBoss}`（缺省=false，对应 JS `!!m.flag` 读法 L532-534）
+与环境字段 `{theme, times}`（Task 48 批次 C：`theme` 为字符串；`times` 为
+时刻→主题映射，上游无 `times` 的图不写该键，对应 JS `mapTheme` 回退 L513）。
+展示字段 `name/blurb` 不进入产物。旗标语义（config.js L527-530）：
 
 | 旗标 | 含义 |
 | --- | --- |
@@ -238,9 +242,11 @@ JSON 键为蛇形（`barrage_sticky` 等），Rust 侧显式 rename。
 | `noBoss` | 永不作为 Boss Battle 场地（boss 房会换图） |
 
 仅 `cargo`（L524）三旗标全真，其余 7 图全假；`tidewater` 首位（`bossFallbackMap` 兜底即它）。
-Rust 侧纯函数 `map_by_id/map_no_bots/map_boss_ok/map_offline_ok/boss_fallback_map` ≡
-config.js L531-537，置于 `inkwave_sim::tuning`；逐值锚定见单测 `maps_flags_values`、
-`map_flag_functions`。
+theme/times 数值（config.js L516-524）：halyard/crossmarket/terraces `theme='golden'`，
+其余 5 图 `'day'`；8 图 `times` 均为 `{day: <theme>, dusk: 'sunset'}`。
+Rust 侧纯函数 `map_by_id/map_no_bots/map_boss_ok/map_offline_ok/boss_fallback_map/map_theme/offline_map_ids` ≡
+config.js L513/L531-537，置于 `inkwave_sim::tuning`；逐值锚定见单测 `maps_flags_values`、
+`map_flag_functions`、`maps_theme_times_values`、`map_theme_function`、`offline_map_list`。
 
 ## boss（Task 41 新增，src/boss/*.js 切源 eval）
 

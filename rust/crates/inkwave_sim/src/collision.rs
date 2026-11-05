@@ -1037,10 +1037,14 @@ fn face_hidden(
 ) -> bool {
     let nu = ((su / 1.25).ceil() as i32).max(2);
     let nv = ((sv / 1.25).ceil() as i32).max(2);
+    // 5 cm edge inset, as long as the face is wide enough for it (terraces'
+    // 0.085 m balustrade bars would invert the clamp range; Task 48 smoke).
+    let eu = if su >= 0.1 { 0.05 } else { su * 0.4 };
+    let ev = if sv >= 0.1 { 0.05 } else { sv * 0.4 };
     for j in 0..=nv {
         for i in 0..=nu {
-            let uu = ((i as f32 / nu as f32) * su).clamp(0.05, su - 0.05);
-            let vv = ((j as f32 / nv as f32) * sv).clamp(0.05, sv - 0.05);
+            let uu = ((i as f32 / nu as f32) * su).clamp(eu, su - eu);
+            let vv = ((j as f32 / nv as f32) * sv).clamp(ev, sv - ev);
             let p = origin + u * uu + v * vv + n * 0.03;
             if !point_inside(blocks, hash, hw, hx0, hz0, p, 1e-4, block as i32, scratch) {
                 return false;

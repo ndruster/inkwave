@@ -1,0 +1,4582 @@
+{
+  "meta": {
+    "bounds": {
+      "maxX": 28,
+      "maxZ": 46,
+      "minX": -28,
+      "minZ": -46
+    },
+    "primitiveCounts": {
+      "box": 90,
+      "obox": 20,
+      "ramp": 28,
+      "total": 138
+    },
+    "sourceCounts": {
+      "half": 69,
+      "halfMirrored": 69,
+      "single": 0
+    },
+    "spawnBarrier": 4.2,
+    "spawnPads": [
+      [
+        4,
+        2.4,
+        -41.9
+      ],
+      [
+        -4,
+        2.4,
+        41.9
+      ]
+    ],
+    "surfaceSlots": {
+      "engbrick": 41,
+      "hoofsteps": 42,
+      "setts": 40
+    },
+    "variantCounts": {
+      "turf": {
+        "box": 90,
+        "obox": 20,
+        "ramp": 28,
+        "total": 138
+      },
+      "zones": {
+        "box": 90,
+        "obox": 20,
+        "ramp": 28,
+        "total": 138
+      }
+    },
+    "waterY": -1.6
+  },
+  "primitives": [
+    {
+      "bevel": null,
+      "center": [
+        5.299765324993174,
+        -1.425,
+        -4.274460492272679
+      ],
+      "color": "#6a6b74",
+      "grate": false,
+      "hidden": false,
+      "kind": "obox",
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 13,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "rotY": -45,
+      "size": [
+        34.25,
+        3.15,
+        4
+      ],
+      "solid": true,
+      "tag": "towpath"
+    },
+    {
+      "bevel": null,
+      "color": "#6a6b74",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        28,
+        1.3,
+        9.25
+      ],
+      "min": [
+        15.5,
+        -3,
+        -2
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 13,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "wharf-e"
+    },
+    {
+      "bevel": null,
+      "color": "#6a6b74",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        15.5,
+        1.3,
+        6.25
+      ],
+      "min": [
+        13,
+        -3,
+        -2
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 13,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "wharf-e"
+    },
+    {
+      "bevel": null,
+      "color": "#6a6b74",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        15.5,
+        1.3,
+        7.25
+      ],
+      "min": [
+        14,
+        -3,
+        6.25
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 13,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "wharf-e"
+    },
+    {
+      "bevel": null,
+      "color": "#6a6b74",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        15.5,
+        1.3,
+        9.25
+      ],
+      "min": [
+        15,
+        -3,
+        7.25
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 13,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "wharf-e"
+    },
+    {
+      "bevel": null,
+      "color": "#6a6b74",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        28,
+        1.3,
+        21
+      ],
+      "min": [
+        15.5,
+        -3,
+        14.75
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 13,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "lockside-n"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        15.5,
+        0,
+        21
+      ],
+      "min": [
+        8,
+        -3,
+        14.75
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "basin-quay"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        24.5,
+        -1.9,
+        14.75
+      ],
+      "min": [
+        16.5,
+        -3,
+        9.25
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 3,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "chamber-floor"
+    },
+    {
+      "bevel": null,
+      "center": [
+        7.898382745853736,
+        -1.65,
+        2.7082189719444774
+      ],
+      "color": "#2d3440",
+      "grate": false,
+      "hidden": false,
+      "kind": "obox",
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 18,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "rotY": -45,
+      "size": [
+        7.800000000000001,
+        1.9000000000000001,
+        2.0999999999999996
+      ],
+      "solid": true,
+      "tag": "boat-a-hull"
+    },
+    {
+      "bevel": null,
+      "center": [
+        6.165971131946694,
+        -1.65,
+        4.01636651713959
+      ],
+      "color": "#2d3440",
+      "grate": false,
+      "hidden": false,
+      "kind": "obox",
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 18,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "rotY": -45,
+      "size": [
+        7.8,
+        1.9000000000000001,
+        2.0999999999999996
+      ],
+      "solid": true,
+      "tag": "boat-b-hull"
+    },
+    {
+      "bevel": null,
+      "center": [
+        7.898382745853736,
+        -0.22499999999999998,
+        2.7082189719444774
+      ],
+      "color": "#2c3a31",
+      "grate": false,
+      "hidden": false,
+      "kind": "obox",
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 14,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "rotY": -45,
+      "size": [
+        5.800000000000001,
+        0.95,
+        1.9
+      ],
+      "solid": true,
+      "tag": "boat-a-hold"
+    },
+    {
+      "bevel": null,
+      "center": [
+        6.165971131946694,
+        -0.22499999999999998,
+        4.01636651713959
+      ],
+      "color": "#2f4a3c",
+      "grate": false,
+      "hidden": false,
+      "kind": "obox",
+      "mural": [
+        {
+          "id": 4,
+          "n": [
+            -0.7071067811865476,
+            0,
+            0.7071067811865476
+          ]
+        }
+      ],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 18,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "rotY": -45,
+      "size": [
+        5.8,
+        0.95,
+        1.9000000000000004
+      ],
+      "solid": true,
+      "tag": "boat-b-cabin"
+    },
+    {
+      "bevel": null,
+      "color": "#4a3a30",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        17.1,
+        1.3,
+        14.75
+      ],
+      "min": [
+        15.9,
+        1.05,
+        9.25
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 17,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "gate-walk-lower"
+    },
+    {
+      "bevel": null,
+      "color": "#4a3a30",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        25.1,
+        1.3,
+        14.75
+      ],
+      "min": [
+        23.9,
+        1.05,
+        9.25
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 17,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "gate-walk-upper"
+    },
+    {
+      "bevel": null,
+      "color": "#6d7780",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        23.9,
+        1.3,
+        12
+      ],
+      "kind": "ramp",
+      "low": [
+        16.65,
+        -1.9,
+        12
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 24,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "chamber-stair",
+      "thickness": 0.6,
+      "thin": false,
+      "width": 5.5
+    },
+    {
+      "bevel": null,
+      "color": "#d8d0c0",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        15.5,
+        1.3,
+        17.6
+      ],
+      "kind": "ramp",
+      "low": [
+        12,
+        0,
+        17.6
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 25,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "lock-steps",
+      "thickness": 0.6,
+      "thin": false,
+      "width": 2.4
+    },
+    {
+      "bevel": null,
+      "center": [
+        5.444722215136417,
+        1.5,
+        -5.444722215136417
+      ],
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "obox",
+      "mural": [],
+      "noNav": false,
+      "noPaint": [
+        [
+          -0.7071067811865476,
+          0,
+          0.7071067811865476
+        ]
+      ],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "rotY": -45,
+      "size": [
+        4.4,
+        3,
+        1.4000000000000004
+      ],
+      "solid": true,
+      "tag": "bridge-abutment"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        5.939696961967,
+        3,
+        -5.939696961967
+      ],
+      "kind": "ramp",
+      "low": [
+        10.748023074035522,
+        0,
+        -10.748023074035522
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 42,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "bridge-ramp",
+      "thickness": 0.6,
+      "thin": false,
+      "width": 4.4
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        0,
+        3.3,
+        0
+      ],
+      "kind": "ramp",
+      "low": [
+        4.949747468305833,
+        3,
+        -4.949747468305833
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "bridge-crest",
+      "thickness": 0.5,
+      "thin": true,
+      "width": 4.4
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        7.636753236814714,
+        3.93,
+        -4.242640687119286
+      ],
+      "kind": "ramp",
+      "low": [
+        12.445079348883235,
+        0.93,
+        -9.050966799187808
+      ],
+      "mural": [],
+      "noNav": true,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": true,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "bridge-parapet",
+      "thickness": 4.1,
+      "thin": false,
+      "width": 0.4
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        4.242640687119286,
+        3.93,
+        -7.636753236814714
+      ],
+      "kind": "ramp",
+      "low": [
+        9.050966799187808,
+        0.93,
+        -12.445079348883235
+      ],
+      "mural": [],
+      "noNav": true,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": true,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "bridge-parapet",
+      "thickness": 4.1,
+      "thin": false,
+      "width": 0.4
+    },
+    {
+      "bevel": null,
+      "center": [
+        7.141778489984132,
+        1.965,
+        -3.747665940288702
+      ],
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "obox",
+      "mural": [],
+      "noNav": true,
+      "noPaint": [
+        [
+          -0.7071067811865476,
+          0,
+          0.7071067811865476
+        ]
+      ],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": true,
+      "rail": false,
+      "roof": false,
+      "rotY": -45,
+      "size": [
+        0.3999999999999999,
+        3.93,
+        1.4000000000000004
+      ],
+      "solid": true,
+      "tag": "bridge-parapet"
+    },
+    {
+      "bevel": null,
+      "center": [
+        3.747665940288702,
+        1.965,
+        -7.141778489984132
+      ],
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "obox",
+      "mural": [],
+      "noNav": true,
+      "noPaint": [
+        [
+          -0.7071067811865476,
+          0,
+          0.7071067811865476
+        ]
+      ],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": true,
+      "rail": false,
+      "roof": false,
+      "rotY": -45,
+      "size": [
+        0.3999999999999999,
+        3.93,
+        1.4000000000000004
+      ],
+      "solid": true,
+      "tag": "bridge-parapet"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        1.697056274847714,
+        4.23,
+        1.697056274847714
+      ],
+      "kind": "ramp",
+      "low": [
+        6.646803743153548,
+        3.93,
+        -3.2526911934581184
+      ],
+      "mural": [],
+      "noNav": true,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": true,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "bridge-parapet",
+      "thickness": 1.2,
+      "thin": true,
+      "width": 0.4
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        -1.697056274847714,
+        4.23,
+        -1.697056274847714
+      ],
+      "kind": "ramp",
+      "low": [
+        3.2526911934581184,
+        3.93,
+        -6.646803743153548
+      ],
+      "mural": [],
+      "noNav": true,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": true,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "bridge-parapet",
+      "thickness": 1.2,
+      "thin": true,
+      "width": 0.4
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        22,
+        0,
+        -36
+      ],
+      "min": [
+        -12,
+        -0.6,
+        -45.4
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -4,
+        0,
+        -15
+      ],
+      "min": [
+        -8,
+        -0.6,
+        -36
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        0,
+        0,
+        -11
+      ],
+      "min": [
+        -4,
+        -0.6,
+        -36
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        4,
+        0,
+        -7
+      ],
+      "min": [
+        0,
+        -0.6,
+        -36
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        8,
+        0,
+        -3
+      ],
+      "min": [
+        4,
+        -0.6,
+        -36
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        14,
+        0,
+        1
+      ],
+      "min": [
+        8,
+        -0.6,
+        -36
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -8,
+        0,
+        -21
+      ],
+      "min": [
+        -12,
+        -0.6,
+        -36
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -12,
+        0,
+        -21
+      ],
+      "min": [
+        -27,
+        -0.6,
+        -29
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -12,
+        0,
+        -29
+      ],
+      "min": [
+        -25,
+        -0.6,
+        -31
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -12,
+        0,
+        -31
+      ],
+      "min": [
+        -23,
+        -0.6,
+        -33
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -12,
+        0,
+        -33
+      ],
+      "min": [
+        -21,
+        -0.6,
+        -35
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -12,
+        0,
+        -35
+      ],
+      "min": [
+        -20,
+        -0.6,
+        -36
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        22,
+        0,
+        -17
+      ],
+      "min": [
+        14,
+        -0.6,
+        -36
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "center": [
+        -22.977434854656867,
+        -0.22499999999999998,
+        -31.96476204353788
+      ],
+      "color": "#bcb4a6",
+      "grate": false,
+      "hidden": false,
+      "kind": "obox",
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 16,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "rotY": -45,
+      "size": [
+        1.5,
+        0.75,
+        9.89
+      ],
+      "solid": true,
+      "tag": "apron"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        22,
+        4.6,
+        -45.4
+      ],
+      "min": [
+        -12,
+        0,
+        -46
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "warehouse-front"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        13,
+        2.2,
+        -38.4
+      ],
+      "min": [
+        -5,
+        0,
+        -45.4
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "spawn-stage"
+    },
+    {
+      "bevel": null,
+      "color": "#eae6de",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        13,
+        2.4,
+        -38.4
+      ],
+      "min": [
+        -5,
+        2.2,
+        -45.4
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 8,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "spawn"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        0.8,
+        3.15,
+        -38.4
+      ],
+      "min": [
+        -5,
+        2.4,
+        -39
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "stage-parapet"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        13,
+        3.15,
+        -38.4
+      ],
+      "min": [
+        7.2,
+        2.4,
+        -39
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "stage-parapet"
+    },
+    {
+      "bevel": null,
+      "color": "#d8d0c0",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        4,
+        2.4,
+        -38.4
+      ],
+      "kind": "ramp",
+      "low": [
+        4,
+        0,
+        -32.4
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 25,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "grand-stair",
+      "thickness": 0.6,
+      "thin": false,
+      "width": 6
+    },
+    {
+      "bevel": null,
+      "color": "#d8d0c0",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        -5,
+        2.4,
+        -43.55
+      ],
+      "kind": "ramp",
+      "low": [
+        -11,
+        0,
+        -43.55
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 25,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "west-stair",
+      "thickness": 0.6,
+      "thin": false,
+      "width": 3.7
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        13,
+        2.4,
+        -42.05
+      ],
+      "kind": "ramp",
+      "low": [
+        21,
+        0,
+        -42.05
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 42,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "cart-ramp",
+      "thickness": 0.6,
+      "thin": false,
+      "width": 6.7
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -12,
+        4.6,
+        -36
+      ],
+      "min": [
+        -12.6,
+        0,
+        -45.4
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "boundary"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -12.6,
+        4.6,
+        -36
+      ],
+      "min": [
+        -20,
+        0,
+        -36.6
+      ],
+      "mural": [
+        {
+          "id": 6,
+          "n": [
+            0,
+            0,
+            1
+          ]
+        }
+      ],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "boundary"
+    },
+    {
+      "bevel": null,
+      "center": [
+        -23.723432508808674,
+        2.225,
+        -32.70368862987783
+      ],
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "obox",
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "rotY": -45,
+      "size": [
+        0.6000000000000014,
+        4.45,
+        10.5
+      ],
+      "solid": true,
+      "tag": "boundary-chamfer"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -27,
+        4.6,
+        -24
+      ],
+      "min": [
+        -28,
+        0,
+        -29
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "boundary"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        22.6,
+        4.6,
+        -17
+      ],
+      "min": [
+        22,
+        0,
+        -45.4
+      ],
+      "mural": [
+        {
+          "id": 7,
+          "n": [
+            -1,
+            0,
+            0
+          ]
+        }
+      ],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "boundary"
+    },
+    {
+      "bevel": null,
+      "color": "#ece4d4",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -14.5,
+        5.2,
+        -25.5
+      ],
+      "min": [
+        -21,
+        0,
+        -32
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 23,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "cottage"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -12.5,
+        2.45,
+        -27
+      ],
+      "min": [
+        -14.5,
+        0,
+        -31.5
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "cottage-outshut"
+    },
+    {
+      "bevel": null,
+      "color": "#7a7d82",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -12.5,
+        2.6,
+        -27
+      ],
+      "min": [
+        -14.5,
+        2.45,
+        -31.5
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 10,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "outshut-roof"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        -24.5,
+        1.3,
+        -21
+      ],
+      "kind": "ramp",
+      "low": [
+        -24.5,
+        0,
+        -27.5
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 42,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "horse-ramp",
+      "thickness": 0.6,
+      "thin": false,
+      "width": 3
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -1.5,
+        2.45,
+        -18
+      ],
+      "min": [
+        -8,
+        0,
+        -26
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "office"
+    },
+    {
+      "bevel": null,
+      "color": "#7a7d82",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -1.5,
+        2.6,
+        -18
+      ],
+      "min": [
+        -8,
+        2.45,
+        -26
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 10,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "office-roof"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -1.5,
+        3.05,
+        -18
+      ],
+      "min": [
+        -8,
+        2.6,
+        -18.3
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "office-parapet"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -1.5,
+        3.05,
+        -18.3
+      ],
+      "min": [
+        -1.8,
+        2.6,
+        -26
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "office-parapet"
+    },
+    {
+      "bevel": null,
+      "color": "#d8d0c0",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        -7,
+        2.6,
+        -26
+      ],
+      "kind": "ramp",
+      "low": [
+        -7,
+        0,
+        -32
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 25,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "office-stair",
+      "thickness": 0.6,
+      "thin": false,
+      "width": 2
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        12.5,
+        3.6,
+        -19
+      ],
+      "min": [
+        5.5,
+        0,
+        -27
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "stables"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        18,
+        1.3,
+        -2
+      ],
+      "min": [
+        14,
+        0,
+        -17
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "loading-bank"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        28,
+        4.8,
+        -2
+      ],
+      "min": [
+        18,
+        0,
+        -17
+      ],
+      "mural": [
+        {
+          "id": 5,
+          "n": [
+            0,
+            0,
+            1
+          ]
+        }
+      ],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "shed"
+    },
+    {
+      "bevel": null,
+      "color": "#d8d0c0",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        16,
+        1.3,
+        -17
+      ],
+      "kind": "ramp",
+      "low": [
+        16,
+        0,
+        -22
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 25,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "bank-steps",
+      "thickness": 0.6,
+      "thin": false,
+      "width": 3
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        28,
+        9,
+        9.25
+      ],
+      "min": [
+        27,
+        1.3,
+        -2
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [
+        [
+          -1,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          -1
+        ]
+      ],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "mill"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        28,
+        9,
+        14.75
+      ],
+      "min": [
+        27,
+        4.2,
+        9.25
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [
+        [
+          -1,
+          0,
+          0
+        ],
+        [
+          0,
+          -1,
+          0
+        ]
+      ],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "mill-arch"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        28,
+        9,
+        21
+      ],
+      "min": [
+        27,
+        1.3,
+        14.75
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [
+        [
+          -1,
+          0,
+          0
+        ]
+      ],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "mill"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        28,
+        9,
+        24
+      ],
+      "min": [
+        27,
+        0,
+        21
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [
+        [
+          -1,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          1
+        ]
+      ],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "mill"
+    },
+    {
+      "bevel": null,
+      "center": [
+        -5.299765324993174,
+        -1.425,
+        4.274460492272679
+      ],
+      "color": "#6a6b74",
+      "grate": false,
+      "hidden": false,
+      "kind": "obox",
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 13,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "rotY": -45,
+      "size": [
+        34.25,
+        3.15,
+        4
+      ],
+      "solid": true,
+      "tag": "towpath"
+    },
+    {
+      "bevel": null,
+      "color": "#6a6b74",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -15.5,
+        1.3,
+        2
+      ],
+      "min": [
+        -28,
+        -3,
+        -9.25
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 13,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "wharf-e"
+    },
+    {
+      "bevel": null,
+      "color": "#6a6b74",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -13,
+        1.3,
+        2
+      ],
+      "min": [
+        -15.5,
+        -3,
+        -6.25
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 13,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "wharf-e"
+    },
+    {
+      "bevel": null,
+      "color": "#6a6b74",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -14,
+        1.3,
+        -6.25
+      ],
+      "min": [
+        -15.5,
+        -3,
+        -7.25
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 13,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "wharf-e"
+    },
+    {
+      "bevel": null,
+      "color": "#6a6b74",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -15,
+        1.3,
+        -7.25
+      ],
+      "min": [
+        -15.5,
+        -3,
+        -9.25
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 13,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "wharf-e"
+    },
+    {
+      "bevel": null,
+      "color": "#6a6b74",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -15.5,
+        1.3,
+        -14.75
+      ],
+      "min": [
+        -28,
+        -3,
+        -21
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 13,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "lockside-n"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -8,
+        0,
+        -14.75
+      ],
+      "min": [
+        -15.5,
+        -3,
+        -21
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "basin-quay"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -16.5,
+        -1.9,
+        -9.25
+      ],
+      "min": [
+        -24.5,
+        -3,
+        -14.75
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 3,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "chamber-floor"
+    },
+    {
+      "bevel": null,
+      "center": [
+        -7.898382745853736,
+        -1.65,
+        -2.7082189719444774
+      ],
+      "color": "#2d3440",
+      "grate": false,
+      "hidden": false,
+      "kind": "obox",
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 18,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "rotY": -45,
+      "size": [
+        7.800000000000001,
+        1.9000000000000001,
+        2.0999999999999996
+      ],
+      "solid": true,
+      "tag": "boat-a-hull"
+    },
+    {
+      "bevel": null,
+      "center": [
+        -6.165971131946694,
+        -1.65,
+        -4.01636651713959
+      ],
+      "color": "#2d3440",
+      "grate": false,
+      "hidden": false,
+      "kind": "obox",
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 18,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "rotY": -45,
+      "size": [
+        7.8,
+        1.9000000000000001,
+        2.0999999999999996
+      ],
+      "solid": true,
+      "tag": "boat-b-hull"
+    },
+    {
+      "bevel": null,
+      "center": [
+        -7.898382745853736,
+        -0.22499999999999998,
+        -2.7082189719444774
+      ],
+      "color": "#2c3a31",
+      "grate": false,
+      "hidden": false,
+      "kind": "obox",
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 14,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "rotY": -45,
+      "size": [
+        5.800000000000001,
+        0.95,
+        1.9
+      ],
+      "solid": true,
+      "tag": "boat-a-hold"
+    },
+    {
+      "bevel": null,
+      "center": [
+        -6.165971131946694,
+        -0.22499999999999998,
+        -4.01636651713959
+      ],
+      "color": "#2f4a3c",
+      "grate": false,
+      "hidden": false,
+      "kind": "obox",
+      "mural": [
+        {
+          "id": 4,
+          "n": [
+            0.7071067811865476,
+            0,
+            -0.7071067811865476
+          ]
+        }
+      ],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 18,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "rotY": -45,
+      "size": [
+        5.8,
+        0.95,
+        1.9000000000000004
+      ],
+      "solid": true,
+      "tag": "boat-b-cabin"
+    },
+    {
+      "bevel": null,
+      "color": "#4a3a30",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -15.9,
+        1.3,
+        -9.25
+      ],
+      "min": [
+        -17.1,
+        1.05,
+        -14.75
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 17,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "gate-walk-lower"
+    },
+    {
+      "bevel": null,
+      "color": "#4a3a30",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -23.9,
+        1.3,
+        -9.25
+      ],
+      "min": [
+        -25.1,
+        1.05,
+        -14.75
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 17,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "gate-walk-upper"
+    },
+    {
+      "bevel": null,
+      "color": "#6d7780",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        -23.9,
+        1.3,
+        -12
+      ],
+      "kind": "ramp",
+      "low": [
+        -16.65,
+        -1.9,
+        -12
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 24,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "chamber-stair",
+      "thickness": 0.6,
+      "thin": false,
+      "width": 5.5
+    },
+    {
+      "bevel": null,
+      "color": "#d8d0c0",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        -15.5,
+        1.3,
+        -17.6
+      ],
+      "kind": "ramp",
+      "low": [
+        -12,
+        0,
+        -17.6
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 25,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "lock-steps",
+      "thickness": 0.6,
+      "thin": false,
+      "width": 2.4
+    },
+    {
+      "bevel": null,
+      "center": [
+        -5.444722215136417,
+        1.5,
+        5.444722215136417
+      ],
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "obox",
+      "mural": [],
+      "noNav": false,
+      "noPaint": [
+        [
+          0.7071067811865476,
+          0,
+          -0.7071067811865476
+        ]
+      ],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "rotY": -45,
+      "size": [
+        4.4,
+        3,
+        1.4000000000000004
+      ],
+      "solid": true,
+      "tag": "bridge-abutment"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        -5.939696961967,
+        3,
+        5.939696961967
+      ],
+      "kind": "ramp",
+      "low": [
+        -10.748023074035522,
+        0,
+        10.748023074035522
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 42,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "bridge-ramp",
+      "thickness": 0.6,
+      "thin": false,
+      "width": 4.4
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        0,
+        3.3,
+        0
+      ],
+      "kind": "ramp",
+      "low": [
+        -4.949747468305833,
+        3,
+        4.949747468305833
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "bridge-crest",
+      "thickness": 0.5,
+      "thin": true,
+      "width": 4.4
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        -7.636753236814714,
+        3.93,
+        4.242640687119286
+      ],
+      "kind": "ramp",
+      "low": [
+        -12.445079348883235,
+        0.93,
+        9.050966799187808
+      ],
+      "mural": [],
+      "noNav": true,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": true,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "bridge-parapet",
+      "thickness": 4.1,
+      "thin": false,
+      "width": 0.4
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        -4.242640687119286,
+        3.93,
+        7.636753236814714
+      ],
+      "kind": "ramp",
+      "low": [
+        -9.050966799187808,
+        0.93,
+        12.445079348883235
+      ],
+      "mural": [],
+      "noNav": true,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": true,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "bridge-parapet",
+      "thickness": 4.1,
+      "thin": false,
+      "width": 0.4
+    },
+    {
+      "bevel": null,
+      "center": [
+        -7.141778489984132,
+        1.965,
+        3.747665940288702
+      ],
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "obox",
+      "mural": [],
+      "noNav": true,
+      "noPaint": [
+        [
+          0.7071067811865476,
+          0,
+          -0.7071067811865476
+        ]
+      ],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": true,
+      "rail": false,
+      "roof": false,
+      "rotY": -45,
+      "size": [
+        0.3999999999999999,
+        3.93,
+        1.4000000000000004
+      ],
+      "solid": true,
+      "tag": "bridge-parapet"
+    },
+    {
+      "bevel": null,
+      "center": [
+        -3.747665940288702,
+        1.965,
+        7.141778489984132
+      ],
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "obox",
+      "mural": [],
+      "noNav": true,
+      "noPaint": [
+        [
+          0.7071067811865476,
+          0,
+          -0.7071067811865476
+        ]
+      ],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": true,
+      "rail": false,
+      "roof": false,
+      "rotY": -45,
+      "size": [
+        0.3999999999999999,
+        3.93,
+        1.4000000000000004
+      ],
+      "solid": true,
+      "tag": "bridge-parapet"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        -1.697056274847714,
+        4.23,
+        -1.697056274847714
+      ],
+      "kind": "ramp",
+      "low": [
+        -6.646803743153548,
+        3.93,
+        3.2526911934581184
+      ],
+      "mural": [],
+      "noNav": true,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": true,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "bridge-parapet",
+      "thickness": 1.2,
+      "thin": true,
+      "width": 0.4
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        1.697056274847714,
+        4.23,
+        1.697056274847714
+      ],
+      "kind": "ramp",
+      "low": [
+        -3.2526911934581184,
+        3.93,
+        6.646803743153548
+      ],
+      "mural": [],
+      "noNav": true,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": true,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "bridge-parapet",
+      "thickness": 1.2,
+      "thin": true,
+      "width": 0.4
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        12,
+        0,
+        45.4
+      ],
+      "min": [
+        -22,
+        -0.6,
+        36
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        8,
+        0,
+        36
+      ],
+      "min": [
+        4,
+        -0.6,
+        15
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        4,
+        0,
+        36
+      ],
+      "min": [
+        0,
+        -0.6,
+        11
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        0,
+        0,
+        36
+      ],
+      "min": [
+        -4,
+        -0.6,
+        7
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -4,
+        0,
+        36
+      ],
+      "min": [
+        -8,
+        -0.6,
+        3
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -8,
+        0,
+        36
+      ],
+      "min": [
+        -14,
+        -0.6,
+        -1
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        12,
+        0,
+        36
+      ],
+      "min": [
+        8,
+        -0.6,
+        21
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        27,
+        0,
+        29
+      ],
+      "min": [
+        12,
+        -0.6,
+        21
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        25,
+        0,
+        31
+      ],
+      "min": [
+        12,
+        -0.6,
+        29
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        23,
+        0,
+        33
+      ],
+      "min": [
+        12,
+        -0.6,
+        31
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        21,
+        0,
+        35
+      ],
+      "min": [
+        12,
+        -0.6,
+        33
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        20,
+        0,
+        36
+      ],
+      "min": [
+        12,
+        -0.6,
+        35
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -14,
+        0,
+        36
+      ],
+      "min": [
+        -22,
+        -0.6,
+        17
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "yard"
+    },
+    {
+      "bevel": null,
+      "center": [
+        22.977434854656867,
+        -0.22499999999999998,
+        31.96476204353788
+      ],
+      "color": "#bcb4a6",
+      "grate": false,
+      "hidden": false,
+      "kind": "obox",
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 16,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "rotY": -45,
+      "size": [
+        1.5,
+        0.75,
+        9.89
+      ],
+      "solid": true,
+      "tag": "apron"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        12,
+        4.6,
+        46
+      ],
+      "min": [
+        -22,
+        0,
+        45.4
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "warehouse-front"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        5,
+        2.2,
+        45.4
+      ],
+      "min": [
+        -13,
+        0,
+        38.4
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "spawn-stage"
+    },
+    {
+      "bevel": null,
+      "color": "#eae6de",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        5,
+        2.4,
+        45.4
+      ],
+      "min": [
+        -13,
+        2.2,
+        38.4
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 8,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "spawn"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        5,
+        3.15,
+        39
+      ],
+      "min": [
+        -0.8,
+        2.4,
+        38.4
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "stage-parapet"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -7.2,
+        3.15,
+        39
+      ],
+      "min": [
+        -13,
+        2.4,
+        38.4
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "stage-parapet"
+    },
+    {
+      "bevel": null,
+      "color": "#d8d0c0",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        -4,
+        2.4,
+        38.4
+      ],
+      "kind": "ramp",
+      "low": [
+        -4,
+        0,
+        32.4
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 25,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "grand-stair",
+      "thickness": 0.6,
+      "thin": false,
+      "width": 6
+    },
+    {
+      "bevel": null,
+      "color": "#d8d0c0",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        5,
+        2.4,
+        43.55
+      ],
+      "kind": "ramp",
+      "low": [
+        11,
+        0,
+        43.55
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 25,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "west-stair",
+      "thickness": 0.6,
+      "thin": false,
+      "width": 3.7
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        -13,
+        2.4,
+        42.05
+      ],
+      "kind": "ramp",
+      "low": [
+        -21,
+        0,
+        42.05
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 42,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "cart-ramp",
+      "thickness": 0.6,
+      "thin": false,
+      "width": 6.7
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        12.6,
+        4.6,
+        45.4
+      ],
+      "min": [
+        12,
+        0,
+        36
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "boundary"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        20,
+        4.6,
+        36.6
+      ],
+      "min": [
+        12.6,
+        0,
+        36
+      ],
+      "mural": [
+        {
+          "id": 6,
+          "n": [
+            0,
+            0,
+            -1
+          ]
+        }
+      ],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "boundary"
+    },
+    {
+      "bevel": null,
+      "center": [
+        23.723432508808674,
+        2.225,
+        32.70368862987783
+      ],
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "obox",
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "rotY": -45,
+      "size": [
+        0.6000000000000014,
+        4.45,
+        10.5
+      ],
+      "solid": true,
+      "tag": "boundary-chamfer"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        28,
+        4.6,
+        29
+      ],
+      "min": [
+        27,
+        0,
+        24
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "boundary"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -22,
+        4.6,
+        45.4
+      ],
+      "min": [
+        -22.6,
+        0,
+        17
+      ],
+      "mural": [
+        {
+          "id": 7,
+          "n": [
+            1,
+            0,
+            0
+          ]
+        }
+      ],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "boundary"
+    },
+    {
+      "bevel": null,
+      "color": "#ece4d4",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        21,
+        5.2,
+        32
+      ],
+      "min": [
+        14.5,
+        0,
+        25.5
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 23,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "cottage"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        14.5,
+        2.45,
+        31.5
+      ],
+      "min": [
+        12.5,
+        0,
+        27
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "cottage-outshut"
+    },
+    {
+      "bevel": null,
+      "color": "#7a7d82",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        14.5,
+        2.6,
+        31.5
+      ],
+      "min": [
+        12.5,
+        2.45,
+        27
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 10,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "outshut-roof"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        24.5,
+        1.3,
+        21
+      ],
+      "kind": "ramp",
+      "low": [
+        24.5,
+        0,
+        27.5
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 42,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "horse-ramp",
+      "thickness": 0.6,
+      "thin": false,
+      "width": 3
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        8,
+        2.45,
+        26
+      ],
+      "min": [
+        1.5,
+        0,
+        18
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "office"
+    },
+    {
+      "bevel": null,
+      "color": "#7a7d82",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        8,
+        2.6,
+        26
+      ],
+      "min": [
+        1.5,
+        2.45,
+        18
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 10,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "office-roof"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        8,
+        3.05,
+        18.3
+      ],
+      "min": [
+        1.5,
+        2.6,
+        18
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "office-parapet"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        1.8,
+        3.05,
+        26
+      ],
+      "min": [
+        1.5,
+        2.6,
+        18.3
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "office-parapet"
+    },
+    {
+      "bevel": null,
+      "color": "#d8d0c0",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        7,
+        2.6,
+        26
+      ],
+      "kind": "ramp",
+      "low": [
+        7,
+        0,
+        32
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 25,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "office-stair",
+      "thickness": 0.6,
+      "thin": false,
+      "width": 2
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -5.5,
+        3.6,
+        27
+      ],
+      "min": [
+        -12.5,
+        0,
+        19
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "stables"
+    },
+    {
+      "bevel": null,
+      "color": "#a9a39a",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -14,
+        1.3,
+        17
+      ],
+      "min": [
+        -18,
+        0,
+        2
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 40,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "loading-bank"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -18,
+        4.8,
+        17
+      ],
+      "min": [
+        -28,
+        0,
+        2
+      ],
+      "mural": [
+        {
+          "id": 5,
+          "n": [
+            0,
+            0,
+            -1
+          ]
+        }
+      ],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "shed"
+    },
+    {
+      "bevel": null,
+      "color": "#d8d0c0",
+      "grate": false,
+      "hidden": false,
+      "high": [
+        -16,
+        1.3,
+        17
+      ],
+      "kind": "ramp",
+      "low": [
+        -16,
+        0,
+        22
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 25,
+      "perch": false,
+      "rail": false,
+      "roof": false,
+      "solid": true,
+      "tag": "bank-steps",
+      "thickness": 0.6,
+      "thin": false,
+      "width": 3
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -27,
+        9,
+        2
+      ],
+      "min": [
+        -28,
+        1.3,
+        -9.25
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [
+        [
+          1,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          1
+        ]
+      ],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "mill"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -27,
+        9,
+        -9.25
+      ],
+      "min": [
+        -28,
+        4.2,
+        -14.75
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [
+        [
+          1,
+          0,
+          0
+        ],
+        [
+          0,
+          -1,
+          0
+        ]
+      ],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "mill-arch"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -27,
+        9,
+        -14.75
+      ],
+      "min": [
+        -28,
+        1.3,
+        -21
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [
+        [
+          1,
+          0,
+          0
+        ]
+      ],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "mill"
+    },
+    {
+      "bevel": null,
+      "color": "#a4563f",
+      "grate": false,
+      "hidden": false,
+      "kind": "box",
+      "max": [
+        -27,
+        9,
+        -21
+      ],
+      "min": [
+        -28,
+        0,
+        -24
+      ],
+      "mural": [],
+      "noNav": false,
+      "noPaint": [
+        [
+          1,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          -1
+        ]
+      ],
+      "notIn": null,
+      "oct": null,
+      "onlyIn": null,
+      "paint": true,
+      "pattern": 41,
+      "perch": false,
+      "rail": false,
+      "roof": true,
+      "solid": true,
+      "tag": "mill"
+    }
+  ],
+  "schema": "inkwave.stage_layout.v1",
+  "source": {
+    "commit": "5343cd2eedfcf86202a567c6cd5d8a8e69c5df1c",
+    "path": "src/world/stages/lockgate/layout.js"
+  },
+  "stage": {
+    "bounds": {
+      "maxX": 28,
+      "maxZ": 46,
+      "minX": -28,
+      "minZ": -46
+    },
+    "id": "lockgate",
+    "spawnBarrier": 4.2,
+    "spawnPads": [
+      [
+        4,
+        2.4,
+        -41.9
+      ],
+      [
+        -4,
+        2.4,
+        41.9
+      ]
+    ],
+    "waterY": -1.6
+  },
+  "zones": {
+    "center": [
+      {
+        "poly": [
+          [
+            12.514,
+            -9.403
+          ],
+          [
+            -9.403,
+            12.514
+          ],
+          [
+            -12.514,
+            9.403
+          ],
+          [
+            9.403,
+            -12.514
+          ]
+        ],
+        "y0": 0.3,
+        "y1": 3.5
+      }
+    ],
+    "side": {
+      "polys": [
+        [
+          [
+            -1.5,
+            -28
+          ],
+          [
+            5.5,
+            -28
+          ],
+          [
+            5.5,
+            -18
+          ],
+          [
+            -1.5,
+            -18
+          ]
+        ],
+        [
+          [
+            -15.5,
+            -25.5
+          ],
+          [
+            -8,
+            -25.5
+          ],
+          [
+            -8,
+            -18.7
+          ],
+          [
+            -15.5,
+            -18.7
+          ]
+        ]
+      ],
+      "y0": -0.3,
+      "y1": 0.4
+    }
+  }
+}

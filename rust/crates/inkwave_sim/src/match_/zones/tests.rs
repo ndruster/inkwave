@@ -634,7 +634,15 @@ fn tr36_10_placeholder_layout_branch() {
 /// 1348, shed-roof side 1408; crossmarket centre 1526, pier side 1566.
 #[test]
 fn tr37_zone_cells_are_live_on_the_new_stages() {
-    for id in ["saltpan", "crossmarket"] {
+    // Task 48: every ZONE_DEFS-covered extracted stage (cargo has no entry).
+    for id in [
+        "saltpan",
+        "crossmarket",
+        "halyard",
+        "kelpline",
+        "lockgate",
+        "terraces",
+    ] {
         let l = crate::embedded_layout(id);
         let world = CollisionWorld::from_layout_for(&l, "zones");
         let paint = PaintGrid::new(&world);
@@ -655,12 +663,13 @@ fn tr37_zone_cells_are_live_on_the_new_stages() {
             let y1 = def.y1.unwrap_or(6.0);
             assert!(center[1] >= y0 - 0.1 && center[1] <= y1 + 0.1);
         }
-        // saltpan: TWO centre quarters (zones-data.js L32), crossmarket: one
-        assert_eq!(
-            zl.center.len(),
-            if id == "saltpan" { 2 } else { 1 },
-            "{id}: centre zone count"
-        );
+        // halyard + saltpan: TWO centre quarters (zones-data.js L17/L32),
+        // kelpline/crossmarket/lockgate/terraces: one.
+        let expected_centers = match id {
+            "saltpan" | "halyard" => 2,
+            _ => 1,
+        };
+        assert_eq!(zl.center.len(), expected_centers, "{id}: centre zone count");
     }
 }
 

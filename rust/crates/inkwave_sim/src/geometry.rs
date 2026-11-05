@@ -597,6 +597,21 @@ mod tests {
     fn crossmarket() -> StageLayout {
         crate::embedded_crossmarket()
     }
+    fn kelpline() -> StageLayout {
+        crate::embedded_kelpline()
+    }
+    fn halyard() -> StageLayout {
+        crate::embedded_halyard()
+    }
+    fn lockgate() -> StageLayout {
+        crate::embedded_lockgate()
+    }
+    fn terraces() -> StageLayout {
+        crate::embedded_terraces()
+    }
+    fn cargo() -> StageLayout {
+        crate::embedded_cargo()
+    }
 
     fn kind_counts(l: &StageLayout) -> PrimitiveCounts {
         let (mut b, mut o, mut r) = (0u32, 0u32, 0u32);
@@ -790,6 +805,174 @@ mod tests {
         assert_eq!(kind_counts(&l.for_mode("zones")), vc.zones);
     }
 
+    // TR-37.1 / Task 48: Kelpline stage info (kelpline/layout.js L232-237, the
+    // berth is turned 35 deg so bounds/pads are extractor-frozen) and the
+    // per-stage surface slots (kelpline/surfaces.js L17).
+    #[test]
+    fn kelpline_stage_info() {
+        let l = kelpline();
+        assert_eq!(l.schema, "inkwave.stage_layout.v1");
+        assert_eq!(l.source.path, "src/world/stages/kelpline/layout.js");
+        assert_eq!(l.source.commit.len(), 40);
+        assert_eq!(l.stage.id, "kelpline");
+        assert_eq!(
+            l.stage.bounds,
+            Bounds {
+                min_x: -52.0,
+                max_x: 52.0,
+                min_z: -55.0,
+                max_z: 55.0
+            }
+        );
+        assert_eq!(
+            l.stage.spawn_pads,
+            vec![[-25.008, 2.6, -35.715], [25.008, 2.6, 35.715]]
+        );
+        assert_eq!(l.stage.spawn_barrier, 4.2);
+        assert_eq!(l.stage.water_y, -1.6);
+        assert_eq!(l.meta.bounds, l.stage.bounds);
+        assert_eq!(l.meta.spawn_pads, l.stage.spawn_pads);
+        assert_eq!(l.meta.spawn_barrier, l.stage.spawn_barrier);
+        assert_eq!(l.meta.water_y, l.stage.water_y);
+        assert_eq!(l.meta.surface_slots.get("tarmac"), Some(&31));
+        assert_eq!(l.meta.surface_slots.get("quay"), Some(&32));
+        assert_eq!(l.meta.surface_slots.get("chequer"), Some(&33));
+    }
+
+    // TR-37.1 / Task 48: Halyard stage info (maps.js L30-35 — the one stage with
+    // no stages/ folder, so source.path is src/world/maps.js). Halyard draws only
+    // on the shared PATTERN 0-27: no reserved surface slots (spec D-T48-6).
+    #[test]
+    fn halyard_stage_info() {
+        let l = halyard();
+        assert_eq!(l.schema, "inkwave.stage_layout.v1");
+        assert_eq!(l.source.path, "src/world/maps.js");
+        assert_eq!(l.source.commit.len(), 40);
+        assert_eq!(l.stage.id, "halyard");
+        assert_eq!(
+            l.stage.bounds,
+            Bounds {
+                min_x: -24.0,
+                max_x: 24.0,
+                min_z: -46.0,
+                max_z: 46.0
+            }
+        );
+        assert_eq!(
+            l.stage.spawn_pads,
+            vec![[0.0, 2.4, -42.0], [0.0, 2.4, 42.0]]
+        );
+        assert_eq!(l.stage.spawn_barrier, 4.2);
+        assert_eq!(l.stage.water_y, -1.6);
+        assert_eq!(l.meta.bounds, l.stage.bounds);
+        assert_eq!(l.meta.spawn_pads, l.stage.spawn_pads);
+        assert_eq!(l.meta.spawn_barrier, l.stage.spawn_barrier);
+        assert_eq!(l.meta.water_y, l.stage.water_y);
+        assert!(l.meta.surface_slots.is_empty());
+    }
+
+    // TR-37.1 / Task 48: Lockgate stage info (lockgate/layout.js L53-57) and the
+    // per-stage surface slots (lockgate/surfaces.js L15).
+    #[test]
+    fn lockgate_stage_info() {
+        let l = lockgate();
+        assert_eq!(l.schema, "inkwave.stage_layout.v1");
+        assert_eq!(l.source.path, "src/world/stages/lockgate/layout.js");
+        assert_eq!(l.source.commit.len(), 40);
+        assert_eq!(l.stage.id, "lockgate");
+        assert_eq!(
+            l.stage.bounds,
+            Bounds {
+                min_x: -28.0,
+                max_x: 28.0,
+                min_z: -46.0,
+                max_z: 46.0
+            }
+        );
+        assert_eq!(
+            l.stage.spawn_pads,
+            vec![[4.0, 2.4, -41.9], [-4.0, 2.4, 41.9]]
+        );
+        assert_eq!(l.stage.spawn_barrier, 4.2);
+        assert_eq!(l.stage.water_y, -1.6);
+        assert_eq!(l.meta.bounds, l.stage.bounds);
+        assert_eq!(l.meta.spawn_pads, l.stage.spawn_pads);
+        assert_eq!(l.meta.spawn_barrier, l.stage.spawn_barrier);
+        assert_eq!(l.meta.water_y, l.stage.water_y);
+        assert_eq!(l.meta.surface_slots.get("setts"), Some(&40));
+        assert_eq!(l.meta.surface_slots.get("engbrick"), Some(&41));
+        assert_eq!(l.meta.surface_slots.get("hoofsteps"), Some(&42));
+    }
+
+    // TR-37.1 / Task 48: Terraces stage info (terraces/layout.js L705-709, spawn
+    // pads on the H4 = 4.8 m terrace, barrier 4.0) and the per-stage surface
+    // slots (terraces/surfaces.js L21).
+    #[test]
+    fn terraces_stage_info() {
+        let l = terraces();
+        assert_eq!(l.schema, "inkwave.stage_layout.v1");
+        assert_eq!(l.source.path, "src/world/stages/terraces/layout.js");
+        assert_eq!(l.source.commit.len(), 40);
+        assert_eq!(l.stage.id, "terraces");
+        assert_eq!(
+            l.stage.bounds,
+            Bounds {
+                min_x: -28.0,
+                max_x: 28.0,
+                min_z: -46.0,
+                max_z: 46.0
+            }
+        );
+        assert_eq!(
+            l.stage.spawn_pads,
+            vec![[-12.0, 4.8, -38.4], [12.0, 4.8, 38.4]]
+        );
+        assert_eq!(l.stage.spawn_barrier, 4.0);
+        assert_eq!(l.stage.water_y, -1.6);
+        assert_eq!(l.meta.bounds, l.stage.bounds);
+        assert_eq!(l.meta.spawn_pads, l.stage.spawn_pads);
+        assert_eq!(l.meta.spawn_barrier, l.stage.spawn_barrier);
+        assert_eq!(l.meta.water_y, l.stage.water_y);
+        assert_eq!(l.meta.surface_slots.get("calce"), Some(&43));
+        assert_eq!(l.meta.surface_slots.get("cotto"), Some(&44));
+        assert_eq!(l.meta.surface_slots.get("pebble"), Some(&45));
+    }
+
+    // TR-37.1 / Task 48: Cargo stage info (cargo/layout.js L232-237, same turned
+    // terminal geometry as Kelpline, its own slots 46-48 per cargo/surfaces.js
+    // L18). Cargo has no ZONE_DEFS entry: the layout carries no `zones` key.
+    #[test]
+    fn cargo_stage_info() {
+        let l = cargo();
+        assert_eq!(l.schema, "inkwave.stage_layout.v1");
+        assert_eq!(l.source.path, "src/world/stages/cargo/layout.js");
+        assert_eq!(l.source.commit.len(), 40);
+        assert_eq!(l.stage.id, "cargo");
+        assert_eq!(
+            l.stage.bounds,
+            Bounds {
+                min_x: -52.0,
+                max_x: 52.0,
+                min_z: -55.0,
+                max_z: 55.0
+            }
+        );
+        assert_eq!(
+            l.stage.spawn_pads,
+            vec![[-25.008, 2.6, -35.715], [25.008, 2.6, 35.715]]
+        );
+        assert_eq!(l.stage.spawn_barrier, 4.2);
+        assert_eq!(l.stage.water_y, -1.6);
+        assert_eq!(l.meta.bounds, l.stage.bounds);
+        assert_eq!(l.meta.spawn_pads, l.stage.spawn_pads);
+        assert_eq!(l.meta.spawn_barrier, l.stage.spawn_barrier);
+        assert_eq!(l.meta.water_y, l.stage.water_y);
+        assert_eq!(l.meta.surface_slots.get("tarmac"), Some(&46));
+        assert_eq!(l.meta.surface_slots.get("quay"), Some(&47));
+        assert_eq!(l.meta.surface_slots.get("chequer"), Some(&48));
+        assert!(l.zones.is_none(), "cargo has no ZONE_DEFS entry");
+    }
+
     // TR-37.1: saltpan's merged ZONE_DEFS entry (zones-data.js L31-34): two
     // Great-Pan quarters as the centre, the packing-shed roof as the side.
     #[test]
@@ -933,12 +1116,21 @@ mod tests {
         assert_eq!(vc.zones, l.meta.primitive_counts);
     }
 
-    // TR-37 collision smoke ①: every spawn pad of the new stages lands on a
-    // solid, walkable top face in both modes (down-ray from 1 m above the pad;
-    // the pad y is the deck top the extractor froze, layout.js L50/L53).
+    // TR-37 collision smoke ① (Task 48: all eight extracted stages): every
+    // spawn pad lands on a solid, walkable top face in both modes (down-ray
+    // from 1 m above the pad; the pad y is the deck top the extractor froze).
     #[test]
     fn new_stages_spawn_pads_land() {
-        for id in ["saltpan", "crossmarket"] {
+        for id in [
+            "tidewater",
+            "kelpline",
+            "halyard",
+            "saltpan",
+            "crossmarket",
+            "lockgate",
+            "terraces",
+            "cargo",
+        ] {
             let l = crate::embedded_layout(id);
             for mode in ["turf", "zones"] {
                 let w = crate::collision::CollisionWorld::from_layout_for(&l, mode);
@@ -978,15 +1170,26 @@ mod tests {
         );
     }
 
-    // TR-37 collision smoke ②: coarse grid down-sampling of the bounds counts
-    // walkable paintable/turf tops (ray from y=20 down 25 m, 2 m pitch).
-    // Observed counts (commit a9dc44a, geometry only — no props, spec §7):
+    // TR-37 collision smoke ② (Task 48: all eight extracted stages): coarse
+    // grid down-sampling of the bounds counts walkable paintable/turf tops
+    // (ray from y=20 down 25 m, 2 m pitch). cargo has no zones, so both modes
+    // build its full layout. Observed counts (commit a9dc44a, geometry only —
+    // no props, spec §7):
     //   saltpan     turf 1205, zones 1205
     //   crossmarket turf  798, zones  820 (the zones-only landing adds 22 tops)
     // Floor is a conservative 500, well below the smallest observed number.
     #[test]
     fn new_stages_walkable_sampling() {
-        for id in ["saltpan", "crossmarket"] {
+        for id in [
+            "tidewater",
+            "kelpline",
+            "halyard",
+            "saltpan",
+            "crossmarket",
+            "lockgate",
+            "terraces",
+            "cargo",
+        ] {
             let l = crate::embedded_layout(id);
             for mode in ["turf", "zones"] {
                 let w = crate::collision::CollisionWorld::from_layout_for(&l, mode);

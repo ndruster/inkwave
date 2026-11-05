@@ -1,11 +1,12 @@
 //! Gameplay tuning constants, extracted from upstream `src/config.js` into
-//! `assets/tuning.json` (schema `inkwave.tuning.v6`) by the Task 3 pipeline,
+//! `assets/tuning.json` (schema `inkwave.tuning.v7`) by the Task 3 pipeline,
 //! extended to the full M3 content set by Task 28 (12 weapons / 15 subs /
 //! 19 specials / zones / three difficulties), with the HULLBREAKER boss
 //! data tables by Task 41 (slice+eval of `src/boss/*.js`) and the boss hit
 //! sphere rest positions + nav plan constants by Task 42 batch A (v3 → v4),
 //! the brain `pref` table by Task 43 batch A (v4 → v5), plus the MAPS stage
-//! rule flags by Task 44 batch A (v5 → v6).
+//! rule flags by Task 44 batch A (v5 → v6) and the MAPS `theme` / `times`
+//! environment fields by Task 48 batch C (v6 → v7).
 //!
 //! Units: metres / seconds / m·s⁻¹ / m·s⁻²; HP and ink are points. Weapon
 //! spread / arc / fan / leap-angle fields are degrees; every other angle is
@@ -47,8 +48,9 @@ pub struct Tuning {
     pub team_palettes: Vec<TeamPalette>,
     pub difficulty: DifficultySet,
     /// `MAPS` (config.js L515-525) — the eight stages with their rule flags
-    /// (Task 44 batch A, schema v6), in JS array order. The display fields
-    /// (`name` / `blurb` / `theme` / `times`) stay upstream (theme is Task 48).
+    /// (Task 44 batch A, schema v6) and environment fields (`theme` /
+    /// `times`, Task 48 batch C, schema v7), in JS array order. The display
+    /// fields (`name` / `blurb`) stay upstream.
     pub maps: Vec<MapFlags>,
     /// HULLBREAKER boss data tables (Task 41, extended by Task 42 batch A
     /// and Task 43 batch A, schema v5): `BOSS`, `BOSS_MODE`, `MOVES` /
@@ -67,8 +69,9 @@ pub struct Source {
     pub path: String,
 }
 
-/// One `MAPS` entry's rule flags (config.js L515-530, Task 44 batch A): the
-/// stage id plus the three lobby-enforced booleans (absent in JS ⇒ false).
+/// One `MAPS` entry (config.js L515-530): the stage id, the three
+/// lobby-enforced rule flags (absent in JS ⇒ false) and the environment
+/// fields `theme` / `times` (Task 48 batch C, config.js L510-513).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MapFlags {
@@ -79,6 +82,15 @@ pub struct MapFlags {
     pub no_bots: bool,
     /// `noBoss` (config.js L530): never a Boss Battle stage.
     pub no_boss: bool,
+    /// `theme` (config.js L510-513): the stage's day look, kept for older
+    /// callers; `map_theme` falls back to `'day'` when absent.
+    #[serde(default)]
+    pub theme: String,
+    /// `times` (config.js L510-513): time of day → environment theme. A
+    /// stage without the JS object deserializes to an empty map (the
+    /// extractor omits the key), so `map_theme` falls back to `theme`.
+    #[serde(default)]
+    pub times: HashMap<String, String>,
 }
 
 /// All of upstream PLAYER: physics + feel constants consumed by the Task 5
@@ -1657,6 +1669,39 @@ pub fn boss_fallback_map(maps: &[MapFlags], prefer: &str) -> String {
         .unwrap_or_default()
 }
 
+/// `mapTheme(map, time)` (config.js L513): `(map.times && map.times[time]) ||
+/// map.theme || 'day'` — the time-of-day lookup wins, then the stage's own
+/// day theme, then `'day'`. An unknown stage id is JS's `mapById` miss ⇒
+/// `'day'` (empty `theme` / `times[time]` strings count as absent, matching
+/// JS truthiness).
+#[must_use]
+pub fn map_theme<'a>(maps: &'a [MapFlags], id: &str, time: &str) -> &'a str {
+    map_by_id(maps, id)
+        .and_then(|m| {
+            m.times
+                .get(time)
+                .map(String::as_str)
+                .filter(|s| !s.is_empty())
+                .or(if m.theme.is_empty() {
+                    None
+                } else {
+                    Some(m.theme.as_str())
+                })
+        })
+        .unwrap_or("day")
+}
+
+/// `OFFLINE_MAPS` (config.js L535): `MAPS.filter((m) => !m.onlineOnly)` — the
+/// offline-Play-eligible stage ids in JS array order (seven entries; `cargo`
+/// is the only `onlineOnly` stage).
+#[must_use]
+pub fn offline_map_ids(maps: &[MapFlags]) -> Vec<&str> {
+    maps.iter()
+        .filter(|m| !m.online_only)
+        .map(|m| m.id.as_str())
+        .collect()
+}
+
 /// Parse a tuning document from JSON.
 pub fn tuning_from_str(s: &str) -> Result<Tuning, serde_json::Error> {
     serde_json::from_str(s)
@@ -1745,7 +1790,7 @@ mod tests {
     #[test]
     fn schema_and_provenance() {
         let t = tuning();
-        assert_eq!(t.schema, "inkwave.tuning.v6");
+        assert_eq!(t.schema, "inkwave.tuning.v7");
         assert_eq!(t.source.path, "src/config.js + src/boss/*.js");
         assert_eq!(t.source.commit.len(), 40, "commit must be a full sha");
     }
@@ -2982,5 +3027,114 @@ mod tests {
         assert_eq!(boss_fallback_map(maps, "tidewater"), "tidewater");
         assert_eq!(boss_fallback_map(maps, "cargo"), "tidewater");
         assert_eq!(boss_fallback_map(maps, "nope"), "tidewater");
+    }
+
+    // Task 48 batch C: the environment fields (config.js L510-525) — halyard,
+    // crossmarket and terraces carry theme 'golden' (L518/L520/L522), the
+    // other five 'day'; every stage lists the two TIMES keys (L512) with
+    // day → its own theme and dusk → 'sunset' (L516-524).
+    #[test]
+    fn maps_theme_times_values() {
+        let maps = &tuning().maps;
+        for m in maps {
+            let golden = matches!(m.id.as_str(), "halyard" | "crossmarket" | "terraces");
+            assert_eq!(
+                m.theme,
+                if golden { "golden" } else { "day" },
+                "{}.theme",
+                m.id
+            );
+            let mut keys: Vec<&str> = m.times.keys().map(String::as_str).collect();
+            keys.sort_unstable();
+            assert_eq!(keys, ["day", "dusk"], "{}.times keys", m.id);
+            assert_eq!(m.times["day"], m.theme, "{}.times.day", m.id);
+            assert_eq!(m.times["dusk"], "sunset", "{}.times.dusk", m.id);
+        }
+    }
+
+    // Task 48 batch C: `mapTheme` (config.js L513) on the embedded table —
+    // the 8 ids x {day, dusk} grid, plus the JS truthiness fallbacks (an
+    // unknown time key reads `theme`, an unknown stage id reads 'day').
+    #[test]
+    fn map_theme_function() {
+        let maps = &tuning().maps;
+        let golden = ["halyard", "crossmarket", "terraces"];
+        for m in maps {
+            let day = if golden.contains(&m.id.as_str()) {
+                "golden"
+            } else {
+                "day"
+            };
+            assert_eq!(map_theme(maps, &m.id, "day"), day, "{} day", m.id);
+            assert_eq!(map_theme(maps, &m.id, "dusk"), "sunset", "{} dusk", m.id);
+        }
+        assert_eq!(
+            map_theme(maps, "halyard", "night"),
+            "golden",
+            "times miss -> theme"
+        );
+        assert_eq!(
+            map_theme(maps, "tidewater", "night"),
+            "day",
+            "times miss -> theme"
+        );
+        assert_eq!(
+            map_theme(maps, "nope", "day"),
+            "day",
+            "unknown stage -> 'day'"
+        );
+    }
+
+    // JS truthiness fallbacks (config.js L513): an empty `times[time]` string
+    // counts as absent and falls through to `theme`; an empty `theme` falls
+    // through to 'day'. Unreachable in current data, locked for the contract.
+    #[test]
+    fn map_theme_empty_string_fallbacks() {
+        let mut times = HashMap::new();
+        times.insert("night".to_string(), String::new());
+        let maps = vec![
+            MapFlags {
+                id: "emptyTheme".into(),
+                online_only: false,
+                no_bots: false,
+                no_boss: false,
+                theme: "golden".into(),
+                times,
+            },
+            MapFlags {
+                id: "bothEmpty".into(),
+                online_only: false,
+                no_bots: false,
+                no_boss: false,
+                theme: String::new(),
+                times: HashMap::new(),
+            },
+        ];
+        assert_eq!(map_theme(&maps, "emptyTheme", "night"), "golden");
+        assert_eq!(map_theme(&maps, "bothEmpty", "day"), "day");
+    }
+
+    // Task 48 batch D (TR-48.2): `OFFLINE_MAPS` (config.js L535) — the seven
+    // offline-eligible stages in JS array order; `cargo` (onlineOnly, L524)
+    // is not among them, and `mapOfflineOk` (L534) agrees on all eight ids.
+    #[test]
+    fn offline_map_list() {
+        let maps = &tuning().maps;
+        assert_eq!(
+            offline_map_ids(maps),
+            [
+                "tidewater",
+                "kelpline",
+                "halyard",
+                "saltpan",
+                "crossmarket",
+                "lockgate",
+                "terraces",
+            ]
+        );
+        for m in maps {
+            let offline = m.id != "cargo";
+            assert_eq!(map_offline_ok(maps, &m.id), offline, "{} offline_ok", m.id);
+        }
     }
 }

@@ -178,7 +178,7 @@
 - **九段门禁**：`rust/tools/verify/logs/task47-gates-20261104T223313Z.log` — FMT/CLIPPY/TEST(592+101+…=721)/WASM/TREE/DETERM(重跑逐字节一致)/XCHK(10/10 sockets)/HEADLESS(turf 完成+boss 600 帧 bt=10/hp 满/events=3)/JS_TREE_CLEAN 全绿；**TRUNK attempt 1 成功 rc=0**（非 D-T40-1 DEGRADED 口径）。
 
 ## Task 48: 全图提取——halyard/kelpline/lockgate/terraces/cargo + 旗标语义
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: medium
 - **Depends On**: Task 41
 - **Description**:
@@ -188,6 +188,17 @@
   - `rule` TR-48.1: 五图 stable-json 连跑逐字节一致 + 碰撞冒烟（出生点落地/可行走）+ zones 合并（有 zones-data 者）。
   - `rule` TR-48.2: 旗标路径测试（cargo 离线不可见/boss 换图/noBots 开局阻断 noBotsStartBlock）。
 - **Notes**: cargo 为 onlineOnly+noBots+noBoss——仅数据对等，实际开黑价值有限（如实注记）。
+
+### Task 48 Completion Evidence（2026-11-05）
+- **批次 A 提取 ✅**：`extract-layout.mjs` STAGES 扩 8 图（surfaceSlots 逐值对 `src/world/stages/<id>/surfaces.js`：kelpline{tarmac:31,quay:32,chequer:33}/lockgate{setts:40,engbrick:41,hoofsteps:42}/terraces{calce:43,cotto:44,pebble:45}/cargo{tarmac:46,quay:47,chequer:48}）；halyard 走 `src/world/maps.js` L30-114 `HALYARD` 内联分支（`source.path`=maps.js，surfaceSlots={}，intro/decor/water 声明忽略=D-T48-6）；`run-all.sh` 8 图行齐；`rust/assets/maps/` 落盘 8 JSON（primitive：kelpline 185/halyard 72/lockgate 138/terraces 441/cargo 185）；旧 3 图 JSON 仅 `source.commit` 戳更新（重提取正常行为）。
+- **TR-48.1 ✅**：DETERM 门禁=8 图+fixture+tuning 重跑 sha256 前后逐字节一致；TR-37 碰撞冒烟两测扩全 8 图（spawn pad 落地+bounds 网格可行走，500 地板全过）；zones 合并断言扩 halyard/kelpline/lockgate/terraces（zone 数对 ZONE_DEFS：halyard|saltpan=2 余=1，cargo 无 zones 不进）；geometry.rs 新 5 图 parse 锁值测。
+- **批次 B sim 资产面 ✅**：`lib.rs` 5 新 `*_JSON` const + 5 `embedded_*()` + `embedded_layout` 8 项 match（未知 id panic 文案不变式保持）。
+- **批次 C tuning v7 ✅**：maps 段加 `theme`/`times`（缺 times 不写键），schema v6→v7（`tuning.schema.md` 同步、`boss-hitpos-crosscheck.mjs` 钉值连带 v7）；`MapFlags` 加 `theme`+`times`（serde default 向后兼容）；diff 核实纯增量（8 项 theme/times+schema+commit 戳）。
+- **批次 D 旗标收口 ✅（TR-48.2）**：`tuning.rs` 新纯函数 `map_theme`（≡ config.js L513 含 JS 真值回退链：times 空串→theme→'day'）+ `offline_map_ids`（≡ L535 七项无 cargo 上游序）；`map_offline_ok` Task 44 既有复用；锚测 4 项（`maps_theme_times_values`/`map_theme_function` 8×2 值锁/`map_theme_empty_string_fallbacks` 合成回退锁/`offline_map_list`）；boss 换图/noBots 三态 session.rs 既有测覆盖核实（`set_settings_accepts_boss_and_falls_back`/`solo_on_a_no_bots_stage_blocks_the_start`/`no_bots_stage_needs_one_player_per_team`），未堆重复测。
+- **collision.rs 顺带修复 ✅**：`face_hidden` 薄面（terraces 栏杆 z=0.085m）使 `clamp(0.05, su-0.05)` lo>hi panic——su/sv≥0.1 时与原字面量严格同值（评审实证：既有 3 图最小基元 ≥0.140 不受影响），<0.1 时 0.4× 内缩；调用方唯一（collision.rs L958 face 枚举）。
+- **评审**：独立实证评审 **PASS（0 P0/0 P1）**，1 P2（map_theme 空串回退链与注释不符）→ 已修（filter 前置）+ 合成测锁定；`map_theme` 三入参 `'a` 保留（edition-2024 不可省略），`offline_map_ids` 省略过 clippy。
+- **基线**：`inkwave_sim` 592→**601**（+9）/`inkwave` 101/workspace **730 passed**；`cargo tree -p inkwave_sim` 依赖面不变；JS 树/`server/`/wire.rs/PROTO/fixture 零改动。
+- **九段门禁**：`rust/tools/verify/gate-task48.sh`（stage-6 扩 8 图重跑 sha 对账）——`rust/tools/verify/logs/task48-gates-20261105T084151Z.log` FMT/CLIPPY/TEST(730)/WASM/TREE/DETERM(BYTE_IDENTICAL)/XCHK/TRUNK(attempt 1 rc=0)/HEADLESS(turf+boss)/JS_TREE_CLEAN **全绿**。
 
 ## Task 49: 小地图
 - **Status**: `pending`

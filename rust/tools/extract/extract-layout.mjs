@@ -34,11 +34,19 @@ const here = dirname(fileURLToPath(import.meta.url));      // rust/tools/extract
 const repoRoot = resolve(here, '../../..');
 
 // Per-stage reserved PATTERN slots (each stage's surfaces.js SURF map:
-// tidewater surfaces.js L19, saltpan surfaces.js L17, crossmarket surfaces.js L16).
+// tidewater surfaces.js L19, kelpline surfaces.js L17, saltpan surfaces.js L17,
+// crossmarket surfaces.js L16, lockgate surfaces.js L15, terraces surfaces.js L21,
+// cargo surfaces.js L18). Halyard has no surfaces.js — it draws only on the
+// shared PATTERN 0-27, so it reserves no slots.
 const STAGES = {
   tidewater: { herringbone: 28, terrazzo: 29, stucco: 30 },
+  kelpline: { tarmac: 31, quay: 32, chequer: 33 },
   saltpan: { salt: 34, mud: 35, timber: 36 },
   crossmarket: { setts: 37, ashlar: 38, tramway: 39 },
+  lockgate: { setts: 40, engbrick: 41, hoofsteps: 42 },
+  terraces: { calce: 43, cotto: 44, pebble: 45 },
+  cargo: { tarmac: 46, quay: 47, chequer: 48 },
+  halyard: {},
 };
 
 const stage = process.argv[2] ?? 'tidewater';
@@ -48,7 +56,19 @@ if (!(stage in STAGES)) {
   );
   process.exit(1);
 }
-const { LAYOUT } = await import(`../../../src/world/stages/${stage}/layout.js`);
+// Halyard is the one stage with no stages/<id>/ folder: its layout object is the
+// HALYARD export of src/world/maps.js (L30-114, imports mapkit/stages-index/
+// zones-data only — no three, safe to load under node). Its `intro`/`decor`/
+// `water` fields are presentation-only and do not ride the v1 schema.
+let L;
+let sourcePath;
+if (stage === 'halyard') {
+  ({ HALYARD: L } = await import('../../../src/world/maps.js'));
+  sourcePath = 'src/world/maps.js';
+} else {
+  ({ LAYOUT: L } = await import(`../../../src/world/stages/${stage}/layout.js`));
+  sourcePath = `src/world/stages/${stage}/layout.js`;
+}
 const outPath = resolve(here, `../../assets/maps/${stage}.json`);
 
 let commit;
@@ -109,7 +129,6 @@ function normBrush(d) {
   };
 }
 
-const L = LAYOUT;
 // maps.js L118-119 merge: a layout that already carries `zones` wins; otherwise
 // attach the hand-drawn ZONE_DEFS entry for this stage verbatim.
 const zones = L.zones ?? ZONE_DEFS[L.id];
@@ -130,7 +149,7 @@ const variantCounts = (mode) => {
 
 const doc = {
   schema: 'inkwave.stage_layout.v1',
-  source: { commit, path: `src/world/stages/${stage}/layout.js` },
+  source: { commit, path: sourcePath },
   stage: {
     id: L.id,
     bounds: L.bounds,
