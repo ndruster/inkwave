@@ -532,7 +532,7 @@
   },
   "schema": "inkwave.tuning.v7",
   "source": {
-    "commit": "5343cd2eedfcf86202a567c6cd5d8a8e69c5df1c",
+    "commit": "476b967ab960c3a110b03d1a20024e3609654e64",
     "path": "src/config.js + src/boss/*.js"
   },
   "specialOrder": [

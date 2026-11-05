@@ -34,6 +34,8 @@ use crate::net::match_link::NetEvents;
 use inkwave_sim::net::session::{SPECIAL_IDS, SUB_IDS, SessionEvent, SessionState, WEAPON_ORDER};
 
 pub mod boss_hud;
+pub mod minimap;
+pub mod minimap_ui;
 pub mod online;
 
 use self::boss_hud::{BOSS_NAME, BossHudFrame, BossHudOut, BossHudState};

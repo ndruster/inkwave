@@ -201,7 +201,7 @@
 - **九段门禁**：`rust/tools/verify/gate-task48.sh`（stage-6 扩 8 图重跑 sha 对账）——`rust/tools/verify/logs/task48-gates-20261105T084151Z.log` FMT/CLIPPY/TEST(730)/WASM/TREE/DETERM(BYTE_IDENTICAL)/XCHK/TRUNK(attempt 1 rc=0)/HEADLESS(turf+boss)/JS_TREE_CLEAN **全绿**。
 
 ## Task 49: 小地图
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: medium
 - **Depends On**: Task 48
 - **Description**: `minimap.js`（585）平移——paint 网格采样→纹理、队友/敌方点、zone 标记、boss 位置；HUD 布局集成；采样率/清晰度档位。
@@ -210,6 +210,14 @@
   - `rule` TR-49.1: 采样纯函数单测（覆盖率→像素映射固定输入断言）；无头冒烟。
   - `rule` TR-49.2: REVIEW_CHECKLIST 登记视觉复核。
 - **Notes**: Phase C 开始；双轨验收口径（NFR-M4-5）。
+
+### Task 49 Completion Evidence（2026-11-05）
+- **TR-49.1 ✅**：`inkwave::ui::minimap`（新 2144 行，纯函数无 Bevy，仿 boss_hud 先例）≡ minimap.js 全 585 行分层平移——`Projector`（L101-109 toCanvas/_worldX/_worldZ+flip）；`RasterTables`（L112-187 块顶面栅格 hgt/top/nrm+turf 双线性采样表 pixCell/Fx/Fy/Sx/Sy，跳过规则逐字）；`draw_base`（L189-279 全像素公式：sea/swell/泡沫/块色提亮/grate/height tint/hillshade/投影阴影/AO/rim/hatch/5m 网格+sunset 色板）；`draw_ink`（L290-338 经 `PaintGrid::grid()/face_meta()/cell_dead()/version` pub 访问器，**sim 零改动**）；`zone_paths`+`draw_zones`（L542-576 虚线幽灵/活动 fill+描边/中立跑马）；`compose`+`MinimapClock`（L341-371：timer 0.15/BANDS=3/version 轮询/theme·teamKey 边沿/flashT 衰减）；档位 `MinimapTier{Low=4,Med=7(JS 默认),High=10}` pxPerM。点数据层 `player_dots` ≡ main.js L1293-1304 全过滤链（swim 含 actor.js L994 `specialActive.body||noSquid` 覆盖，评审 P0 修复+锁定测；climb 分支 sim 无对应如实豁免）；`boss_dot`=Rust 扩展（JS 无，FR-M4-10）。29 测固定输入逐值断言（覆盖率→像素映射全 0/全 1/棋盘/单格边界/dead/fast path/emboss/flash 边沿；确定性 build 逐字节一致；期望值独立手算非实现复算）。
+- **TR-49.2 ✅**：REVIEW_CHECKLIST「Task 49 小地图」登记（清晰度三档/采样率观感/base 层对照/点标占位档/zone 虚线/HUD 布局+TAB 弹簧/flip 时序差/live 层顺延注记）。
+- **HUD 集成 ✅（批次 C）**：`minimap_ui.rs`（396 行）——`MinimapRes`+`minimap_update`（clock 分带→compose→整图重传沿 ink_render 先例；viewer flip≡setViewerTeam；theme 经 `map_theme(id,"day")`）+`minimap_ui`（角标 `fit(14.5u)` 左下、`KeyCode::Tab` 展开 `fit(min(H*0.78,W*0.6))`、弹簧 k=190/c=21 ≡ hud.js `_updMap` L1724-1744；dots=12px 方块色标占位（team_color/self 旋转/dead .7）、boss 点仅 boss 局存活）；系统挂 Screen::Hud，headless 冒烟路径不受影响（WorldPlugin 非 headless 分支既有门控）。
+- **评审**：独立实证评审首跑 **FAIL（1 P0/1 P1/9 P2）**→修复复验：P0-1 swim 缺 specialActive 覆盖（水下 body/noSquid 特技敌方点错误隐藏）已修+新测；P1-1 dots alpha 注释捏造 CSS 锚已对齐真值（is-dead .7/tracked=ping 环顺延）；P2-2/P2-4 注释与测试期望值同修。留档 P2：zone 逐 part even-odd vs JS nonzero（当前 8 图无多 part 重叠）、flip 重建帧 ink 立即全量（≤0.15s 一次性时序差）、hex_rgb 短串切片（输入全编译期常量不可达）、zone 局每帧整图重传（≡JS 每帧 canvas 重绘）、flip 重建旧 Image handle 未释放（每局一次）。50+ 锚点抽查通过。
+- **基线**：`inkwave` 101→**130**（+29）/workspace **759 passed**（730→759 单调递增）；`inkwave_sim` 601 不变、依赖面不变；JS 树/`server/`/wire/fixture 零改动。
+- **九段门禁**：`rust/tools/verify/gate-task49.sh`——`rust/tools/verify/logs/task49-gates-20261105T111904Z.log` FMT/CLIPPY/TEST(759)/WASM/TREE/XCHK/HEADLESS(turf+boss 600 帧)/JS_TREE_CLEAN **全绿**；DETERM 首跑 MISMATCH=存量 9 产物 `source.commit` 戳刷新（Task 48 提交后重提取正常行为，diff 核实仅 commit 字段 5343cd2→476b967，产物随本任务提交）→复跑 **BYTE_IDENTICAL** 已追记；**TRUNK=DEGRADED**：3 次重试 wasm-bindgen SIGKILL（沙箱 OOM 同 D-T40-1 先例），不阻塞提交。
 
 ## Task 50: 音频过程化合成 + 音乐 + bossAudio
 - **Status**: `pending`

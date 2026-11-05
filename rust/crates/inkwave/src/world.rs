@@ -535,6 +535,9 @@ impl Plugin for WorldPlugin {
                 build_level_world,
                 crate::actors::spawn_actors,
                 crate::ui::build_ui,
+                // Task 49 批次 C: the minimap tree hangs under the HUD root,
+                // so it spawns after `build_ui` applied the screen trees.
+                crate::ui::minimap_ui::minimap_startup,
             )
                 .chain(),
         )
@@ -554,6 +557,10 @@ impl Plugin for WorldPlugin {
                 crate::actors::sync_actor_count,
                 crate::actors::sync_actors,
                 crate::ui::ui_update,
+                // Task 49 批次 C: raster + compose first, then the box
+                // spring / layout / dot writes read the same frame's state.
+                crate::ui::minimap_ui::minimap_update,
+                crate::ui::minimap_ui::minimap_ui,
                 crate::ui::online_ui_update,
                 // Task 26: the test-only smoke seam runs after the session
                 // pump so every frame sees the settled state (inert without
