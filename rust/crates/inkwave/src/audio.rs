@@ -1,22 +1,28 @@
-//! Task 14 — minimal placeholder SFX (procedural PCM, no asset files).
+//! Task 14 → Task 50 batch B — the SFX engine, ported from `src/audio/audio.js`.
 //!
-//! Upstream `src/audio/audio.js` is a full WebAudio synth engine; the M1 port
-//! ships short procedurally-synthesised beeps/clicks for the same trigger set
-//! (main.js L499-519 / L549 / L971+L1027, weapons.js L162 `_empty`; the sub
-//! `low_ink` nag of weapons.js L138 has no M1 sub weapon, so it is not
-//! ported):
-//!   - shot            — local player fires (`Actor::last_fire` reset edge)
+//! The M1 placeholder beeps are gone: every cue the M1 event set can reach is
+//! now baked from the real 148-entry `SFX` table ([`sfx_table`]) through the
+//! ported WebAudio graph ([`graph`] / [`synth`]), and played through the ported
+//! `AudioEngine.play()` gate (minGap merge, per-name + global voice caps,
+//! pitch jitter — deviation D-T50-6: jitter rides rodio `speed`). The trigger
+//! set (main.js L499-519 / L548-549 / L561 / L971+L1027, hud.js L510,
+//! weapons.js L162/L1040; the sub `low_ink` nag of weapons.js L138 has no M1
+//! sub weapon, so it is not wired):
+//!   - shot            — local player fires (`Actor::last_fire` reset edge),
+//!     cue chosen by `Match::kinds[0]` (weapons.js L893-896/L914/L1040)
 //!   - splat kill/self/ally — `MatchEvent::Splat` credit cases
 //!   - empty click     — trigger held below `ink_per_shot` (JS `_empty`, 0.45 s
 //!     cooldown mirrors `EMPTY_CD`)
-//!   - countdown / 60 s tick — `MatchEvent::Countdown` / `OneMinute`
+//!   - countdown / 60 s tick — `MatchEvent::Countdown` (`final_count` +
+//!     `countdown_tick` for n ≤ 3) / `OneMinute` (`one_minute`)
 //!   - finish whistle / victory / defeat — `MatchEvent::Phase(Finish|End)`
 //!
-//! PCM is synthesised in `render()` (44.1 kHz mono, clamped to [-1, 1]) and
-//! fed to Bevy through a custom [`Decodable`] asset ([`PcmSound`]) — the
-//! default `AudioSource` path needs *encoded* bytes and the default feature
-//! set has no `wav` decoder, so raw f32 buffers must ride their own source
-//! type (`App::add_audio_source::<PcmSound>()`).
+//! PCM is baked lazily on first trigger by [`sfx_table::bake`] (44.1 kHz
+//! mono, clamped to [-1, 1]; the handle is cached per name, so each graph
+//! render runs at most once) and fed to Bevy through a custom [`Decodable`]
+//! asset ([`PcmSound`]) — the default `AudioSource` path needs *encoded*
+//! bytes and the default feature set has no `wav` decoder, so raw f32
+//! buffers must ride their own source type (`App::add_audio_source::<PcmSound>()`).
 //!
 //! Silent degradation (TR-14.1, wasm): `bevy_audio`'s `AudioOutput` opens the
 //! default device lazily; on failure it logs `No audio device found.` once and
@@ -28,8 +34,14 @@
 //! chain and only *reads* `Match::events`; the UI system drains them at the
 //! end of the same frame, so every event is heard exactly once.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
+
+pub mod boss_audio;
+pub mod graph;
+pub mod music;
+pub mod sfx_table;
+pub mod synth;
 
 use bevy::audio::{
     AddAudioSource, AudioPlayer, ChannelCount, Decodable, GlobalVolume, PlaybackSettings,
@@ -39,15 +51,18 @@ use bevy::prelude::*;
 use bevy::reflect::TypePath;
 use inkwave_sim::boss::BossEvent;
 use inkwave_sim::match_::{MatchEvent, MatchResult, Phase};
+use inkwave_sim::weapon::WeaponKind;
+
+use sfx_table::{PlayDecision, SfxGate};
 
 use crate::ink_render::DemoSim;
 use crate::input::PlayerControls;
 
-/// Sample rate of every synthesised cue.
+/// Sample rate of every baked cue (≡ the WebAudio context rate).
 const SR: u32 = 44100;
-/// Countdown beeps generated for `n = 1..=COUNT_MAX` (the match countdown
-/// runs from `MATCH.final_countdown` = 10 down to 1; out-of-range n clamps).
-const COUNT_MAX: i32 = 10;
+/// [`SfxBorn`] slack: a voice entity is reaped this long after its expected
+/// end if the backend never got to it (device-less hosts).
+const GC_SLACK: f32 = 2.0;
 
 // ---------------------------------------------------------------------------
 // Synthesis (pure, unit-testable)
@@ -60,147 +75,19 @@ pub struct Pcm {
     pub data: Vec<f32>,
 }
 
-/// Render `dur` seconds of mono audio from a sample function `f(t)`.
-/// Every sample is clamped to [-1, 1] so the buffers can never clip hard.
-fn render(dur: f32, gain: f32, f: impl Fn(f32, usize) -> f32) -> Pcm {
-    let n = (dur * SR as f32) as usize;
-    let mut data = Vec::with_capacity(n);
-    for i in 0..n {
-        let t = i as f32 / SR as f32;
-        data.push((f(t, i) * gain).clamp(-1.0, 1.0));
+/// Bake `name` through the ported graph and clamp to [-1, 1]: the JS master
+/// chain's glue/limiter (audio.js L15-18) is live-bus and not baked, so hot
+/// peaks are hard-clamped instead of allowed to wrap in rodio. `None` for an
+/// unknown name (≡ JS `play()` returning null, review P2-8).
+fn baked(name: &str) -> Option<Pcm> {
+    let mut data = sfx_table::bake(name)?;
+    for s in &mut data {
+        *s = s.clamp(-1.0, 1.0);
     }
-    Pcm {
+    Some(Pcm {
         sample_rate: SR,
         data,
-    }
-}
-
-/// Deterministic white noise for sample index `i` (splitmix64 finaliser).
-fn noise(i: usize, salt: u64) -> f32 {
-    let mut x = (i as u64)
-        .wrapping_add(salt)
-        .wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    x ^= x >> 30;
-    x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    x ^= x >> 27;
-    x = x.wrapping_mul(0x94D0_49BB_1331_11EB);
-    x ^= x >> 31;
-    ((x >> 40) as f32 / 8_388_608.0) * 2.0 - 1.0
-}
-
-/// Linear frequency sweep sine (instantaneous freq f0 → f1 over `dur`).
-fn sweep(t: f32, f0: f32, f1: f32, dur: f32) -> f32 {
-    let k = (f1 - f0) / dur.max(1e-6);
-    (std::f32::consts::TAU * (f0 * t + 0.5 * k * t * t)).sin()
-}
-
-/// Attack/decay envelope: linear ramp over `a`, exponential tail `d`.
-fn env(t: f32, a: f32, d: f32) -> f32 {
-    if t < a {
-        t / a.max(1e-6)
-    } else {
-        (-(t - a) / d.max(1e-6)).exp()
-    }
-}
-
-/// `shoot_shooter` (audio.js L472-487) placeholder: chirp + snap + thump.
-pub fn shot_pcm() -> Pcm {
-    render(0.14, 0.6, |t, i| {
-        let chirp = sweep(t, 2600.0, 820.0, 0.03) * env(t, 0.0005, 0.022) * 0.6;
-        let snap = noise(i, 1) * env(t, 0.0004, 0.016) * 0.5;
-        let thump = sweep(t, 175.0, 62.0, 0.06) * env(t, 0.001, 0.055) * 0.7;
-        let wet = noise(i, 0x5EED) * env(t, 0.004, 0.09) * 0.35;
-        chirp + snap + thump + wet
     })
-}
-
-/// Wet splat: descending "gloop" + noise tail. One per credit case (main.js
-/// L499-519: splat_enemy / splatted_self / ally_splatted).
-fn splat_pcm(f0: f32, f1: f32, dur: f32) -> Pcm {
-    render(dur, 1.0, |t, i| {
-        let blob = sweep(t, f0, f1, dur) * env(t, 0.002, dur * 0.35) * 0.55;
-        let splash = noise(i, 7) * env(t, 0.001, dur * 0.22) * 0.4;
-        blob + splash
-    })
-}
-
-pub fn splat_kill_pcm() -> Pcm {
-    splat_pcm(900.0, 240.0, 0.25)
-}
-pub fn splat_self_pcm() -> Pcm {
-    splat_pcm(500.0, 120.0, 0.32)
-}
-pub fn splat_ally_pcm() -> Pcm {
-    splat_pcm(700.0, 200.0, 0.2)
-}
-
-/// `empty_click` (audio.js weapons L162): two dry high clicks.
-pub fn empty_pcm() -> Pcm {
-    render(0.06, 0.5, |t, _| {
-        let click = |o: f32| {
-            if t < o {
-                0.0
-            } else {
-                let x = t - o;
-                (std::f32::consts::TAU * 3200.0 * x).sin() * (-x / 0.005).exp()
-            }
-        };
-        click(0.0) + click(0.025)
-    })
-}
-
-/// Countdown beep (main.js L549 `final_count`): pitch rises as `n` falls.
-pub fn count_pcm(n: i32) -> Pcm {
-    let n = n.clamp(1, COUNT_MAX);
-    let f = 640.0 + (COUNT_MAX - n) as f32 * 120.0;
-    render(0.16, 0.5, |t, _| {
-        let s = (std::f32::consts::TAU * f * t).sin()
-            + 0.2 * (std::f32::consts::TAU * 2.0 * f * t).sin();
-        s * env(t, 0.005, 0.08)
-    })
-}
-
-/// 60-second marker tick (main.js `match:oneminute`).
-pub fn tick_pcm() -> Pcm {
-    render(0.12, 0.3, |t, _| {
-        (std::f32::consts::TAU * 1180.0 * t).sin() * env(t, 0.004, 0.06)
-    })
-}
-
-/// Finish whistle: two falling notes (JS `final_whistle`-ish).
-pub fn finish_pcm() -> Pcm {
-    render(0.5, 0.4, |t, _| {
-        let note = |o: f32, f: f32| {
-            if t < o {
-                0.0
-            } else {
-                (std::f32::consts::TAU * f * (t - o)).sin() * env(t - o, 0.006, 0.16)
-            }
-        };
-        note(0.0, 980.0) + note(0.24, 740.0)
-    })
-}
-
-fn arpeggio(notes: &[f32], step: f32, decay: f32) -> Pcm {
-    let dur = step * notes.len() as f32 + decay;
-    let notes: Vec<f32> = notes.to_vec();
-    render(dur, 0.45, move |t, _| {
-        let idx = (t / step) as usize;
-        if idx >= notes.len() {
-            return 0.0;
-        }
-        let x = t - idx as f32 * step;
-        (std::f32::consts::TAU * notes[idx] * x).sin() * env(x, 0.006, decay)
-    })
-}
-
-/// `victory_fanfare` (main.js L971): rising major.
-pub fn victory_pcm() -> Pcm {
-    arpeggio(&[523.25, 659.25, 783.99, 1046.5], 0.13, 0.2)
-}
-/// `defeat_jingle` (main.js L1027): falling minor.
-pub fn defeat_pcm() -> Pcm {
-    arpeggio(&[440.0, 349.23, 261.63], 0.22, 0.3)
 }
 
 // ---------------------------------------------------------------------------
@@ -275,43 +162,115 @@ pub enum Sfx {
     Defeat,
 }
 
-/// Pre-built handles for every cue (inserted by [`build_sfx_assets`]).
-#[derive(Resource)]
-pub struct SfxAssets(HashMap<Sfx, Handle<PcmSound>>);
-
-impl SfxAssets {
-    pub(crate) fn make(assets: &mut Assets<PcmSound>) -> Self {
-        let mut map: HashMap<Sfx, Handle<PcmSound>> = HashMap::new();
-        let cues: [(Sfx, Pcm); 9] = [
-            (Sfx::Shot, shot_pcm()),
-            (Sfx::SplatKill, splat_kill_pcm()),
-            (Sfx::SplatSelf, splat_self_pcm()),
-            (Sfx::SplatAlly, splat_ally_pcm()),
-            (Sfx::Empty, empty_pcm()),
-            (Sfx::Tick, tick_pcm()),
-            (Sfx::Finish, finish_pcm()),
-            (Sfx::Victory, victory_pcm()),
-            (Sfx::Defeat, defeat_pcm()),
-        ];
-        for (s, pcm) in cues {
-            map.insert(s, assets.add(PcmSound(pcm)));
+/// Sfx → the upstream `audio.play(name, {volume})` calls it mirrors:
+/// weapons.js L893-896/L914/L1040 (shot, per weapon kind), main.js L499-519
+/// (splat credits 0.9 / 1.0 / 0.5), L548-549 (`final_count`, plus hud.js
+/// L510's `countdown_tick` at 0.5 for n ≤ 3), L561 (`times_up`), L971/L1027
+/// (victory/defeat), weapons.js L162 (`empty_click`). Pitch stays 1.0: the
+/// JS runtime pitch knobs (dualies hand alternation, charger charge level)
+/// are not plumbed into the M1 event set (deviation, D-T50-6).
+#[must_use]
+pub(crate) fn sfx_cue(s: Sfx, shot_kind: WeaponKind) -> Vec<(&'static str, f64)> {
+    match s {
+        Sfx::Shot => vec![(shot_name(shot_kind), 0.55)],
+        Sfx::SplatKill => vec![("splat_enemy", 0.9)],
+        Sfx::SplatSelf => vec![("splatted_self", 1.0)],
+        Sfx::SplatAlly => vec![("ally_splatted", 0.5)],
+        Sfx::Empty => vec![("empty_click", 1.0)],
+        Sfx::Count(n) => {
+            let mut v = vec![("final_count", 1.0)];
+            if (1..=3).contains(&n) {
+                v.push(("countdown_tick", 0.5));
+            }
+            v
         }
-        for n in 1..=COUNT_MAX {
-            map.insert(Sfx::Count(n), assets.add(PcmSound(count_pcm(n))));
-        }
-        Self(map)
-    }
-
-    fn get(&self, s: Sfx) -> Option<&Handle<PcmSound>> {
-        let s = match s {
-            Sfx::Count(n) => Sfx::Count(n.clamp(1, COUNT_MAX)),
-            other => other,
-        };
-        self.0.get(&s)
+        Sfx::Tick => vec![("one_minute", 1.0)],
+        Sfx::Finish => vec![("times_up", 1.0)],
+        Sfx::Victory => vec![("victory_fanfare", 1.0)],
+        Sfx::Defeat => vec![("defeat_jingle", 1.0)],
     }
 }
 
-/// Audio runtime state: master mute switch + per-frame edge trackers.
+/// Main-weapon shot cue ≡ weapons.js `IMPL.shoot` cases (L893-895: `dualies`
+/// = `Twins`, `splatling` = `Spinner`; L914 charger). Kinds without a
+/// dedicated shot cue in the 148-entry table (brush/bow/blade/mitts/brolly
+/// kit sounds live elsewhere upstream) fall back to the shooter chirp.
+#[must_use]
+pub(crate) fn shot_name(kind: WeaponKind) -> &'static str {
+    match kind {
+        WeaponKind::Blaster => "shoot_blaster",
+        WeaponKind::Charger => "shoot_charger",
+        WeaponKind::Twins => "shoot_dualies",
+        WeaponKind::Spinner => "shoot_splatling",
+        WeaponKind::Roller => "roller_flick",
+        WeaponKind::Bucket => "slosh_throw",
+        _ => "shoot_shooter",
+    }
+}
+
+/// Baked handles for every cue [`sfx_cue`] can reach, lazily rendered on
+/// first trigger (the graph bake is one-shot per name; the handle is cached
+/// afterwards — startup stays free of synthesis cost).
+#[derive(Resource, Default)]
+pub struct SfxAssets {
+    map: HashMap<&'static str, Handle<PcmSound>>,
+    dur: HashMap<&'static str, f64>,
+}
+
+impl SfxAssets {
+    /// Every name [`sfx_cue`] can reach — the M1 bakeable set (asserted by
+    /// the tests; the bake itself accepts any table name).
+    #[allow(dead_code)]
+    pub const CUES: &'static [&'static str] = &[
+        "shoot_shooter",
+        "shoot_blaster",
+        "shoot_charger",
+        "shoot_dualies",
+        "shoot_splatling",
+        "roller_flick",
+        "slosh_throw",
+        "splat_enemy",
+        "splatted_self",
+        "ally_splatted",
+        "empty_click",
+        "final_count",
+        "countdown_tick",
+        "one_minute",
+        "times_up",
+        "victory_fanfare",
+        "defeat_jingle",
+    ];
+
+    /// Handle + baked duration, baking `name` on first use. Any name in the
+    /// 148-entry table bakes (the M1 set is [`Self::CUES`]; the boss
+    /// director's [`BossCue::Sfx`](boss_audio) adds the rest).
+    pub(crate) fn cue(
+        &mut self,
+        assets: &mut Assets<PcmSound>,
+        name: &'static str,
+    ) -> Option<(Handle<PcmSound>, f64)> {
+        if let Some(h) = self.map.get(name) {
+            return Some((h.clone(), self.dur.get(name).copied()?));
+        }
+        let pcm = baked(name)?;
+        let dur = pcm.data.len() as f64 / f64::from(SR);
+        let h = assets.add(PcmSound(pcm));
+        self.map.insert(name, h.clone());
+        self.dur.insert(name, dur);
+        Some((h, dur))
+    }
+
+    /// Read-only access to an already-baked cue (test seam: production reads
+    /// through [`Self::cue`]).
+    #[cfg(test)]
+    fn get(&self, name: &str) -> Option<(&Handle<PcmSound>, f64)> {
+        let h = self.map.get(name)?;
+        Some((h, self.dur.get(name).copied().unwrap_or(0.0)))
+    }
+}
+
+/// Audio runtime state: master mute switch, per-frame edge trackers and the
+/// [`SfxGate`] voice bookkeeping (≡ `engine.last` / `byName` / `voices`).
 #[derive(Resource)]
 pub struct SoundState {
     pub muted: bool,
@@ -320,6 +279,11 @@ pub struct SoundState {
     prev_last_fire: f32,
     /// Own `emptyCd` replica (weapons.js L160-162) for the dry-fire click.
     empty_cd: f32,
+    /// Play gate: minGap merge, voice caps, pitch jitter (fixed seed ⇒ the
+    /// jitter stream is deterministic, unlike the JS `Math.random`).
+    pub gate: SfxGate,
+    /// Live voice entities per cue name, oldest first — the steal victims.
+    voices: HashMap<&'static str, VecDeque<(Entity, f64)>>,
 }
 
 impl Default for SoundState {
@@ -329,12 +293,16 @@ impl Default for SoundState {
             // Fresh/reset actors start at last_fire = 99 (actor.rs L234).
             prev_last_fire: 99.0,
             empty_cd: 0.0,
+            gate: SfxGate::new(0x494E_4B57),
+            voices: HashMap::new(),
         }
     }
 }
 
 /// Marker stamped on every spawned sound entity so [`sfx_gc`] can reap ones
 /// the audio backend never got to (no device ⇒ `DESPAWN` cleanup never runs).
+/// Stores the *deadline* (expected end + [`GC_SLACK`]); baked cues run up to
+/// ~3 s, so a fixed birth-age threshold would cut live playback.
 #[derive(Component)]
 pub(crate) struct SfxBorn(f32);
 
@@ -403,21 +371,27 @@ pub fn audio_sfx(
     demo: Res<DemoSim>,
     pc: Res<PlayerControls>,
     mut snd: ResMut<SoundState>,
-    assets: Option<Res<SfxAssets>>,
+    mut sfx: ResMut<SfxAssets>,
+    mut pcm: ResMut<Assets<PcmSound>>,
     keys: Res<ButtonInput<KeyCode>>,
     mut gvol: ResMut<GlobalVolume>,
     time: Res<Time>,
     mut commands: Commands,
+    vols: Res<music::AudioVolumes>,
 ) {
+    // Master: `M` mute + the `master` slider (audio.js L165-172). The WebAudio
+    // master gain ≡ Bevy's `GlobalVolume`; it is refreshed every frame so
+    // `set_volumes` re-targets (τ = 0.04 s) land without an edge.
+    let now = time.elapsed_secs() as f64;
     if keys.just_pressed(KeyCode::KeyM) {
         snd.muted = !snd.muted;
-        gvol.volume = if snd.muted {
-            Volume::SILENT
-        } else {
-            Volume::Linear(1.0)
-        };
         println!("[inkwave] audio {}", if snd.muted { "MUTED" } else { "on" });
     }
+    gvol.volume = if snd.muted {
+        Volume::SILENT
+    } else {
+        Volume::Linear(vols.master.value_at(now) as f32)
+    };
 
     let Some(a) = demo.m.actors.first() else {
         return;
@@ -466,19 +440,46 @@ pub fn audio_sfx(
     if snd.muted || cues.is_empty() {
         return;
     }
-    let Some(assets) = assets else {
-        return;
-    };
-    let now = time.elapsed_secs();
+    let shot_kind = demo.m.kinds.first().copied().unwrap_or(WeaponKind::Shooter);
     for c in cues {
-        let Some(h) = assets.get(c) else {
-            continue;
-        };
-        commands.spawn((
-            AudioPlayer(h.clone()),
-            PlaybackSettings::DESPAWN,
-            SfxBorn(now),
-        ));
+        for (name, vol) in sfx_cue(c, shot_kind) {
+            // Lazy bake: the graph render runs once per name, cached after.
+            let Some((handle, dur)) = sfx.cue(&mut pcm, name) else {
+                continue;
+            };
+            // ≡ JS `audio.play(name, {volume})` → gate → `src.start(at)`;
+            // Merged/Silent collapse the same way upstream does.
+            let Some(PlayDecision::Spawned {
+                speed,
+                volume,
+                steal,
+            }) = snd.gate.play(name, now, None, 0.0, vol, 1.0, dur)
+            else {
+                continue;
+            };
+            let q = snd.voices.entry(name).or_default();
+            q.retain(|(_, end)| *end > now);
+            // Voice steal ≡ JS `_steal` 25 ms fade; deviation D-T50-6: the
+            // stolen (oldest) voice is despawned immediately.
+            for _ in 0..steal {
+                if let Some((e, _)) = q.pop_front()
+                    && let Ok(mut ent) = commands.get_entity(e)
+                {
+                    ent.despawn();
+                }
+            }
+            let end = now + dur / speed;
+            let e = commands
+                .spawn((
+                    AudioPlayer(handle.clone()),
+                    PlaybackSettings::DESPAWN
+                        .with_volume(Volume::Linear((volume * vols.sfx.value_at(now)) as f32))
+                        .with_speed(speed as f32),
+                    SfxBorn((end + f64::from(GC_SLACK)) as f32),
+                ))
+                .id();
+            q.push_back((e, end));
+        }
     }
 }
 
@@ -487,8 +488,8 @@ pub fn audio_sfx(
 pub(crate) fn sfx_gc(time: Res<Time>, mut commands: Commands, q: Query<(Entity, &SfxBorn)>) {
     let now = time.elapsed_secs();
     for (e, born) in q.iter() {
-        // Longest cue < 1 s; 3 s is generous slack for real despawns.
-        if now - born.0 > 3.0
+        // `SfxBorn` is the deadline (expected end + slack).
+        if now > born.0
             && let Ok(mut ent) = commands.get_entity(e)
         {
             ent.despawn();
@@ -496,14 +497,15 @@ pub(crate) fn sfx_gc(time: Res<Time>, mut commands: Commands, q: Query<(Entity, 
     }
 }
 
-/// Startup: synthesise every cue into the asset store once.
-pub fn build_sfx_assets(mut assets: ResMut<Assets<PcmSound>>, mut commands: Commands) {
-    let sfx = SfxAssets::make(&mut assets);
-    let n = sfx.0.len();
-    commands.insert_resource(sfx);
-    // TR-14.1 console evidence: cues ready; the backend itself logs
-    // "No audio device found." once when the host has no output.
-    println!("[inkwave] audio: {n} procedural cues ready (M = mute)");
+/// Startup evidence line (TR-14.1): the table is live; cues bake lazily on
+/// first trigger. The backend itself logs "No audio device found." once when
+/// the host has no output.
+pub fn log_audio_ready() {
+    println!(
+        "[inkwave] audio: SFX table ready ({} cues / {} groups, lazy-baked; M = mute)",
+        sfx_table::sfx_names().len(),
+        sfx_table::SFX_GROUPS.len()
+    );
 }
 
 /// Register the PCM source type + resources/systems (called from WorldPlugin;
@@ -512,16 +514,22 @@ pub fn build_sfx_assets(mut assets: ResMut<Assets<PcmSound>>, mut commands: Comm
 pub fn add_audio(app: &mut App) {
     app.add_audio_source::<PcmSound>()
         .init_resource::<SoundState>()
+        .init_resource::<SfxAssets>()
         .init_resource::<GlobalVolume>()
-        .add_systems(Startup, build_sfx_assets);
+        .init_resource::<music::AudioVolumes>()
+        .init_resource::<music::MusicAssets>()
+        .init_resource::<music::MusicRuntime>()
+        .init_resource::<music::MusicSceneState>()
+        .init_resource::<boss_audio::BossAudioRuntime>()
+        .add_systems(Startup, log_audio_ready);
 }
 
 // ---------------------------------------------------------------------------
-// Task 46 batch C2 — bossAudio placeholder档 (≡ src/audio/bossAudio.js).
-// No real synthesis: every bus subscription becomes a trigger RECORD
-// (SFX name + delay + pitch/volume + loop open/close + music track) so the
-// unit tests can pin counts / order / the dedupe gates. Wiring a real synth
-// onto this table is a later task.
+// Task 46 batch C2 / Task 50 batch D — bossAudio (≡ src/audio/bossAudio.js).
+// Every bus subscription becomes a trigger RECORD (SFX name + delay +
+// pitch/volume + loop open/close + music track) so the unit tests can pin
+// counts / order / the dedupe gates; `boss_audio::boss_audio_playback`
+// consumes the records and turns them into real playback.
 // ---------------------------------------------------------------------------
 
 /// One boss-audio trigger record — the JS `snd(name, opts)` / `_later(sec, fn)`
@@ -584,8 +592,11 @@ pub struct BossAudioDirector {
     /// Deterministic stand-in for `Math.random()` (the placeholder档 needs
     /// reproducible barrage counts / whistle pitches).
     rng: u32,
-    /// The trigger log (bounded; consumed by tests now, by the real synth later).
+    /// The trigger log (bounded; consumed by tests and by the real playback
+    /// system, [`boss_audio::boss_audio_playback`]).
     pub cues: Vec<BossCue>,
+    /// Batch D playback cursor: index into `cues` already consumed.
+    pub(crate) consumed: usize,
 }
 
 impl Default for BossAudioDirector {
@@ -611,6 +622,18 @@ impl BossAudioDirector {
             prev_ended: false,
             rng: 0x9E37_79B9,
             cues: Vec::new(),
+            consumed: 0,
+        }
+    }
+
+    /// The `music.remap` state this director installs (bossAudio.js L58).
+    #[must_use]
+    pub(crate) fn remap(&self) -> music::BossRemap {
+        music::BossRemap {
+            active: self.active,
+            dead: self.dead,
+            phase: self.phase,
+            track: self.track,
         }
     }
 
@@ -689,6 +712,7 @@ impl BossAudioDirector {
         if self.cues.len() > 1024 {
             let cut = self.cues.len() - 512;
             self.cues.drain(..cut);
+            self.consumed = self.consumed.saturating_sub(cut);
         }
     }
 
@@ -869,40 +893,92 @@ mod tests {
 
     #[test]
     fn synthesis_is_bounded_finite_and_deterministic() {
-        let cues = [
-            shot_pcm(),
-            splat_kill_pcm(),
-            splat_self_pcm(),
-            splat_ally_pcm(),
-            empty_pcm(),
-            count_pcm(3),
-            tick_pcm(),
-            finish_pcm(),
-            victory_pcm(),
-            defeat_pcm(),
-        ];
-        for c in &cues {
-            assert_pcm_ok(c);
+        for name in SfxAssets::CUES {
+            assert_pcm_ok(&baked(name).unwrap());
         }
-        // Determinism: same inputs ⇒ same bytes (no RNG state involved).
-        assert_eq!(shot_pcm().data, shot_pcm().data);
-        assert_eq!(victory_pcm().data, victory_pcm().data);
-        // Countdown pitch rises as n falls (final_count semantics): compare
-        // zero-crossing counts over the first 0.05 s as a pitch proxy.
-        let crossings = |p: &Pcm| {
-            let w = (0.05 * SR as f32) as usize;
-            p.data[..w]
-                .iter()
-                .zip(p.data[1..=w].iter())
-                .filter(|(a, b)| (**a >= 0.0) != (**b >= 0.0))
-                .count()
-        };
-        assert!(crossings(&count_pcm(1)) > crossings(&count_pcm(5)));
+        // Determinism: fixed bake seed ⇒ same name, same bytes.
+        assert_eq!(
+            baked("shoot_shooter").unwrap().data,
+            baked("shoot_shooter").unwrap().data
+        );
+        assert_eq!(
+            baked("victory_fanfare").unwrap().data,
+            baked("victory_fanfare").unwrap().data
+        );
+    }
+
+    #[test]
+    fn unknown_names_bake_and_cue_to_none() {
+        // Review P2-8: ≡ JS `play()`'s `if (!d) return null` (audio.js L261) —
+        // nothing is baked and no player can be spawned.
+        assert!(sfx_table::bake("no_such_sound").is_none());
+        assert!(baked("no_such_sound").is_none());
+        let mut sfx = SfxAssets::default();
+        let mut pcm = Assets::<PcmSound>::default();
+        assert!(sfx.cue(&mut pcm, "no_such_sound").is_none());
+    }
+
+    #[test]
+    fn cue_names_mirror_the_js_play_calls() {
+        let shooter = WeaponKind::Shooter;
+        assert_eq!(sfx_cue(Sfx::Shot, shooter), vec![("shoot_shooter", 0.55)]);
+        assert_eq!(
+            sfx_cue(Sfx::Shot, WeaponKind::Charger),
+            vec![("shoot_charger", 0.55)]
+        );
+        assert_eq!(sfx_cue(Sfx::SplatKill, shooter), vec![("splat_enemy", 0.9)]);
+        assert_eq!(
+            sfx_cue(Sfx::SplatSelf, shooter),
+            vec![("splatted_self", 1.0)]
+        );
+        assert_eq!(
+            sfx_cue(Sfx::SplatAlly, shooter),
+            vec![("ally_splatted", 0.5)]
+        );
+        assert_eq!(sfx_cue(Sfx::Empty, shooter), vec![("empty_click", 1.0)]);
+        assert_eq!(sfx_cue(Sfx::Tick, shooter), vec![("one_minute", 1.0)]);
+        assert_eq!(sfx_cue(Sfx::Finish, shooter), vec![("times_up", 1.0)]);
+        assert_eq!(
+            sfx_cue(Sfx::Victory, shooter),
+            vec![("victory_fanfare", 1.0)]
+        );
+        assert_eq!(sfx_cue(Sfx::Defeat, shooter), vec![("defeat_jingle", 1.0)]);
+        // main.js L549 plays final_count for every n; hud.js L510 adds
+        // countdown_tick (volume 0.5) only for n ≤ 3.
+        assert_eq!(
+            sfx_cue(Sfx::Count(2), shooter),
+            vec![("final_count", 1.0), ("countdown_tick", 0.5)]
+        );
+        assert_eq!(sfx_cue(Sfx::Count(5), shooter), vec![("final_count", 1.0)]);
+        // weapons.js shoot cases (dualies = Twins, splatling = Spinner);
+        // kinds without a table shot cue fall back to the shooter chirp.
+        assert_eq!(shot_name(WeaponKind::Twins), "shoot_dualies");
+        assert_eq!(shot_name(WeaponKind::Spinner), "shoot_splatling");
+        assert_eq!(shot_name(WeaponKind::Blaster), "shoot_blaster");
+        assert_eq!(shot_name(WeaponKind::Roller), "roller_flick");
+        assert_eq!(shot_name(WeaponKind::Brush), "shoot_shooter");
+        // Everything `sfx_cue` can emit is in the lazy-bake set.
+        for s in [
+            Sfx::Shot,
+            Sfx::SplatKill,
+            Sfx::SplatSelf,
+            Sfx::SplatAlly,
+            Sfx::Empty,
+            Sfx::Count(1),
+            Sfx::Tick,
+            Sfx::Finish,
+            Sfx::Victory,
+            Sfx::Defeat,
+        ] {
+            for (name, _) in sfx_cue(s, shooter) {
+                assert!(SfxAssets::CUES.contains(&name), "{name} not baked");
+            }
+        }
     }
 
     #[test]
     fn decodable_source_reports_metadata() {
-        let pcm = count_pcm(2);
+        let pcm = baked("final_count").unwrap();
         let frames = pcm.data.len();
         let snd = PcmSound(pcm.clone());
         let mut d = snd.decoder();
@@ -1007,13 +1083,11 @@ mod tests {
             paused: false,
             ..default()
         })
-        .init_resource::<SoundState>();
+        .init_resource::<SoundState>()
+        .init_resource::<music::AudioVolumes>();
         app.add_systems(Update, audio_sfx);
-        let sfx = {
-            let mut amut = app.world_mut().resource_mut::<Assets<PcmSound>>();
-            SfxAssets::make(&mut amut)
-        };
-        app.insert_resource(sfx);
+        // Cues bake lazily inside `audio_sfx` on first trigger.
+        app.init_resource::<SfxAssets>();
         app
     }
 
@@ -1052,8 +1126,9 @@ mod tests {
         let shot = app
             .world()
             .resource::<SfxAssets>()
-            .get(Sfx::Shot)
+            .get("shoot_shooter")
             .unwrap()
+            .0
             .clone();
         assert!(h.contains(&shot), "last_fire reset spawns the shot cue");
 
@@ -1077,8 +1152,8 @@ mod tests {
         app.update();
         let h = spawned_handles(&mut app);
         let assets = app.world().resource::<SfxAssets>();
-        assert!(h.contains(assets.get(Sfx::SplatKill).unwrap()));
-        assert!(h.contains(assets.get(Sfx::SplatAlly).unwrap()));
+        assert!(h.contains(assets.get("splat_enemy").unwrap().0));
+        assert!(h.contains(assets.get("ally_splatted").unwrap().0));
     }
 
     #[test]
@@ -1095,8 +1170,9 @@ mod tests {
         let empty = app
             .world()
             .resource::<SfxAssets>()
-            .get(Sfx::Empty)
+            .get("empty_click")
             .unwrap()
+            .0
             .clone();
         assert!(h.contains(&empty), "held trigger below ink_per_shot clicks");
         // Next frame the replica emptyCd is still armed: no second click.
@@ -1149,7 +1225,7 @@ mod tests {
         app.update();
         let h = spawned_handles(&mut app);
         let assets = app.world().resource::<SfxAssets>();
-        assert!(h.contains(assets.get(Sfx::Count(2)).unwrap()));
+        assert!(h.contains(assets.get("final_count").unwrap().0));
     }
 
     #[test]

@@ -220,7 +220,7 @@
 - **九段门禁**：`rust/tools/verify/gate-task49.sh`——`rust/tools/verify/logs/task49-gates-20261105T111904Z.log` FMT/CLIPPY/TEST(759)/WASM/TREE/XCHK/HEADLESS(turf+boss 600 帧)/JS_TREE_CLEAN **全绿**；DETERM 首跑 MISMATCH=存量 9 产物 `source.commit` 戳刷新（Task 48 提交后重提取正常行为，diff 核实仅 commit 字段 5343cd2→476b967，产物随本任务提交）→复跑 **BYTE_IDENTICAL** 已追记；**TRUNK=DEGRADED**：3 次重试 wasm-bindgen SIGKILL（沙箱 OOM 同 D-T40-1 先例），不阻塞提交。
 
 ## Task 50: 音频过程化合成 + 音乐 + bossAudio
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: medium
 - **Depends On**: Task 46
 - **Description**: `audio.js`（2505 WebAudio 合成）平移选型（程序化样本烘焙 vs 实时合成——spec 设计段定）；`music.js`（1490）曲目状态机；`bossAudio.js`（177）；SFX 触发 ≡ JS 事件总线订阅点全表对账。
@@ -229,6 +229,17 @@
   - `rule` TR-50.1: 事件→音效映射表逐项单测（触发计数）；合成参数锚定测试。
   - `rule` TR-50.2: REVIEW_CHECKLIST 登记听感复核（含静音开关回归）。
 - **Notes**: 不新增依赖前提下选型（sim 依赖面不变；inkwave crate 可用 bevy_audio/kira——以现有依赖为准，实读后定）。
+
+### Task 50 Completion Evidence（2026-11-06）
+- **选型定案（D-T50-1）**：**过程化样本烘焙**——WebAudio 图离线求值→44.1k mono f32 PCM→`PcmSound`/bevy_audio 播放；否决实时合成（不新增依赖+wasm 风险+无头不可测）。惰性 bake：首用烘焙+缓存 handle（`SfxAssets::cue`），`inkwave_sim` 依赖面零改动（NFR-M4-1）。
+- **TR-50.1 合成核 ✅（批次 A）**：`audio/synth.rs`（新 1063 行，纯逻辑无 Bevy）≡ 逐式平移——`Rng`（mulberry32 ≡ music.js L30-38，固定种子替代 Math.random，按名 FNV 播种=声明偏差 D-T50-6）；`Param`（AudioParam 自动化 setValueAtTime/linear/exponential/setTarget，f64 逐样本求值）；`perc/ahr/adsr/pts/sweep`（≡ L174-215）；`Osc` 相位累加+`Wave` 波形+`pulse_coeffs/stroke_coeffs`（≡ PeriodicWave 谐波表 L139-170）；`Biquad`（RBJ cookbook ≡ createBiquadFilter）；`noise_buffer`（≡ L48-95 2s 无缝循环/种子 11/23/37/双遍 IIR/DC block/RMS 0.3，**Paul Kellet pink noise b6 每样本更新 ≡ L71**）；`drive_curve`（≡ L126-136）；pan/mix/delay 缓冲域链。`audio/graph.rs`（新 881 行）：WebAudio 图离线求值器（节点类型/连接/时间轴调度）。锚定测试逐值钉 JS 参考（含 node 现跑同种子 pink noise 前 16 样本）。
+- **TR-50.1 SFX 全表 ✅（批次 B）**：`audio/sfx_table.rs`（新 9322 行）——148 SFX 全表 ≡ `SFX_GROUPS`（audio.js L2479-2501 逐组 1:1 对账，事件→音效映射表逐项单测）；`SfxGate` ≡ `play()`（L258-304：voice steal/MAX_VOICES=48 JS 实值 L26/冷却/全局音量）；`bake()` 返回 `Option<Vec<f32>>`（未知名不 spawn）。4 条 pink 相关 golden（splat_big/sonar_ping/zone_hum/boss_roar）随 b6 修复重生成。
+- **TR-50.1 音乐 ✅（批次 C）**：`audio/music.rs`（新 3088 行）——9 曲（title/menu/battle/battle_final/results_win/results_lose/boss/boss_2/boss_3）状态机+`compile_song` ≡ music.js L601-777 grid-string 编译器逐语义；fade/remap/escalation/duck 全链；`set_volumes` ≡ audio.js L165-172（taper^1.5/τ=0.04）；file-backed 曲目本仓无资产恒 false（声明）；全曲烘焙冒烟 `#[ignore]`（性能门限）。
+- **TR-50.1 bossAudio+设置面 ✅（批次 D）**：`audio/boss_audio.rs`（新 383 行）——BossCue 6 类真实播放替换 Task 46 记录表占位（≡ bossAudio.js 177 行订阅点）；`audio.rs`（1640→1716）cue 守卫放宽至全 148 表、`AudioVolumes` 三轨接线、mute 回归测 `mute_switch_stops_spawns_and_global_volume`（TR-50.2）；`world.rs` Update 链插 `music_scenes`/`music_update`/`boss_audio_playback`。
+- **TR-50.2 ✅**：REVIEW_CHECKLIST「Task 50 音频」条目登记（音色对照 JS/混响缺失声明/音乐状态机/bossAudio/设置面/事件缺口 42 名 kit 系/烘焙性能/静音回归）。
+- **评审**：独立实证评审 **FAIL（1 P0/0 P1/11 P2）**→当场修复复验：P0-1 pink noise IIR `b6` 恒零不可变（违反 ≡ 合同，synth.rs L453-484 改 `let mut b6`+y 后更新+跨双 pass 保留 ≡ music.js L71，补逐样本钉 JS 参考测，连带 4 golden 重生成）；P2-1 steal 后全局 voices 未剪除（同步移除+断言）；P2-8 bake 未知名烘空缓冲（改 Option+不 spawn+新测）；P2-9 loop 起播 60ms fade-in 未声明（boss_audio.rs 模块头 Deviations 补注释）。留档 P2（不修，已裁决）：P2-2 jitter 二次 clamp 不可达、P2-3 parse_chord 带 quality 转位和弦、P2-4 parse_note 双位八度、P2-5 短图案 cells[s] panic（现存 9 曲数据全合法）、P2-6 DuckState NaN clamp、P2-7 Biquad clamp 注释略夸大、P2-10 pulse/stroke f64 精度差、P2-11 根目录游离 task38-ladder-*.log 勿入库。偏差裁决表 9 项全部「可接受」（D-T50-6 五条+评审补充）。
+- **基线**：`inkwave` 130→**180**（+50）/workspace **759→809 passed**（单调递增）；`inkwave_sim` 601 不变、`cargo tree -p inkwave_sim` 依赖面不变；JS 树/`server/`零改动。
+- **九段门禁**：`rust/tools/verify/gate-task50.sh`——`rust/tools/verify/logs/task50-gates-20261105T172415Z.log` FMT/CLIPPY/TEST(809)/WASM/TREE/XCHK/**TRUNK(attempt rc=0，本轮成功)**/HEADLESS(turf+boss)/JS_TREE_CLEAN **全绿**；DETERM 首跑 MISMATCH=存量 9 产物 `source.commit` 戳刷新（476b967→2c9ae6c，Task 48/49 同态；diff 核实仅 commit 字段）→复跑 **BYTE_IDENTICAL (rerun)** 已追记，产物随本任务提交。
 
 ## Task 51: fx 系统 + flood 呈现层
 - **Status**: `pending`

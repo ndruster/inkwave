@@ -547,6 +547,8 @@ impl Plugin for WorldPlugin {
                 crate::input::map_input,
                 // Before the UI state machine: it drains `Match::events`.
                 crate::audio::audio_sfx,
+                crate::audio::music::music_scenes,
+                crate::audio::music::music_update,
                 crate::ui::ui_state_machine,
                 // Task 24: consumes the staged session events and steps the
                 // replication controller before the atlas drain (`ink_upload`)
@@ -562,6 +564,9 @@ impl Plugin for WorldPlugin {
                 crate::ui::minimap_ui::minimap_update,
                 crate::ui::minimap_ui::minimap_ui,
                 crate::ui::online_ui_update,
+                // Task 50 batch D: plays the cues `ui_update` recorded this
+                // frame (runs after the director, before the voice GC).
+                crate::audio::boss_audio::boss_audio_playback,
                 // Task 26: the test-only smoke seam runs after the session
                 // pump so every frame sees the settled state (inert without
                 // seam query params; `None` config ⇒ immediate return).

@@ -37,6 +37,15 @@
 - **D-T47-11 zones catch_up 时延补偿**：`match_/zones.rs` 的 `'zo` field2 / `'zs` field10 时钟戳 + follower `catch_up` 回放补偿是 JS 无对应的新逻辑（tr37 frame 6913 `pen` 差 0.083=5/60 复现证据、修复方式、互操作安全结论见 spec.md 条目）。**专项评审已完成（2026-11-05）**：机制正确性 6 项核对通过；F-1 保真缺口（catch_up 缺 `_tick` tie-point 边沿检测）已修复并复验（sim 592/net-harness 20 全绿，spec.md D-T47-11a）；F-2（`+FIXED_DT` 时序假设）留档。**用户裁定（2026-11-05）：①接受 sim 侧网络路径偏差（JS 树零改动纪律不变，「JS 同步补补偿」否决）②兼容超集定位（JS 按下标读、尾部字段忽略；Rust 按 `len` 门降级；字节等价门只对 fixture 重放路径生效）③性质=网络一致性强化。条目闭环**，定位全文见 spec.md D-T47-11a 与 PORT_MAP zones catch_up 行。
 - **D-T47-12 rebuild_shields 每帧重建**：JS 仅 scan 时刷新成员、Rust 每帧重建（canopy 出现/消失至多早一个 scan 周期 ≤0.25s）。评审已定级 P1 可接受，留档备查。
 
+### Task 50 音频（2026-11-05 登记；沙箱无声卡，以下均需用户机器听感复核）
+- **音色对 JS 基线**（TR-50.2）：148 SFX 全表烘焙档（`audio/sfx_table.rs`）逐组抽听——UI/Weapons/Ink/Squid/World/Combat/Status/Specials/Match/Zones/Boss；重点=pink 噪声音色（splat/bomb/storm/boss_roar，评审 P0 修复后钉值）、pulse/stroke 谐波近似（f64 朴素求和 vs JS Float32Array f32——精度差声明）、jitter→播放速率近似（D-T50-6①）。
+- **混响/总线缺失声明**（D-T50-6②）：convolver 混响 send、glue compressor、limiter、3D panner/距离 lowpass、音乐 delay/reverb 湿信号**未烘**（dry 占位档）；听感干/贴耳属预期，JS 对照=浏览器版。
+- **音乐状态机**：9 曲（title/menu/battle/battle_final/results_win/results_lose/boss/boss_2/boss_3）synth 编译烘焙整曲 loop——file-backed 轨本仓无资产恒 false（占位声明）；fade/remap/escalation 切换听感（battle→battle_final 升级、boss phase 换轨）；loopFrom 跳 intro 不生效（整缓冲回绕偏差①）；loop 起播 60ms fade-in 未烘（偏差⑨声明）；setIntensity 恒 1.0（偏差⑥）。
+- **bossAudio**：Task 46 cue 记录表→真实播放（14 事件映射+remap+duck 0.7/3）；LoopStop 硬停无 0.25s 淡出、`<name>_end` 不播、StopAll/music(null) fade 塌缩 0.6（偏差④）。
+- **设置面**：`set_volumes({master,music,sfx})`≡L165-172（taper^1.5/τ=0.04）——**无 UI 调用点**（M5 设置屏接，`#[allow(dead_code)]` 在案）；静音回归=无头测已钉（mute→无 spawn+GlobalVolume 归零），用户机器复核切屏恢复。
+- **事件接线缺口对账**（TR-50.1 部分）：JS 字面量调用 115 名中 **42 名 kit 系**（blade_/bow_/boomerang_/brolly_/mitts_/shaker_/torpedo_ 等，定义在 `src/game/kits/*-sfx.js` 非 audio.js）超本任务范围——登记顺延（kit 武器 SFX 随各 kit 深战术/Task 51 事件面补）；`judge_drumroll`（hud.js L577）与 title 屏 music('title') 缺口在案。
+- **烘焙性能**：惰性首用烘焙（victory_fanfare 单条 debug 10.7s/release 2.1s 实测）——用户机器留意首触发卡顿；全曲烘焙冒烟测 `#[ignore]`（分钟级）。
+
 ### Task 49 小地图（2026-11-05 登记；沙箱无 GPU，以下均需用户机器复核）
 - **清晰度档位**：`MinimapTier{Low=4, Med=7(JS 默认), High=10}` pxPerM——三档下 turf 双线性边缘、emboss 立体感、5m 网格可读性对照 JS 基线（`minimap.rs` draw_base/draw_ink）。
 - **采样率**：ink 刷新 timer=0.15s（≤6.7Hz）+ BANDS=3 分带（单帧约 1/3 工作量）——观感上墨块更新是否有可感滞后/撕裂（`MinimapClock`）。

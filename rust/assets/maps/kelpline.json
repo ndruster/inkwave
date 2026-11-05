@@ -6867,7 +6867,7 @@
   ],
   "schema": "inkwave.stage_layout.v1",
   "source": {
-    "commit": "476b967ab960c3a110b03d1a20024e3609654e64",
+    "commit": "2c9ae6cad356701edd109986f2eda17e30c28eac",
     "path": "src/world/stages/kelpline/layout.js"
   },
   "stage": {
