@@ -18,6 +18,9 @@ mod bench;
 mod actors;
 mod audio;
 mod boss_render;
+// Task 51: the FX system (≡ src/fx/fx.js + fxHooks.js) — data core, batched
+// quad renderer and the gameplay → VFX hooks, wired by `WorldPlugin`.
+mod fx;
 mod ink_render;
 mod input;
 mod net;

@@ -37,6 +37,15 @@
 - **D-T47-11 zones catch_up 时延补偿**：`match_/zones.rs` 的 `'zo` field2 / `'zs` field10 时钟戳 + follower `catch_up` 回放补偿是 JS 无对应的新逻辑（tr37 frame 6913 `pen` 差 0.083=5/60 复现证据、修复方式、互操作安全结论见 spec.md 条目）。**专项评审已完成（2026-11-05）**：机制正确性 6 项核对通过；F-1 保真缺口（catch_up 缺 `_tick` tie-point 边沿检测）已修复并复验（sim 592/net-harness 20 全绿，spec.md D-T47-11a）；F-2（`+FIXED_DT` 时序假设）留档。**用户裁定（2026-11-05）：①接受 sim 侧网络路径偏差（JS 树零改动纪律不变，「JS 同步补补偿」否决）②兼容超集定位（JS 按下标读、尾部字段忽略；Rust 按 `len` 门降级；字节等价门只对 fixture 重放路径生效）③性质=网络一致性强化。条目闭环**，定位全文见 spec.md D-T47-11a 与 PORT_MAP zones catch_up 行。
 - **D-T47-12 rebuild_shields 每帧重建**：JS 仅 scan 时刷新成员、Rust 每帧重建（canopy 出现/消失至多早一个 scan 周期 ≤0.25s）。评审已定级 P1 可接受，留档备查。
 
+### Task 51 fx（2026-11-06 登记；沙箱无 GPU，以下均需用户机器视觉复核）
+- **粒子/impostor 观感**（D-T51-7②）：六池 instanced billboard 近似材质占位档——JS 逐像素 GLSL（液滴 elongation 拉伸、glow kind G_SOFT/STAR/BUBBLE/HALO、motes 浮尘、shells crown）精度顺延视觉复核；重点=命中 splat/beam/laserDot 的观感对照 JS 浏览器版。
+- **flood 呈现**（D-T51-7①）：screenfx 效果状态机（12 事件→uniform 值）本任务平移，**全屏 composite pass 不接=Task 55**——受击 chroma 边缘/击杀闪/urg 脉冲当前无全屏 shader 合成可见，登记顺延。
+- **zone 带绘**（D-T51-7⑥）：zoneMarks 单 mesh ShaderMaterial→简化边界带 mesh 占位档（flood 波峰/contested/active/sweep/flash 数据层已对账）；虚线相位/跑马动画/波峰渐显观感需复核。
+- **swimWake**（D-T51-7⑦）：swimmer 筛选（≤4/本地优先/相机距离）+轨迹 ring-buffer 数据层落地；`uWake` 组 uniform 上传点 ink.wgsl 无对应→登记顺延（Task 52 着色面接）。
+- **事件→fx 触发对账**（TR-51.1）：`fx/hooks.rs` polling 推断（actor:\* 总线 Rust 无→≡JS fallback，D-T51-7③）+SimEvent/TickEvent 消费；触发计数 `this.count` 逐项单测；缺口如实登记（bomb:explode/weapon:impact/damage 无 MatchEvent）。
+- **粒子预算**（TR-51.1 性能门限）：满池 cap 单测（drops/sprites/rings 达上限即 swap 回收不超发）；用户机器留意大混战帧率。
+- **确定性**（D-T51-7④）：Math.random→固定种子 PRNG（≡Task 50 口径），同参数逐字节可复现。
+
 ### Task 50 音频（2026-11-05 登记；沙箱无声卡，以下均需用户机器听感复核）
 - **音色对 JS 基线**（TR-50.2）：148 SFX 全表烘焙档（`audio/sfx_table.rs`）逐组抽听——UI/Weapons/Ink/Squid/World/Combat/Status/Specials/Match/Zones/Boss；重点=pink 噪声音色（splat/bomb/storm/boss_roar，评审 P0 修复后钉值）、pulse/stroke 谐波近似（f64 朴素求和 vs JS Float32Array f32——精度差声明）、jitter→播放速率近似（D-T50-6①）。
 - **混响/总线缺失声明**（D-T50-6②）：convolver 混响 send、glue compressor、limiter、3D panner/距离 lowpass、音乐 delay/reverb 湿信号**未烘**（dry 占位档）；听感干/贴耳属预期，JS 对照=浏览器版。

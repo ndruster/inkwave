@@ -515,7 +515,16 @@ impl Plugin for WorldPlugin {
             .init_resource::<crate::ui::HitFlash>()
             // Task 24: the net-match link resources (plan Step 4).
             .init_resource::<crate::net::match_link::NetMatchState>()
-            .init_resource::<crate::net::match_link::NetEvents>();
+            .init_resource::<crate::net::match_link::NetEvents>()
+            // Task 51: the FX data core + hooks runtime and the batched
+            // quad renderer over the pools.
+            .insert_resource(crate::fx::FxState::default())
+            .init_resource::<crate::fx::render::FxRenderState>()
+            // Task 51 batch E: the zone marks / swim wake / screen-fx data
+            // layers (zoneMarks.js / swimWake.js / screenfx.js).
+            .init_resource::<crate::fx::zone_marks::ZoneMarksState>()
+            .init_resource::<crate::fx::swim_wake::SwimWakeState>()
+            .init_resource::<crate::fx::screen_fx::ScreenFxState>();
         // Task 24: the online session. Stored as a *non-send* resource — the
         // platform transport is not `Send + Sync` (native `Receiver`, wasm
         // `Rc`), and the Bevy main thread owns it. `RelayBase` is inserted by
@@ -543,38 +552,60 @@ impl Plugin for WorldPlugin {
         )
         .add_systems(
             Update,
+            // The chain is split into two nested groups (Bevy's `.chain()`
+            // impl covers tuples up to 20 systems; the full ordered list is
+            // 22). The outer `.chain()` keeps group 1 entirely before group 2.
             (
-                crate::input::map_input,
-                // Before the UI state machine: it drains `Match::events`.
-                crate::audio::audio_sfx,
-                crate::audio::music::music_scenes,
-                crate::audio::music::music_update,
-                crate::ui::ui_state_machine,
-                // Task 24: consumes the staged session events and steps the
-                // replication controller before the atlas drain (`ink_upload`)
-                // and before the visual-tree rebuild/sync.
-                crate::net::match_link::net_tick,
-                crate::input::tune_sensitivity,
-                crate::ink_render::ink_upload,
-                crate::actors::sync_actor_count,
-                crate::actors::sync_actors,
-                crate::ui::ui_update,
-                // Task 49 批次 C: raster + compose first, then the box
-                // spring / layout / dot writes read the same frame's state.
-                crate::ui::minimap_ui::minimap_update,
-                crate::ui::minimap_ui::minimap_ui,
-                crate::ui::online_ui_update,
-                // Task 50 batch D: plays the cues `ui_update` recorded this
-                // frame (runs after the director, before the voice GC).
-                crate::audio::boss_audio::boss_audio_playback,
-                // Task 26: the test-only smoke seam runs after the session
-                // pump so every frame sees the settled state (inert without
-                // seam query params; `None` config ⇒ immediate return).
-                crate::nettest::nettest_update,
-                crate::ui::ui_button_style,
-                crate::audio::sfx_gc,
-                toggle_shadows,
-                camera_rig,
+                (
+                    crate::input::map_input,
+                    // Before the UI state machine: it drains `Match::events`.
+                    crate::audio::audio_sfx,
+                    // gameplay → VFX glue ≡ the JS `hooks.update(dt)` call:
+                    // reads `Match::events` with `.iter()` only, so it must
+                    // run before the UI state machine drains them (Task 51 D).
+                    crate::fx::hooks::fx_hooks,
+                    // Task 51 batch E: same read-only `Match::events` rule —
+                    // all three run before the UI drain.
+                    crate::fx::zone_marks::zone_marks_update,
+                    crate::fx::swim_wake::swim_wake_update,
+                    crate::fx::screen_fx::screen_fx_update,
+                    crate::audio::music::music_scenes,
+                    crate::audio::music::music_update,
+                    crate::ui::ui_state_machine,
+                    // Task 24: consumes the staged session events and steps the
+                    // replication controller before the atlas drain (`ink_upload`)
+                    // and before the visual-tree rebuild/sync.
+                    crate::net::match_link::net_tick,
+                    crate::input::tune_sensitivity,
+                    crate::ink_render::ink_upload,
+                    crate::actors::sync_actor_count,
+                    crate::actors::sync_actors,
+                    crate::ui::ui_update,
+                    // Task 49 批次 C: raster + compose first, then the box
+                    // spring / layout / dot writes read the same frame's state.
+                    crate::ui::minimap_ui::minimap_update,
+                    crate::ui::minimap_ui::minimap_ui,
+                    crate::ui::online_ui_update,
+                )
+                    .chain(),
+                (
+                    // Task 50 batch D: plays the cues `ui_update` recorded this
+                    // frame (runs after the director, before the voice GC).
+                    crate::audio::boss_audio::boss_audio_playback,
+                    // Task 26: the test-only smoke seam runs after the session
+                    // pump so every frame sees the settled state (inert without
+                    // seam query params; `None` config ⇒ immediate return).
+                    crate::nettest::nettest_update,
+                    crate::ui::ui_button_style,
+                    crate::audio::sfx_gc,
+                    toggle_shadows,
+                    camera_rig,
+                    // ≡ the JS `fx.update(dt, camera)` main-loop call plus the
+                    // per-frame instance-buffer rebuild (Task 51 C): runs at the
+                    // chain tail so `camera_rig`'s camera basis is current.
+                    crate::fx::render::fx_update,
+                )
+                    .chain(),
             )
                 .chain(),
         );

@@ -242,7 +242,7 @@
 - **九段门禁**：`rust/tools/verify/gate-task50.sh`——`rust/tools/verify/logs/task50-gates-20261105T172415Z.log` FMT/CLIPPY/TEST(809)/WASM/TREE/XCHK/**TRUNK(attempt rc=0，本轮成功)**/HEADLESS(turf+boss)/JS_TREE_CLEAN **全绿**；DETERM 首跑 MISMATCH=存量 9 产物 `source.commit` 戳刷新（476b967→2c9ae6c，Task 48/49 同态；diff 核实仅 commit 字段）→复跑 **BYTE_IDENTICAL (rerun)** 已追记，产物随本任务提交。
 
 ## Task 51: fx 系统 + flood 呈现层
-- **Status**: `pending`
+- **Status**: `completed`（2026-11-06 完成，评审 PASS：0 P0/7 P1/8 P2 全部当场处置；证据见下方 Completion Evidence 与 spec.md「Task 51 收口」）
 - **Priority**: medium
 - **Depends On**: Task 50
 - **Description**: `fx.js`（2267 粒子/墨团/命中）+ `screenfx`（1068 受击方向/击杀闪）+ `fxHooks`（712）+ `swimWake`（107）+ `zoneMarks`（517，M3 顺延 zone/flood 呈现）→ bevy 实体/粒子；sim 事件流唯一驱动。
@@ -251,6 +251,17 @@
   - `rule` TR-51.1: 事件→fx 触发对账单测；粒子预算上限（性能门限）。
   - `rule` TR-51.2: 无头+wasm 冒烟不破帧；REVIEW_CHECKLIST 视觉登记。
 - **Notes**: 体量大，执行期拆批次委派；先 hook 面后特效精度。
+
+### Task 51 Completion Evidence（2026-11-06）
+- **批次 A（fx 数据核）✅**：`fx/particles.rs`（新 1815 行，纯逻辑无 Bevy）≡ fx.js L726-1017 逐式——六池结构体（Drop/Sprite/Ring/Shell/Beam/Mote 字段≡JS 属性）+池容量/回收（`_killDrop` swap-with-last L760-771 语义）+`_updateDrops/_updateSprites/_updateRings/_updateShells/_updateBeams`（重力/阻力/浮力/drag=2.2/easeOut/水面命中 waterY+ripple 回调）+`_after` 延迟调度器（OP 枚举≡L1163-1188）+`_near` 相机剔除（cam_pos 入参化无头可测）+固定种子 PRNG（≡`audio::synth::Rng` 口径，D-T51-7④）+预算上限（quality×particles 系数≡L663-707）。
+- **批次 B（spawn API 面）✅**：`fx/api.rs`（新 3715 行）——≈60 公开方法逐一 ≡ 平移（burst/explosion/splatted/muzzle kind 分支/hitSplash amount=30·killed/storm·slam·superJump 系/默认值/旗标组合/`_color` 归一/内部调用链逐值锚行号）；`onSpeck/onRipple` 接 `PaintGrid` 既有 API（sim 零改动）；固定输入单测每 API 断言池条目+数量区间+关键字段，复杂 API 种子固定逐值钉。
+- **批次 C（Bevy 呈现接线）✅**：`fx/mod.rs`（84 行）+`fx/render.rs`（411 行）——`FxState` Resource 持数据核；instanced billboard **占位档**（每池实例缓冲 pos/size/color/alpha→近似材质；impostor 拉伸=view 对齐 quad scale 近似，GLSL 精度顺延=D-T51-7②）；`fx_update` 挂 world.rs Update 链非 headless 分支；`main.rs` `mod fx`；clear/setLighting 对应面。
+- **TR-51.1 触发对账 ✅（批次 D）**：`fx/hooks.rs`（新 1990 行）——SimEvent/TickEvent 消费 ≡ fxHooks 订阅表 22 项逐项（Fire→muzzle/Impact→hitSplash·bounce/LowInk→dryFire/Kit·splat 系…）+**actor:\* polling 推断**（Rust sim 无 actor 总线≡JS fallback，D-T51-7③：per-actor 30 字段状态机——grounded 边沿→land、form 边沿→formPop、vel.y 阈值→jumpOff/dive/emerge、stepAcc 步频累计→footstep…）+`seen` 旗标保留+连续 update 数据面（_projectiles/_bombs/_clouds/_ambient）+触发计数 `count` 逐项单测（注入事件序列→count+池增删对账）；缺口如实登记（bomb:explode/weapon:impact/damage 无 Rust 事件源→REVIEW_CHECKLIST）。**粒子预算上限 ✅**：满池 cap 单测（drops/sprites/rings 达上限 swap 回收不超发）。
+- **批次 E（zoneMarks+swimWake+screenfx 状态机）✅**：`fx/zone_marks.rs`（872 行）——flood 进度/contested/active/sweep/flash 数据层≡L417-456+简化边界带 mesh 占位档（**M3 顺延 flood 呈现层落地**）；`fx/swim_wake.rs`（548 行）——swimmer 筛选（≤4/本地优先/form swim|climb/相机距离）+轨迹 ring-buffer（BREAK/LIFE/SPACING≡L50-107），ink.wgsl 无 `uWake` 组 uniform→数据层落地+上传点顺延 Task 52（D-T51-7⑦）；`fx/screen_fx.rs`（2046 行）——12 事件→效果状态机（uSpeed/uBlast/uChroma/uKill/uFlash/uFlood 等 uniform 值计算≡L589-667/L780-868），**composite pass 不接=Task 55**（D-T51-7①）。
+- **TR-51.2 ✅**：REVIEW_CHECKLIST「Task 51 fx」条目登记（粒子/impostor 观感/flood 顺延/zone 带绘/swimWake 上传/触发对账缺口/粒子预算/确定性 7 项）；headless 600 帧 turf+boss 均不破帧不 panic；wasm 构建+冒烟通过。
+- **评审**：独立实证评审 **PASS（0 P0 / 7 P1 / 8 P2）**→全部当场修复复验：P1-A api.rs 7 处 glow 缺 `.fade_in(0.0)`（JS 默认立即淡入）补齐；P1-B hooks.rs dive 守卫误用 swim 后形态→改原始 `a.form==Form::Squid`；P1-C specialSparkle 高度同改；P1-D beam 剔除半径 from/to（60/40）归位；P1-E slosh 判别加 `&& p.below_falloff>0.0`（blade 液滴误判）；P1-F enemyInk 上升沿补 footstep+bump("enemyInk")（`prev_on_enemy` 边沿）；P1-G zone_marks rotation wipe 未取消在途 fill→`Active{moved:true}` 记录 wipe FloodRec{team:-1,dur:WIPE_T=0.7,reach+3.5,linear} 覆盖 fill。P2 处置：`reset()` 改 JS 式部分重置（mem::take 保留 blast_t/heart_ph/charge_pulse/was_jump/last_blast/full_charge）、swim_wake fwd 改 normalize_or_zero、4 处留档注释（screen_fx respawn/superjump live 门不可达、LensInk 饱和角例、swim_wake 驱逐 d2、头⑦投影偏差措辞）。新增钉行为测试：`rotation_wipe_cancels_inflight_fill`、`reset_is_partial_like_js_object_assign`；`slam_blasts_with_dedup` 修正（剔除 sim 种入 Phase 事件——旧测试曾意外钉住 reset bug）。
+- **基线**：`inkwave` 180→**249**（+69，`fx::` 69 全绿）/workspace **809→878 passed**（单调递增）；`inkwave_sim` 601 不变、`cargo tree -p inkwave_sim` 依赖面不变；JS 树/`server/`/wire/fixture/Cargo.toml·lock 零改动；inkwave 无新增依赖。
+- **九段门禁**：`rust/tools/verify/gate-task51.sh`——`rust/tools/verify/logs/task51-gates-20261106T071026Z.log` FMT/CLIPPY/TEST(878)/WASM/TREE/**DETERM(BYTE_IDENTICAL)**/XCHK/**TRUNK(rc=0)**/HEADLESS(turf+boss)/JS_TREE_CLEAN **全绿**（DETERM 存量产物 `source.commit` 戳系门禁重跑产物，随本任务提交，Task 48/49/50 先例）；clippy 修复 12 项（too_many_arguments allow×2、collapsible if/match、mem::take、iter().enumerate()、assert!）。
 
 ## Task 52: ink 着色 + 地表材质全量
 - **Status**: `pending`

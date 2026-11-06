@@ -4485,7 +4485,7 @@
   ],
   "schema": "inkwave.stage_layout.v1",
   "source": {
-    "commit": "2c9ae6cad356701edd109986f2eda17e30c28eac",
+    "commit": "9b1e4397b8c3fc50b4fb1d178eb65819c37560da",
     "path": "src/world/stages/lockgate/layout.js"
   },
   "stage": {
