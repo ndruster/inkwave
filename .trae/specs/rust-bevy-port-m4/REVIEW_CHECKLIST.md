@@ -37,6 +37,28 @@
 - **D-T47-11 zones catch_up 时延补偿**：`match_/zones.rs` 的 `'zo` field2 / `'zs` field10 时钟戳 + follower `catch_up` 回放补偿是 JS 无对应的新逻辑（tr37 frame 6913 `pen` 差 0.083=5/60 复现证据、修复方式、互操作安全结论见 spec.md 条目）。**专项评审已完成（2026-11-05）**：机制正确性 6 项核对通过；F-1 保真缺口（catch_up 缺 `_tick` tie-point 边沿检测）已修复并复验（sim 592/net-harness 20 全绿，spec.md D-T47-11a）；F-2（`+FIXED_DT` 时序假设）留档。**用户裁定（2026-11-05）：①接受 sim 侧网络路径偏差（JS 树零改动纪律不变，「JS 同步补补偿」否决）②兼容超集定位（JS 按下标读、尾部字段忽略；Rust 按 `len` 门降级；字节等价门只对 fixture 重放路径生效）③性质=网络一致性强化。条目闭环**，定位全文见 spec.md D-T47-11a 与 PORT_MAP zones catch_up 行。
 - **D-T47-12 rebuild_shields 每帧重建**：JS 仅 scan 时刷新成员、Rust 每帧重建（canopy 出现/消失至多早一个 scan 周期 ≤0.25s）。评审已定级 P1 可接受，留档备查。
 
+### Task 52 ink 着色 + 地表材质（2026-11-06 登记；沙箱无 GPU，以下均需用户机器视觉复核）
+- **湿润/光泽对比档**（TR-52.2）：inkShading 9 chunk 全量（INK_PARS/COLOR/ROUGH/GEL/SLOPE/EMISSIVE/LIGHTS/LIGHT_MAPS/SHADE）替换 M1 简化 ink.wgsl——高度位移/队伍色/tone jitter/光泽/湿润 roughness 调制/墨缘斜面法线，对照 JS 浏览器版重点=落墨瞬间 wet 高光衰减与 slope 边缘观感。
+- **46 层材质观感**（D-T52-7①）：CPU 烘焙替代 GPU MRT——与 JS GPU 输出**逐像素不对等**（同参数 Rust 自洽逐字节已由 golden 钉死）；逐层抽看 concrete/pavers/hazard/grate/gelcoat + 至少 2 个 stage 层（kelpline/lockgate/terraces/cargo 槽位）的 albedo/normal/orm 观感。
+- **mip 远景闪烁**（D-T52-2/5）：box-filter mip 链 + mip-linear + aniso16 sampler；远景 GRID/HEX 防重复采样模式（texlib_sample 三模式+sym 位掩码）是否闪烁/走样，对照 JS textureGrad 行为。
+- **烘焙耗时**（D-T52-7① 性能复核）：沙箱实测 43 层×32px=190ms、**43 层×512px≈47.2s**（JS GPU 冷启动≈40ms）；后台线程烘焙不阻塞主循环，但首秒内地面为中性占位纹理——用户机器留意冷启动观感与三附件 512 档 ~193MB 显存。
+- **1174 draw call**（D-T52-4 性能项）：批次键含 fsz（面尺寸入批键，pattern uniform 每批一份的代价），tidewater 实测 1174 批——帧率复核归 Task 55 性能项。
+- **上传路径偏离预设**（D-T52-4）：spec 预设「`Queue::write_texture` 手写 render-world system，不可行则 LOD0 回退」——实际 Bevy 0.19 `GpuImage::prepare_asset` 原生支持多 mip 数组纹理（`create_texture_with_data` 按 mip_level_count），未走手写路径；**边角复核**：`texlib_bake_poll` 原地改写占位 Image 的 `texture_descriptor`（1×1/mip1→512×512×46/mip10）触发 GPU texture 重建的时序（首帧是否有 descriptor/data 不一致窗口）。
+- **naga≠Bevy 编译**：level.wgsl 经 naga-cli 独立校验通过（binding 契约 20-42），但未经真实 wgpu 设备编译/渲染——首次上机运行留意 shader 编译错误与 binding 布局。
+- **INK_LIGHTS/LIGHT_MAPS 近似**（D1 登记）：无 Bevy 灯钩子→折入 emissive/diffuse 近似；灯墨面反光（uLamps 表已接、`u_lamp_n=0` 恒关=Task 53 props 数据源）复核。
+- **质量档位锚错误**（E1 登记）：spec 锚 `rendererQuality==='low'` 在 JS 全树 **0 命中**；真实门=main.js L121 `q.paintAtlas>=4096?512:256`（**medium 实际也 256**）——Rust `quality.rs` 按真实门实现（Low=256/Med-High=512 的 texlib 档位为 Rust 侧设计），JS 对照口径以此为准。
+- **偏差留档**（D-T52-7）：②clearcoat 近似（roughness/法线调制，Task 55 重议）③faceData/faceFlags/faceTan→批 uniform（box 面内恒定等价；lamp/lightKind 位恒 0）④lightUv→paintUv 复用（无 lightmap atlas）⑤gel 13 槽/mural 表 shader 面平移但数据恒失活（Task 53 接）⑥bevel/圆角几何不入本任务⑦showcase ripple=Task 57⑧f32 超越函数跨后端位差不承诺（确定性口径=同机同二进制逐字节）。
+- **wasm32 烘焙 inert**（E2 登记）：`std::thread` wasm 不可用→浏览器构建保持中性占位纹理（地面有材质无图案）；`wasm_thread`/`Asyncify` 烘焙=Task 55 候选。
+- **swimWake 收口**（D-T51-7⑦ 闭环）：`SwimWakeState` 四缓冲→LevelExt binding 33-36 每帧上传已接（钉测=getter 逐值断言）；游动尾迹观感随本任务视觉复核。
+- **FloodJet y 语义**（E2 拿不准项→评审已核销）：独立评审实核 `ink_ripple.rs` FloodJet.y=zone.center[1] ≡ zones.js L166 调用点，与 paint.js L729 消费口径一致；喷墨涟漪高度贴合仍随本任务视觉复核。
+- **独立评审处置**（2026-11-06）：**0 P0 / 0 P1 / 6 P2 → 判定可提交**。逐式抽查 7 层（concrete/pavers/hazard/grate/brick/herringbone/stucco）+ gen.rs 噪声原语 + bake.rs≡GEN_MAIN + texlib_sample 槽表 + face_frame + RippleTable + E2 上传路径（bevy_render gpu_image.rs 全链上传实证）+ 口径纪律（JS 树零改动/提取器钉源/329 测试）全部通过。P2 处置：
+  - **P2-1 ✅ 当场修复**：`level.wgsl` L430 `texlib_detail` 原 `vec4` splat 连 `.a` 缩放（JS texlib.js L1291 仅乘 rgb）→改 `(*s).albedo.rgb = (*s).albedo.rgb * vec3<f32>(...)`。当前无调用点（死代码），先于 Task 53/55 接线消除 grate 覆盖/mask tint alpha 污染隐患；WGSL 语法与同函数 L432/433 既有指针解引用+swizzle 用法一致，naga-cli 沙箱不可复得→全量编译复核并入「naga≠Bevy 编译」条目。
+  - **P2-2 留档**：quality.rs Medium=512 与 JS 真实门（main.js L121，medium→256）不符——即上方「质量档位锚错误」条目，Rust 三档设计口径，Task 55 复核。
+  - **P2-3 ✅ 台账更正**：任务简报 texlib.json sha256 失实（`42833d0459f5…69ec`）→实际 `42833d04a9eb9ec3d247f0c1f0ec1fbfa1bad8120cf6372b2500a556b20a7edc`；仓内无文件钉该哈希、重跑提取 git diff 为空，工件无恙，仅台账用实测值。
+  - **P2-4 留档**：`extract-texlib.mjs` L178 `sizeLow:256, sub:2` 手抄字面量（非提取），L176-177 assertContains 钉源兜底；后续如需可改提取式，不阻塞。
+  - **P2-5 留档**：`level_render.rs` L424 `cams.iter().next()` 依赖单相机前提（world.rs L943 仅一个 Camera3d，当前充分）；多相机场景（Task 57 showcase）需加 `is_active` 过滤。
+  - **P2-6 ✅ 处置**：`rust/tools/verify/logs/task38-ladder-*.log` 系 Task 38 scratch 产物（未跟踪），不纳入 Task 52 提交面；本仓门禁日志惯例逐任务提交、scratch 日志不入库。
+
 ### Task 51 fx（2026-11-06 登记；沙箱无 GPU，以下均需用户机器视觉复核）
 - **粒子/impostor 观感**（D-T51-7②）：六池 instanced billboard 近似材质占位档——JS 逐像素 GLSL（液滴 elongation 拉伸、glow kind G_SOFT/STAR/BUBBLE/HALO、motes 浮尘、shells crown）精度顺延视觉复核；重点=命中 splat/beam/laserDot 的观感对照 JS 浏览器版。
 - **flood 呈现**（D-T51-7①）：screenfx 效果状态机（12 事件→uniform 值）本任务平移，**全屏 composite pass 不接=Task 55**——受击 chroma 边缘/击杀闪/urg 脉冲当前无全屏 shader 合成可见，登记顺延。

@@ -5,6 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 node extract-tuning.mjs
+node extract-texlib.mjs
 node extract-layout.mjs
 node extract-layout.mjs kelpline
 node extract-layout.mjs halyard

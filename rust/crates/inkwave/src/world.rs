@@ -1,15 +1,16 @@
 //! Task 10 — Bevy level-world rendering for the Rust port.
 //!
 //! Turns an [`inkwave_sim::geometry::StageLayout`] into batched render meshes
-//! (one draw call per pattern-style × block colour), plus the daytime
-//! environment (gradient sky dome, sun with toggleable cascaded shadows,
-//! translucent sea at `water_y`, team-tinted spawn-barrier cylinders) and a
-//! third-person camera rig with mouse look and collision boom-shrink.
+//! (one draw call per pattern slot × block colour × face-orientation group —
+//! Task 52 D2), plus the daytime environment (gradient sky dome, sun with
+//! toggleable cascaded shadows, translucent sea at `water_y`, team-tinted
+//! spawn-barrier cylinders) and a third-person camera rig with mouse look and
+//! collision boom-shrink.
 //!
 //! Faithful to upstream `src/world/level.js` (`_addBlock` block frames and the
 //! `hidden` cull rule) and `src/world/environment.js` (day theme sun/sky
-//! colours). M1 approximates the texlib uber-shaders with solid block colours
-//! plus simple procedural stripe/grid textures.
+//! colours). Task 52 D2 replaces the M1 solid-colour approximation with the
+//! ported texlib uber-shader (`level.wgsl` via [`crate::level_render::LevelExt`]).
 
 use std::collections::HashMap;
 
@@ -23,7 +24,8 @@ use inkwave_sim::collision::CollisionWorld;
 use inkwave_sim::geometry::{Brush, StageLayout};
 use inkwave_sim::ink_atlas::InkAtlas;
 
-use crate::ink_render::{InkAtlasRes, InkExt, InkImage, InkMaterial};
+use crate::ink_render::{InkAtlasRes, InkImage};
+use crate::level_render::{LevelExt, LevelMaterial, add_texlib_placeholders};
 
 /// Sky clear colour matching `renderer.js` setClearColor (0x9fd8f0).
 const SKY: Color = Color::srgb(0.624, 0.847, 0.941);
@@ -47,38 +49,6 @@ const REF_ASPECT: f32 = 16.0 / 9.0;
 const BOOM: f32 = 4.5;
 /// Pivot height above the feet (cameraRig.js `hgt`).
 const PIVOT_H: f32 = 1.85;
-/// Texlib tile scale in metres (`surfaces.js` scale: 2.4).
-const TEX_SCALE: f32 = 2.4;
-
-/// Procedural texture styles the M1 material set approximates.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-enum Style {
-    Flat,
-    Concrete,
-    Plank,
-    Tile,
-    Brick,
-    Ashlar,
-    Metal,
-    Hazard,
-    Grate,
-}
-
-/// Map an upstream PATTERN id (mapkit.js L9-13) to an M1 texture style.
-fn style_for(pattern: u16) -> Style {
-    match pattern {
-        0 | 8 => Style::Flat,
-        3 | 9 | 10 | 14 | 18 | 19 | 20 | 21 | 25 => Style::Concrete,
-        1 | 6 | 17 | 22 | 24 | 26 | 27 => Style::Plank,
-        2 | 15 | 29 => Style::Tile,
-        13 | 16 | 28 => Style::Brick,
-        23 | 30 => Style::Ashlar,
-        5 | 7 | 11 => Style::Metal,
-        4 => Style::Hazard,
-        12 => Style::Grate,
-        _ => Style::Flat,
-    }
-}
 
 /// Parse a `#rrggbb` sRGB hex string into a [`Color`].
 fn hex_color(s: &str) -> Color {
@@ -179,77 +149,285 @@ struct Batch {
     indices: Vec<u32>,
 }
 
-/// Append one oriented box (24 verts / 36 tris) to `batch`. UVs are projected
-/// from the world position onto the face's tangent axes (world metres /
-/// [`TEX_SCALE`]).
+/// Box face table: (normal axis, outward sign). The index order ≡ the
+/// collision layout `faces[k * 2 + (sign > 0 ? 0 : 1)]` (level.js
+/// `_buildFaces` L202). The per-face (u, v) axes are NOT fixed here — they
+/// follow the JS frame rule in [`face_frame`] (wall v = world up, top/bottom
+/// u = world X), which the shader's edge / drip / stair math depends on.
+const FACES: [(usize, f32); 6] = [
+    (0, 1.0),
+    (0, -1.0),
+    (1, 1.0),
+    (1, -1.0),
+    (2, 1.0),
+    (2, -1.0),
+];
+
+/// Pick the face's in-plane axes and signed tangent vectors ≡ level.js
+/// `_buildFaces` L170-182 verbatim:
+/// * wall (`|n.y| < 0.5`): `vi` = the in-plane axis most aligned with world
+///   up, `v` = that axis flipped to `v.y >= 0`; `ui` = the other axis.
+/// * top/bottom: `ui` = the in-plane axis most aligned with world X, `vi` =
+///   the other, `v` flipped to `+z` when `v.z < 0 && |v.z| > 0.3`.
+/// * `u = v × n` (JS L182, `u × v = n`) — the handedness fixes the pattern
+///   mirror, so the sign of `u` must match JS exactly.
 ///
-/// With `ink = Some((world, atlas, brush_index))` the block's faces are looked
-/// up through the collision world (`blocks[bid].faces[axis * 2 + sign]`, the
-/// same table as [`FACES`] below) and each vertex gets UV1 = its position in
-/// that face's atlas rect; non-paintable / culled faces get `(0, 0)`.
-fn emit_box(batch: &mut Batch, f: &Frame, ink: Option<(&CollisionWorld, &InkAtlas, usize)>) {
-    // (local normal axis, sign, u-axis, v-axis) chosen so that in the
-    // right-handed frame (axes[0] × axes[1] = axes[2]) the tangent cross
-    // axes[ua] × axes[va] equals the outward normal sign·axes[na] for every
-    // face (negative faces swap u/v) — then the CCW quad order below always
-    // faces outward.
-    const FACES: [(usize, f32, usize, usize); 6] = [
-        (0, 1.0, 1, 2),
-        (0, -1.0, 2, 1),
-        (1, 1.0, 2, 0),
-        (1, -1.0, 0, 2),
-        (2, 1.0, 0, 1),
-        (2, -1.0, 1, 0),
-    ];
-    for (na, sign, ua, va) in FACES {
-        let normal = f.axes[na] * sign;
-        let quad_start = batch.positions.len() as u32;
-        // collision face id for this box face (FACES order == faces[k*2+sign])
-        let face_atlas = ink.map(|(world, atlas, bid)| {
-            let fid = world.blocks[bid].faces[na * 2 + if sign > 0.0 { 0 } else { 1 }];
-            if fid < 0 {
-                return None;
-            }
-            let fa = atlas.face_atlas(fid as u32)?;
-            Some((fa, &world.faces[fid as usize], atlas.size()))
-        });
-        for (cu, cv) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
-            let mut local = Vec3::ZERO;
-            local[na] = sign * f.half[na];
-            local[ua] = cu * f.half[ua];
-            local[va] = cv * f.half[va];
-            let world = f.center + f.axes[0] * local.x + f.axes[1] * local.y + f.axes[2] * local.z;
-            batch.positions.push(world.to_array());
-            batch.normals.push(normal.to_array());
-            let du = world - f.center;
-            batch.uvs.push([
-                du.dot(f.axes[ua]) / TEX_SCALE,
-                du.dot(f.axes[va]) / TEX_SCALE,
-            ]);
-            if ink.is_some() {
-                let uv_b = match face_atlas.flatten() {
-                    Some((fa, face, size)) => {
-                        // glam 0.30 (sim) vs 0.32 (Bevy): bridge via arrays
-                        let o = Vec3::from_array(face.origin.to_array());
-                        let uu = Vec3::from_array(face.u.to_array());
-                        let vv = Vec3::from_array(face.v.to_array());
-                        let rel = world - o;
-                        fa.uv_at(rel.dot(uu), rel.dot(vv), size)
-                    }
-                    None => (0.0, 0.0),
-                };
-                batch.uvs_b.push([uv_b.0, uv_b.1]);
-            }
+/// For the axis-aligned frame this yields the JS table:
+/// (+X): u=-Z v=+Y · (-X): u=+Z v=+Y · (+Y): u=-X v=+Z · (-Y): u=+X v=+Z ·
+/// (+Z): u=+X v=+Y · (-Z): u=-X v=+Y.
+fn face_frame(axes: &[Vec3; 3], na: usize, sign: f32) -> (usize, usize, Vec3, Vec3) {
+    let n = axes[na] * sign;
+    let others: [usize; 2] = match na {
+        0 => [1, 2],
+        1 => [0, 2],
+        _ => [0, 1],
+    };
+    let (ui, vi) = if n.y.abs() < 0.5 {
+        let vi = if axes[others[0]].y.abs() > axes[others[1]].y.abs() {
+            others[0]
+        } else {
+            others[1]
+        };
+        let ui = if others[0] == vi {
+            others[1]
+        } else {
+            others[0]
+        };
+        (ui, vi)
+    } else {
+        let ui = if axes[others[0]].x.abs() >= axes[others[1]].x.abs() {
+            others[0]
+        } else {
+            others[1]
+        };
+        let vi = if others[0] == ui {
+            others[1]
+        } else {
+            others[0]
+        };
+        (ui, vi)
+    };
+    let mut v = axes[vi];
+    if n.y.abs() < 0.5 {
+        if v.y < 0.0 {
+            v = -v;
         }
-        batch.indices.extend_from_slice(&[
-            quad_start,
-            quad_start + 1,
-            quad_start + 2,
-            quad_start,
-            quad_start + 2,
-            quad_start + 3,
-        ]);
+    } else if v.z < 0.0 && v.z.abs() > 0.3 {
+        v = -v;
     }
+    let u = v.cross(n);
+    (ui, vi, u, v)
+}
+
+/// Map an upstream PATTERN id to its texlib slot (levelMaterial.js L79-85
+/// table is 50 slots wide, slot 49 = TL_SIDE). The layout's pattern id ≡ the
+/// JS `b.pattern` ≡ the shader's `u_pattern`, so no style fallback table is
+/// needed any more.
+fn pattern_slot(pattern: u16) -> u16 {
+    pattern.min(49)
+}
+
+/// Quantised face-orientation identity of one box face — everything the
+/// `level.wgsl` `BatchParams` (deviation ③) needs, constant inside a batch.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+struct OrientGroup {
+    /// The block frame axes, each component × 64 rounded (orientation
+    /// signature: recovers `u_tan` and the wall test from the key).
+    sig: [i8; 9],
+    /// `FACES` index (0..6): picks the (na, sign) pair; the (u, v) frame is
+    /// then re-derived from `sig` with [`face_frame`] (≡ JS `_buildFaces`).
+    face: u8,
+    /// Face size along u/v in metres as exact `f32` bits (stored bit-wise so
+    /// the key stays `Eq`/`Hash`/`Ord`). The shader's edge distances
+    /// (`ef ≡ L745`, coping, drip grooves) need the precise face size, so it
+    /// must be part of the key, not just the batch.
+    su: u32,
+    sv: u32,
+    /// ≡ JS `f.atlas ? 1 : 0` (level.js L266): the face owns a paint-atlas
+    /// rect, so ink can wet it (`wetBase`).
+    wet: bool,
+    /// ≡ JS `groundedBottom` (L198-201): wall faces only.
+    grounded: bool,
+}
+
+/// Batch key: pattern slot × block colour × face-orientation group.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+struct BatchKey {
+    pattern: u16,
+    color: String,
+    orient: OrientGroup,
+}
+
+impl BatchKey {
+    /// The frame axes recovered from the quantised signature.
+    fn axes(&self) -> [Vec3; 3] {
+        let s = &self.orient.sig;
+        std::array::from_fn(|i| {
+            Vec3::new(s[i * 3] as f32, s[i * 3 + 1] as f32, s[i * 3 + 2] as f32) / 64.0
+        })
+    }
+
+    /// Deviation ③: the per-batch `BatchParams` re-derived from the key
+    /// (≡ JS `fdat`/`fflag`/`ftan` vertex attributes, constant per box face).
+    fn batch_params(&self) -> crate::level_render::BatchParams {
+        let (na, sign) = FACES[self.orient.face as usize];
+        let axes = self.axes();
+        let normal_y = axes[na].y * sign;
+        let (_ui, _vi, u, _v) = face_frame(&axes, na, sign);
+        crate::level_render::BatchParams {
+            pattern: self.pattern as f32,
+            wet_base: self.orient.wet as u32 as f32,
+            flags_x: (normal_y.abs() < 0.3) as u32 as f32,
+            flags_y: self.orient.grounded as u32 as f32,
+            mur: -1.0,
+            pad: [0.0; 3],
+            fsz: Vec4::new(
+                f32::from_bits(self.orient.su),
+                f32::from_bits(self.orient.sv),
+                0.0,
+                0.0,
+            ),
+            // ≡ JS `faceTan = f.u` (level.js L268) — the signed tangent.
+            tan: (u, 0.0).into(),
+        }
+    }
+}
+
+/// Append one box face (4 verts / 2 tris) to `batch`. UV0 = the face-local
+/// metre coords ≡ JS `faceUv` (cu, cv from the face origin, 0..su × 0..sv —
+/// the shader's edge distances `min(fu, fsz - fu)` rely on that convention).
+///
+/// With `ink = Some((world, atlas, brush_index))` the block's face is looked
+/// up through the collision world (`blocks[bid].faces[na * 2 + sign]`, the
+/// same table as [`FACES`]) and each vertex gets UV1 = its position in that
+/// face's atlas rect; non-paintable / culled faces get `(0, 0)`.
+fn emit_face(
+    batch: &mut Batch,
+    f: &Frame,
+    face: usize,
+    ink: Option<(&CollisionWorld, &InkAtlas, usize)>,
+) {
+    let (na, sign) = FACES[face];
+    let normal = f.axes[na] * sign;
+    let (ui, vi, u, v) = face_frame(&f.axes, na, sign);
+    let quad_start = batch.positions.len() as u32;
+    // collision face id for this box face (FACES order == faces[k*2+sign])
+    let face_atlas = ink.map(|(world, atlas, bid)| {
+        let fid = world.blocks[bid].faces[na * 2 + if sign > 0.0 { 0 } else { 1 }];
+        if fid < 0 {
+            return None;
+        }
+        let fa = atlas.face_atlas(fid as u32)?;
+        Some((fa, &world.faces[fid as usize], atlas.size()))
+    });
+    // u × v = n (JS L182), so this corner order is CCW about the outward
+    // normal, and the (-1, -1) corner is the JS face origin (L184).
+    for (cu, cv) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+        let world = f.center + normal * f.half[na] + u * (cu * f.half[ui]) + v * (cv * f.half[vi]);
+        batch.positions.push(world.to_array());
+        batch.normals.push(normal.to_array());
+        batch
+            .uvs
+            .push([(cu + 1.0) * f.half[ui], (cv + 1.0) * f.half[vi]]);
+        if ink.is_some() {
+            let uv_b = match face_atlas.flatten() {
+                Some((fa, face, size)) => {
+                    // glam 0.30 (sim) vs 0.32 (Bevy): bridge via arrays
+                    let o = Vec3::from_array(face.origin.to_array());
+                    let uu = Vec3::from_array(face.u.to_array());
+                    let vv = Vec3::from_array(face.v.to_array());
+                    let rel = world - o;
+                    fa.uv_at(rel.dot(uu), rel.dot(vv), size)
+                }
+                None => (0.0, 0.0),
+            };
+            batch.uvs_b.push([uv_b.0, uv_b.1]);
+        }
+    }
+    batch.indices.extend_from_slice(&[
+        quad_start,
+        quad_start + 1,
+        quad_start + 2,
+        quad_start,
+        quad_start + 2,
+        quad_start + 3,
+    ]);
+}
+
+/// Append one whole oriented box (all six faces) to a single `batch` — the
+/// M1 path, kept for tests; the renderer routes faces through
+/// [`build_level_batches`] so each box face lands in its orientation batch.
+#[cfg(test)]
+fn emit_box(batch: &mut Batch, f: &Frame, ink: Option<(&CollisionWorld, &InkAtlas, usize)>) {
+    for face in 0..6 {
+        emit_face(batch, f, face, ink);
+    }
+}
+
+/// Build the render batches: one entry per (pattern slot, block colour,
+/// face-orientation group), sorted by key. Pure data (no GPU assets), so the
+/// tests can assert the batching directly.
+fn build_level_batches(
+    l: &StageLayout,
+    world: &CollisionWorld,
+    atlas: &InkAtlas,
+) -> Vec<(BatchKey, Batch)> {
+    let mut batches: HashMap<BatchKey, Batch> = HashMap::new();
+    let mut scratch: Vec<u32> = Vec::new();
+    for (bid, brush) in l.primitives.iter().enumerate() {
+        let c = brush.common();
+        if c.hidden {
+            continue;
+        }
+        let f = frame_of(brush);
+        for (face, &(na, sign)) in FACES.iter().enumerate() {
+            let normal = f.axes[na] * sign;
+            let (ui, vi, _u, v) = face_frame(&f.axes, na, sign);
+            // ≡ JS face.wall (level.js L187)
+            let wall = normal.y.abs() < 0.3;
+            // ≡ JS `f.atlas ? 1 : 0` (L266): a paint-atlas rect exists for
+            // this face (culled / non-paintable faces have none).
+            let fid = world.blocks[bid].faces[na * 2 + if sign > 0.0 { 0 } else { 1 }];
+            let wet = fid >= 0 && atlas.face_atlas(fid as u32).is_some();
+            // ≡ JS groundedBottom (L198-201): probe the face's bottom edge
+            // centre — origin + u·su/2 + v·(-0.06) + n·0.06, i.e. the face
+            // centre of the v = 0 edge pushed 6 cm out along n. `v` is the
+            // signed JS face v (world-up aligned on walls).
+            let mut grounded = false;
+            if wall {
+                let probe = f.center + normal * (f.half[na] + 0.06) - v * (f.half[vi] + 0.06);
+                grounded = world.point_inside(
+                    glam::Vec3::from_array(probe.to_array()),
+                    0.0,
+                    bid as i32,
+                    &mut scratch,
+                ) || probe.y < 0.02;
+            }
+            let sig =
+                std::array::from_fn(|i| (f.axes[i / 3].to_array()[i % 3] * 64.0).round() as i8);
+            let key = BatchKey {
+                pattern: pattern_slot(c.pattern),
+                color: c.color.clone(),
+                orient: OrientGroup {
+                    sig,
+                    face: face as u8,
+                    su: (2.0 * f.half[ui]).to_bits(),
+                    sv: (2.0 * f.half[vi]).to_bits(),
+                    wet,
+                    grounded,
+                },
+            };
+            emit_face(
+                batches.entry(key).or_default(),
+                &f,
+                face,
+                Some((world, atlas, bid)),
+            );
+        }
+    }
+    let mut sorted: Vec<_> = batches.into_iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    sorted
 }
 
 /// Build a [`Mesh`] from accumulated batch data.
@@ -263,70 +441,6 @@ fn to_mesh(batch: &Batch) -> Mesh {
     }
     mesh.insert_indices(Indices::U32(batch.indices.clone()));
     mesh
-}
-
-/// Generate a small procedural tile texture (grayscale; tinted by base colour).
-fn pattern_image(style: Style) -> Image {
-    const N: u32 = 64;
-    let mut px = vec![255u8; (N * N * 4) as usize];
-    for y in 0..N {
-        for x in 0..N {
-            let v: u8 = match style {
-                Style::Flat => 255,
-                Style::Concrete => 236 + ((x * 7 + y * 13) % 5) as u8 * 3,
-                Style::Plank => {
-                    let seam = (y % 16 == 0) as u8;
-                    let grain = ((x * 3 + y) % 11) as u8;
-                    235 - seam * 45 - grain * 2
-                }
-                Style::Tile => {
-                    let grout = (x % 32 == 0 || y % 32 == 0) as u8;
-                    240 - grout * 40
-                }
-                Style::Brick => {
-                    let row = y / 8;
-                    let off = (row % 2) * 8;
-                    let mortar = (y % 8 == 0 || (x + off) % 16 == 0) as u8;
-                    232 - mortar * 48
-                }
-                Style::Ashlar => {
-                    let row = y / 16;
-                    let off = (row % 2) * 16;
-                    let bed = (y % 16 == 0) as u8;
-                    let perp = ((x + off) % 32 == 0) as u8;
-                    238 - bed * 40 - perp * 24
-                }
-                Style::Metal => {
-                    let seam = (x % 16 == 0) as u8;
-                    236 - seam * 36
-                }
-                Style::Hazard => {
-                    let stripe = ((x + y) / 8 % 2 == 0) as u8;
-                    240 - stripe * 150
-                }
-                Style::Grate => {
-                    let hole = (x % 8 < 2 && y % 8 < 2) as u8;
-                    230 - hole * 160
-                }
-            };
-            let i = ((y * N + x) * 4) as usize;
-            px[i] = v;
-            px[i + 1] = v;
-            px[i + 2] = v;
-            px[i + 3] = 255;
-        }
-    }
-    Image::new(
-        Extent3d {
-            width: N,
-            height: N,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        px,
-        TextureFormat::Rgba8UnormSrgb,
-        default(),
-    )
 }
 
 /// Vertical gradient for the sky dome (zenith #1d6fdc → mid #5aa8f2 → horizon
@@ -414,7 +528,7 @@ fn emit_quad(batch: &mut Batch, center: Vec3, hx: f32, hz: f32) {
             .positions
             .push((center + Vec3::new(x, 0.0, z)).to_array());
         batch.normals.push([0.0, 1.0, 0.0]);
-        batch.uvs.push([x / TEX_SCALE, z / TEX_SCALE]);
+        batch.uvs.push([x, z]);
     }
     batch
         .indices
@@ -501,30 +615,38 @@ impl Plugin for WorldPlugin {
             paused: true,
             ..default()
         };
-        app.add_plugins(crate::ink_render::InkPlugin)
-            .insert_resource(ClearColor(SKY))
-            .insert_resource(LayoutRes(layout))
-            .insert_resource(SimWorld(world))
-            .insert_resource(atlas)
-            .insert_resource(demo)
-            .insert_resource(pc)
-            .init_resource::<CamRig>()
-            .init_resource::<crate::input::LookSettings>()
-            .init_resource::<crate::ui::UiState>()
-            .init_resource::<crate::ui::Feed>()
-            .init_resource::<crate::ui::HitFlash>()
-            // Task 24: the net-match link resources (plan Step 4).
-            .init_resource::<crate::net::match_link::NetMatchState>()
-            .init_resource::<crate::net::match_link::NetEvents>()
-            // Task 51: the FX data core + hooks runtime and the batched
-            // quad renderer over the pools.
-            .insert_resource(crate::fx::FxState::default())
-            .init_resource::<crate::fx::render::FxRenderState>()
-            // Task 51 batch E: the zone marks / swim wake / screen-fx data
-            // layers (zoneMarks.js / swimWake.js / screenfx.js).
-            .init_resource::<crate::fx::zone_marks::ZoneMarksState>()
-            .init_resource::<crate::fx::swim_wake::SwimWakeState>()
-            .init_resource::<crate::fx::screen_fx::ScreenFxState>();
+        app.add_plugins((
+            crate::ink_render::InkPlugin,
+            // Task 52 D2: the level uber-shader material.
+            crate::level_render::LevelPlugin,
+        ))
+        .insert_resource(ClearColor(SKY))
+        .insert_resource(LayoutRes(layout))
+        .insert_resource(SimWorld(world))
+        .insert_resource(atlas)
+        .insert_resource(demo)
+        .insert_resource(pc)
+        .init_resource::<CamRig>()
+        .init_resource::<crate::input::LookSettings>()
+        .init_resource::<crate::ui::UiState>()
+        .init_resource::<crate::ui::Feed>()
+        .init_resource::<crate::ui::HitFlash>()
+        // Task 24: the net-match link resources (plan Step 4).
+        .init_resource::<crate::net::match_link::NetMatchState>()
+        .init_resource::<crate::net::match_link::NetEvents>()
+        // Task 51: the FX data core + hooks runtime and the batched
+        // quad renderer over the pools.
+        .insert_resource(crate::fx::FxState::default())
+        .init_resource::<crate::fx::render::FxRenderState>()
+        // Task 51 batch E: the zone marks / swim wake / screen-fx data
+        // layers (zoneMarks.js / swimWake.js / screenfx.js).
+        .init_resource::<crate::fx::zone_marks::ZoneMarksState>()
+        .init_resource::<crate::fx::swim_wake::SwimWakeState>()
+        .init_resource::<crate::fx::screen_fx::ScreenFxState>()
+        // Task 52 batch E2: the ripple pool (paint.js L551-587) fed by the
+        // splat stream + capture floods, and the flood-edge tracker.
+        .init_resource::<crate::ink_ripple::RippleTable>()
+        .init_resource::<crate::level_render::RippleFeed>();
         // Task 24: the online session. Stored as a *non-send* resource — the
         // platform transport is not `Send + Sync` (native `Receiver`, wasm
         // `Rc`), and the Bevy main thread owns it. `RelayBase` is inserted by
@@ -578,6 +700,10 @@ impl Plugin for WorldPlugin {
                     crate::net::match_link::net_tick,
                     crate::input::tune_sensitivity,
                     crate::ink_render::ink_upload,
+                    // Task 52 batch E2: drain the texlib bake worker and swap
+                    // the placeholder arrays in place (cheap poll; inert once
+                    // the result has landed).
+                    crate::texlib::res::texlib_bake_poll,
                     crate::actors::sync_actor_count,
                     crate::actors::sync_actors,
                     crate::ui::ui_update,
@@ -600,6 +726,10 @@ impl Plugin for WorldPlugin {
                     crate::audio::sfx_gc,
                     toggle_shadows,
                     camera_rig,
+                    // Task 52 batch E2: ripple / wake / clock uniform wiring
+                    // into every level material; runs right after `camera_rig`
+                    // so `setView` sees this frame's camera position.
+                    crate::level_render::level_material_wiring,
                     // ≡ the JS `fx.update(dt, camera)` main-loop call plus the
                     // per-frame instance-buffer rebuild (Task 51 C): runs at the
                     // chain tail so `camera_rig`'s camera basis is current.
@@ -642,54 +772,61 @@ fn build_level_world(
     atlas_res: Res<InkAtlasRes>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut ink_materials: ResMut<Assets<InkMaterial>>,
+    mut level_materials: ResMut<Assets<LevelMaterial>>,
     mut images: ResMut<Assets<Image>>,
 ) {
     let l = &layout.0;
     let ink_tex = images.add(atlas_res.make_image());
     commands.insert_resource(InkImage(ink_tex.clone()));
 
-    // ---- batched primitive geometry (one draw call per style × colour) ----
-    let mut batches: HashMap<(Style, String), Batch> = HashMap::new();
+    // ---- texlib placeholder textures + the shared level extension ----
+    // Batch E replaces the placeholder array contents with the baked layers;
+    // until then the shader path runs on neutral constants.
+    let doc = crate::texlib::schema::embedded_texlib();
+    let texlib_images = add_texlib_placeholders(&doc, &mut images);
+    commands.insert_resource(texlib_images.clone());
+    // Batch E2: bake the slot-referenced layers on a worker thread at the
+    // quality tier's size (Low 256 / Med·High 512); `texlib_bake_poll` swaps
+    // the placeholder contents once the chain lands. The headless branch
+    // never adds `WorldPlugin`, so this startup system — and with it the
+    // bake — is render-world gated by construction.
+    let tier = crate::quality::tier_from_env();
+    commands.insert_resource(crate::texlib::res::start_bake(&doc, tier.texlib_size()));
+    let base_ext = LevelExt::new_shared(
+        ink_tex.clone(),
+        &texlib_images,
+        &doc,
+        atlas_res.atlas.size(),
+    );
+
+    // ---- batched primitive geometry (one draw call per pattern slot ×
+    // colour × face-orientation group) ----
     let mut visible = 0u32;
     let mut hidden = 0u32;
-    for (bid, brush) in l.primitives.iter().enumerate() {
-        let c = brush.common();
-        if c.hidden {
+    for brush in &l.primitives {
+        if brush.common().hidden {
             hidden += 1;
-            continue;
+        } else {
+            visible += 1;
         }
-        visible += 1;
-        emit_box(
-            batches
-                .entry((style_for(c.pattern), c.color.clone()))
-                .or_default(),
-            &frame_of(brush),
-            Some((&sim.0, &atlas_res.atlas, bid)),
-        );
     }
-    let mut style_tex: HashMap<Style, Handle<Image>> = HashMap::new();
+    let batches = build_level_batches(l, &sim.0, &atlas_res.atlas);
     let mut draw_calls = 0u32;
-    let mut sorted: Vec<_> = batches.into_iter().collect();
-    sorted.sort_by(|a, b| a.0.cmp(&b.0));
-    for ((style, color), batch) in sorted {
+    for (key, batch) in batches {
         if batch.positions.is_empty() {
             continue;
         }
-        let tex = style_tex
-            .entry(style)
-            .or_insert_with(|| images.add(pattern_image(style)))
-            .clone();
         let mesh = meshes.add(to_mesh(&batch));
-        let mat = ink_materials.add(ExtendedMaterial {
+        let mat = level_materials.add(ExtendedMaterial {
             base: StandardMaterial {
-                base_color: hex_color(&color),
-                base_color_texture: Some(tex),
-                perceptual_roughness: 0.85,
+                base_color: hex_color(&key.color),
+                // ≡ levelMaterial.js L40 material baseline (doc.mat.roughness).
+                perceptual_roughness: doc.mat.roughness,
                 ..default()
             },
-            extension: InkExt {
-                ink_atlas: ink_tex.clone(),
+            extension: LevelExt {
+                batch: key.batch_params(),
+                ..base_ext.clone()
             },
         });
         commands.spawn((
@@ -1016,28 +1153,34 @@ mod tests {
     }
 
     #[test]
-    fn emit_box_uvs_scale_by_tex_scale() {
+    fn emit_box_uvs_are_face_metres_zero_to_size() {
         let l = sample();
         let mut batch = Batch::default();
-        // 4.8 m box → ±2.4 half → u spans 4.8/2.4 = 2 tiles: corners at ±1.0
+        // 4.8 m box → face-local UV0 runs 0..4.8 on both axes (≡ JS faceUv,
+        // pure metres; the shader divides by the uTL 1/scale table).
         emit_box(
             &mut batch,
             &frame_of(&box_brush(&l, [0.0, 0.0, 0.0], [4.8, 4.8, 4.8])),
             None,
         );
         let us: Vec<f32> = batch.uvs.iter().map(|u| u[0]).collect();
-        assert!(us.iter().any(|v| (*v - 1.0).abs() < 1e-5));
-        assert!(us.iter().any(|v| (*v + 1.0).abs() < 1e-5));
+        assert!(us.contains(&0.0));
+        assert!(us.iter().any(|v| (*v - 4.8).abs() < 1e-5));
+        assert!(
+            !us.iter().any(|v| *v < -1e-6),
+            "UV0 must start at the face origin"
+        );
     }
 
     #[test]
-    fn style_for_covers_pattern_table() {
-        assert_eq!(style_for(0), Style::Flat);
-        assert_eq!(style_for(29), Style::Tile); // herringbone slot
-        assert_eq!(style_for(28), Style::Brick);
-        assert_eq!(style_for(30), Style::Ashlar); // stucco slot
-        assert_eq!(style_for(4), Style::Hazard);
-        assert_eq!(style_for(99), Style::Flat);
+    fn pattern_slot_clamps_to_texlib_table() {
+        // The layout pattern ≡ the texlib slot id (levelMaterial.js L79-85,
+        // 50 slots; slot 49 = TL_SIDE).
+        assert_eq!(pattern_slot(0), 0);
+        assert_eq!(pattern_slot(29), 29); // herringbone slot
+        assert_eq!(pattern_slot(30), 30);
+        assert_eq!(pattern_slot(49), 49);
+        assert_eq!(pattern_slot(99), 49);
     }
 
     #[test]
@@ -1100,22 +1243,41 @@ mod tests {
     }
 
     #[test]
-    fn embedded_tidewater_batches_to_expected_styles() {
+    fn embedded_tidewater_batches_to_expected_keys() {
         let l = sample();
-        let mut keys = std::collections::HashSet::new();
+        let world = CollisionWorld::from_layout(&l);
+        let atlas = InkAtlas::new(&world);
+        let batches = build_level_batches(&l, &world, &atlas);
+        // Every batch pattern is a clamped visible-primitive pattern.
+        let visible_patterns: std::collections::HashSet<u16> = l
+            .primitives
+            .iter()
+            .filter(|b| !b.common().hidden)
+            .map(|b| pattern_slot(b.common().pattern))
+            .collect();
+        for (key, _) in &batches {
+            assert!(
+                visible_patterns.contains(&key.pattern),
+                "pattern {}",
+                key.pattern
+            );
+        }
+        // TR-10.1 (re-keyed for D2): the visible primitives collapse into the
+        // pinned (pattern slot × colour × orientation) batch count. The face
+        // size lives in the key (the shader's edge-distance math needs the
+        // exact fsz), so distinct box dimensions cannot share a batch —
+        // tidewater's hand-sized geometry makes this far larger than the M1
+        // 15 style×colour batches.
+        assert_eq!(batches.len(), 1174, "batch count");
         let mut visible = 0u32;
         let mut hidden = 0u32;
         for b in &l.primitives {
-            let c = b.common();
-            if c.hidden {
+            if b.common().hidden {
                 hidden += 1;
-                continue;
+            } else {
+                visible += 1;
             }
-            visible += 1;
-            keys.insert((style_for(c.pattern), c.color.clone()));
         }
-        // TR-10.1: visible primitives collapse into 15 style×colour batches.
-        assert_eq!(keys.len(), 15);
         // Total matches the layout meta primitive count; hidden are the
         // collision-only props culled from the render (level.js `_addBlock`).
         assert_eq!(
@@ -1128,7 +1290,162 @@ mod tests {
             l.primitives.len(),
             visible,
             hidden,
-            keys.len()
+            batches.len()
         );
+    }
+
+    /// ≡ level.js `_buildFaces` L170-182 on the axis-aligned frame: the
+    /// six-face (ui, vi, u, v) table pinned verbatim (JS source values as
+    /// comments). Wall faces get v = world up, u = horizontal with the JS
+    /// handedness (u × v = n); top/bottom get u = world X, v = world +Z.
+    #[test]
+    fn face_frame_matches_js_table() {
+        let axes = [Vec3::X, Vec3::Y, Vec3::Z];
+        // JS _buildFaces for (k, sign) → (ui, vi, u, v):
+        //   (+X) k0 s+1: vi=Y(1) ui=Z(2)  u=Y×X=-Z  v=+Y
+        //   (-X) k0 s-1: vi=Y(1) ui=Z(2)  u=Y×-X=+Z  v=+Y
+        //   (+Y) k1 s+1: ui=X(0) vi=Z(2)  u=Z×Y=-X  v=+Z
+        //   (-Y) k1 s-1: ui=X(0) vi=Z(2)  u=Z×-Y=+X  v=+Z
+        //   (+Z) k2 s+1: vi=Y(1) ui=X(0)  u=Y×Z=+X  v=+Y
+        //   (-Z) k2 s-1: vi=Y(1) ui=X(0)  u=Y×-Z=-X  v=+Y
+        let expect: [(usize, usize, Vec3, Vec3); 6] = [
+            (2, 1, Vec3::NEG_Z, Vec3::Y),
+            (2, 1, Vec3::Z, Vec3::Y),
+            (0, 2, Vec3::NEG_X, Vec3::Z),
+            (0, 2, Vec3::X, Vec3::Z),
+            (0, 1, Vec3::X, Vec3::Y),
+            (0, 1, Vec3::NEG_X, Vec3::Y),
+        ];
+        for (face, &(na, sign)) in FACES.iter().enumerate() {
+            let (ui, vi, u, v) = face_frame(&axes, na, sign);
+            let (eu, ev, eu_vec, ev_vec) = expect[face];
+            assert_eq!((ui, vi), (eu, ev), "face {face} (ui, vi)");
+            assert_eq!(u, eu_vec, "face {face} u (JS mirror handedness)");
+            assert_eq!(v, ev_vec, "face {face} v");
+            // wall faces: v ≡ world up exactly
+            if matches!(face, 0 | 1 | 4 | 5) {
+                assert_eq!(v, Vec3::Y, "face {face} wall v = world up");
+                assert_eq!(u.y, 0.0, "face {face} wall u horizontal");
+            }
+            // JS L182: u × v = n
+            assert_eq!(u.cross(v), axes[na] * sign, "face {face} handedness");
+        }
+    }
+
+    /// One floating paintable box → six orientation batches: wall flags per
+    /// face, wet ≡ paint-atlas rect (bottom face excluded), grounded false
+    /// while airborne, and `u_tan` ≡ the JS signed face u.
+    #[test]
+    fn single_box_makes_six_orientation_batches() {
+        let mut l = sample();
+        let mut c = base_common(&l);
+        c.pattern = 3;
+        c.paint = true;
+        c.color = "#abcdef".to_string();
+        l.primitives = vec![Brush::Box {
+            min: [0.0, 10.0, 0.0],
+            max: [2.0, 13.0, 2.0],
+            common: c,
+        }];
+        let world = CollisionWorld::from_layout(&l);
+        let atlas = InkAtlas::new(&world);
+        let batches = build_level_batches(&l, &world, &atlas);
+        assert_eq!(batches.len(), 6, "one batch per box face");
+        // JS _buildFaces (ui, vi) and the signed u per FACES index (see
+        // `face_frame_matches_js_table`).
+        let ui_of = [2usize, 2, 0, 0, 0, 0];
+        let vi_of = [1usize, 1, 2, 2, 1, 1];
+        let tan_of = [
+            Vec3::NEG_Z,
+            Vec3::Z,
+            Vec3::NEG_X,
+            Vec3::X,
+            Vec3::X,
+            Vec3::NEG_X,
+        ];
+        let half = [1.0f32, 1.5, 1.0]; // 2×3×2 box
+        let mut seen = [false; 6];
+        for (key, batch) in &batches {
+            assert_eq!(key.pattern, 3);
+            assert_eq!(key.color, "#abcdef");
+            assert_eq!(batch.positions.len(), 4);
+            let face = key.orient.face as usize;
+            seen[face] = true;
+            let o = &key.orient;
+            let bp = key.batch_params();
+            // wall faces: ±X (0,1) and ±Z (4,5)
+            let wall = matches!(o.face, 0 | 1 | 4 | 5);
+            assert_eq!(bp.flags_x, wall as u32 as f32, "face {face}");
+            // airborne: no wall face stands on anything
+            assert!(!o.grounded, "face {face}");
+            // the -Y face (index 3) is not paintable → no atlas rect → dry;
+            // the other five own one.
+            assert_eq!(o.wet, o.face != 3, "face {face}");
+            // tan ≡ the JS signed u (wall tangents stay horizontal)
+            assert_eq!(bp.tan.truncate(), tan_of[face], "face {face}");
+            assert_eq!(bp.tan.y, 0.0, "face {face} tan horizontal");
+            // su/sv ≡ the JS face extents 2·h[ui] / 2·h[vi]
+            assert_eq!(bp.fsz.x, 2.0 * half[ui_of[face]], "face {face}");
+            assert_eq!(bp.fsz.y, 2.0 * half[vi_of[face]], "face {face}");
+        }
+        assert!(seen.iter().all(|s| *s), "all six faces batched");
+    }
+
+    /// A box resting on the floor plane grounds its four wall faces
+    /// (≡ JS groundedBottom probe L198-201); the top face stays ungrounded.
+    #[test]
+    fn grounded_probe_fires_for_walls_at_the_floor() {
+        let mut l = sample();
+        let mut c = base_common(&l);
+        c.pattern = 0;
+        c.paint = true;
+        c.color = "#ffffff".to_string();
+        l.primitives = vec![Brush::Box {
+            min: [0.0, 0.0, 0.0],
+            max: [2.0, 3.0, 2.0],
+            common: c,
+        }];
+        let world = CollisionWorld::from_layout(&l);
+        let atlas = InkAtlas::new(&world);
+        let batches = build_level_batches(&l, &world, &atlas);
+        let grounded: Vec<u8> = batches
+            .iter()
+            .filter(|(k, _)| k.orient.grounded)
+            .map(|(k, _)| k.orient.face)
+            .collect();
+        assert_eq!(
+            grounded,
+            vec![0, 1, 4, 5],
+            "wall faces (±X, ±Z) grounded at y≈-0.06 < 0.02"
+        );
+    }
+
+    /// Every embedded batch's `BatchParams` re-derives identically from its
+    /// key (pattern / wet gate / flags / face size / mur sentinel).
+    #[test]
+    fn batch_params_rederive_from_keys() {
+        let l = sample();
+        let world = CollisionWorld::from_layout(&l);
+        let atlas = InkAtlas::new(&world);
+        let batches = build_level_batches(&l, &world, &atlas);
+        assert!(!batches.is_empty());
+        for (key, _) in &batches {
+            let bp = key.batch_params();
+            assert_eq!(bp.pattern, key.pattern as f32);
+            assert_eq!(bp.wet_base, key.orient.wet as u32 as f32);
+            assert_eq!(bp.flags_y, key.orient.grounded as u32 as f32);
+            assert_eq!(bp.mur, -1.0);
+            assert_eq!(bp.fsz.x, f32::from_bits(key.orient.su));
+            assert_eq!(bp.fsz.y, f32::from_bits(key.orient.sv));
+            assert!(bp.fsz.x > 0.0 && bp.fsz.y > 0.0, "face sizes positive");
+            // flags_x ≡ the wall test re-derived from the quantised normal;
+            // tan ≡ the JS signed face u re-derived from the key.
+            let (na, sign) = FACES[key.orient.face as usize];
+            let axes = key.axes();
+            let normal_y = axes[na].y * sign;
+            let (_ui, _vi, u, _v) = face_frame(&axes, na, sign);
+            assert_eq!(bp.flags_x, (normal_y.abs() < 0.3) as u32 as f32);
+            assert_eq!(bp.tan.truncate(), u);
+        }
     }
 }

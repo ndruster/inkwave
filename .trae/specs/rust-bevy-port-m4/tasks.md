@@ -264,7 +264,7 @@
 - **九段门禁**：`rust/tools/verify/gate-task51.sh`——`rust/tools/verify/logs/task51-gates-20261106T071026Z.log` FMT/CLIPPY/TEST(878)/WASM/TREE/**DETERM(BYTE_IDENTICAL)**/XCHK/**TRUNK(rc=0)**/HEADLESS(turf+boss)/JS_TREE_CLEAN **全绿**（DETERM 存量产物 `source.commit` 戳系门禁重跑产物，随本任务提交，Task 48/49/50 先例）；clippy 修复 12 项（too_many_arguments allow×2、collapsible if/match、mem::take、iter().enumerate()、assert!）。
 
 ## Task 52: ink 着色 + 地表材质全量
-- **Status**: `pending`
+- **Status**: `completed`（2026-11-06 完成，评审 PASS：0 P0/0 P1/6 P2（P2-1 当场修复，余留档）；证据见下方 Completion Evidence 与 spec.md「Task 52 收口注记」）
 - **Priority**: medium
 - **Depends On**: Task 51
 - **Description**: `inkShading`（314 GLSL→wgpu：高度/光泽/湿润）；`levelMaterial`（719 pattern 全量）+ `texlib`（1424 程序化纹理）；材质参数走提取管线。
@@ -273,6 +273,20 @@
   - `rule` TR-52.1: 纹理生成确定性（同参数逐字节）；shader uniform 表锚定单测。
   - `rule` TR-52.2: wasm 冒烟 + REVIEW_CHECKLIST 视觉登记（湿润/光泽对比档）。
 - **Notes**: 与 Task 55 后处理链有交互，质量档位表在本任务起建。
+
+### Task 52 Completion Evidence（2026-11-06）
+- **批次 A（提取管线，D-T52-1）✅**：`rust/tools/extract/extract-texlib.mjs`（字面块切片 eval+`assertContains` 钉源，不 import THREE）→ `rust/assets/texlib.json`（schema `inkwave.texlib.v1`，sha256 `42833d04a9eb…7edc` 实测钉值）=46 层 meta（25 基础+21 stage）+slots{map[50]/onWall/onTop/uTL·uTLt·uTLs 构造输入}+ink/lamps/mat/tex 常量；`run-all.sh` 纳入；stable-json 连跑逐字节一致（门禁 DETERM 段扩 texlib.json）。
+- **批次 B（CPU 烘焙核，D-T52-2）✅**：`texlib/gen.rs`≡GEN_COMMON 全量（pcg/hu/hf/wrp/gn/fbmR/worR/edgeProf/sdRB/aa，逐式锚 L116-168）；`texlib/bake.rs` L152-209≡GEN_MAIN L171-200（2×2 子采样、albedo sRGB 仅 rgb 通道、normal 高度梯度、orm 打包）+`build_mips` box-filter 链；确定性双跑逐字节+32px 代表层 golden sha256 `a200252a…` 钉 fixture（D-T52-7① CPU≠GPU 逐像素声明）。
+- **批次 C（46 层 surf 全量，D-T52-3）✅**：`materials.rs` 25 层+`materials_stage.rs` 21 层（kelpline/cargo 共享模板经 diff 证实逐字节相同）——每层 `≡ texlib.js L##`/`≡ stages/<id>/surfaces.js L##` 锚；逐层双跑逐字节+通道 sanity（grate alpha 有洞/tint 均值/stair 周期）+代表层 golden。评审逐式抽查 7 层全量系数/噪声参数/clamp 一致。
+- **批次 D1（level.wgsl，D-T52-4）✅**：`level.wgsl` 1196 行——TEXLIB 运行时（texlib_sample 三模式+sym 位掩码+Toksvig≡TEXLIB_GLSL L1212-1256、detail/specularAA/coverage）+levelMaterial 片元注入（uTL 查表/onWall-onTop 重映射≡L297-302/stair/SIDE/clearcoat 近似②）+inkShading 9 chunk 全量替换简化 ink.wgsl；binding 契约 20-42 由 `ink_render.rs` 测试钉名/号；评审核 mat2 列主序/select 语义/降沿 smoothstep 改写数学等价。
+- **批次 D2（渲染接线，D-T52-4）✅**：`level_render.rs` `LevelExt`（AsBindGroup 全表+`slot_uniforms`≡levelMaterial L96-99 含 falsy 陷阱）+`world.rs` 批次改造（face_frame≡level.js L159-206 六面轴对齐 JS 表钉测 L1302；批次键含 pattern slot×面朝向×fsz；tidewater 1174 批登记性能复核）；上传路径按评审实证走 Bevy `GpuImage::prepare_asset` 全 mip 链（收口注记 D-T52-4 修正）。
+- **批次 E1（ripple+质量档，D-T52-5）✅**：`ink_ripple.rs` `RippleTable`≡paint.js L551-587（RIP_N=24 保分环 score=amp/(1+d²·0.012)、38m 剔除、`rippled_near` 0.16 窗、on_splat 门≡L537/540、flood jet≡L729、pack_uniforms≡inkShading.js L34）；`quality.rs` 质量档位表起建——spec 锚 `rendererQuality==='low'` 实为 JS 0 命中，按真实门 main.js L121 实现（锚错误登记 REVIEW_CHECKLIST）。
+- **批次 E2（烘焙资源+swimWake 收口，D-T52-5/7①）✅**：`texlib/res.rs` `TexLibBake` 后台线程 on-demand 烘焙（tidewater layout 实需 43/46 层；沙箱实测 32px=190ms、512px≈47.2s）→原地改 descriptor 触发 Modified 重建上传；wasm32 inert（std::thread 不可用→中性占位，登记 Task 55 候选）；`fx/swim_wake.rs` 四缓冲→LevelExt binding 33-36 每帧上传（**D-T51-7⑦ 收口**，getter 逐值钉测）。
+- **TR-52.1 ✅**：烘焙双跑逐字节+golden 哈希（批次 B/C）；uTL 50 槽/onWall/onTop/常量锚定单测（批次 A `schema.rs` L293-329≡L96-99）；texlib.json 连跑字节一致。
+- **TR-52.2 ✅**：wasm 冒烟不破帧；REVIEW_CHECKLIST「Task 52」13 条视觉登记（湿润/光泽对比档、46 层观感、mip 远景闪烁、烘焙耗时、1174 批、上传路径、naga≠Bevy、INK_LIGHTS 近似、质量锚错误、偏差留档、wasm inert、swimWake、FloodJet y）。
+- **评审**：独立实证评审 **PASS（0 P0 / 0 P1 / 6 P2 → 可提交）**——逐式抽查/槽表/face_frame/RippleTable/E2 上传路径/口径纪律六项通过；P2-1 `texlib_detail` alpha 污染当场修复（≡texlib.js L1291 仅 rgb）；P2-3 简报哈希失实→台账用实测值；P2-6 ladder scratch 日志不入提交面；P2-2/4/5 留档（REVIEW_CHECKLIST「独立评审处置」）。
+- **基线**：`inkwave` 249→**329**（+80，texlib 烘焙/46 层/level.wgsl 契约/RippleTable/quality/swimWake 收口全绿）/workspace **878→958 passed**（单调递增）；`inkwave_sim` 601 不变、`cargo tree -p inkwave_sim` 依赖面不变；JS 树/`server/`/wire/net-fixtures/Cargo.toml·lock 零改动；inkwave 无新增依赖；`tuning.json`+8 图仅 `source.commit` 戳刷新至 3b734a8（门禁重跑产物，Task 48-51 先例，随本任务提交）。
+- **九段门禁**：`rust/tools/verify/gate-task52.sh`——首轮 `rust/tools/verify/logs/task52-gates-20261106T120359Z.log` CLIPPY 红（11 条死代码/lint）+DETERM=MISMATCH（`source.commit` 戳刷新，Task 51 同因先例）；修复后重跑 `task52-gates-20261106T122152Z.log` FMT/CLIPPY/TEST(958=329+601+28)/WASM/TREE/**DETERM(BYTE_IDENTICAL)**/XCHK/**TRUNK(rc=0，attempt 1 即成，历史 SIGKILL 环境问题未复现)**/HEADLESS(turf+boss 0)/JS_TREE_CLEAN **全绿**。clippy 修复 14 项全部行为不变：删死代码（`RippleTable::new`→Default、`V2`、`PrepCtx.px`、`SurfCtx.layer`+生命周期参、`MipChain::base_len`）；`slot`/`emit_box`→`#[cfg(test)]`；JS 锚点定向豁免（`RIPPLE_DEFAULT`/`set_clock`/`reset` →`allow(dead_code)` 注 Task 57 消费方；`inert`→`cfg_attr` 镜像 `bake_all` 先例；`ink_upload` too_many_arguments）；机械修 3（`as_chunks_mut`、`needless_range_loop`→enumerate、`manual_contains`）。
 
 ## Task 53: props/murals/dressing 装饰
 - **Status**: `pending`

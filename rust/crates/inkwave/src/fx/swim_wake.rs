@@ -10,10 +10,11 @@
 //! - **数据层全量平移**：swimmer 筛选 + 轨迹 ring-buffer + 上传缓冲计算
 //!   （≡ `update` L21-105 的 CPU 部分）。`SwimWakeState` 暴露与
 //!   `uWake/uWakeB/uSwimH/uSwimF` 一一对应的 `[[f32; 4]; N]` 缓冲 getter。
-//! - **上传点顺延**：ink.wgsl 无 uWake 组 uniform（已 grep 确认零匹配），
-//!   本任务不扩 ink.wgsl 渲染面（任务书既定事实）——缓冲算好即冻结，
-//!   供未来 swim-wake shader pass（Task 55 后处理链 / 水面材质扩展）接线。
-//!   JS L22 的 `if (!U || !U.uWake) return` 门在 Rust 恒为「数据照算」（无 U 可查）。
+//! - **上传点已收口（Task 52 批次 E2）**：缓冲由
+//!   [`crate::level_render::level_material_wiring`] 每帧写入 `level.wgsl` 的
+//!   `uWake/uWakeB/uSwimH/uSwimF`（binding 33-36，≡ levelMaterial.js
+//!   L174-177）。JS L22 的 `if (!U || !U.uWake) return` 门在 Rust 恒为
+//!   「数据照算」（无 U 可查）。
 //! - **climb 形态缺口**：JS 筛 `form === 'swim' || 'climb'`（L31），Rust 呈现层
 //!   形态只有 [`FxForm`]（Swim ≡ F07 入水；climb 无对应动画态，hooks.rs 批次 D
 //!   已登记同一偏差）——Rust 用 `actor_form(a) == Swim` 判定，climb 分支
@@ -100,8 +101,8 @@ fn form_is_swim(a: &Actor) -> bool {
 /// The swim-wake data layer. Holds the slot trails plus the four upload
 /// buffers mirroring `uWake`/`uWakeB`/`uSwimH`/`uSwimF` (≡ swimWake.js L80-105).
 ///
-/// **上传点顺延（D-T51-7⑦）**：ink.wgsl 无对应 uniform——缓冲只算不传，
-/// getter 供未来 pass 接线。
+/// **上传点已收口（Task 52 批次 E2）**：getter 由
+/// [`crate::level_render::level_material_wiring`] 每帧写入 `level.wgsl`。
 #[derive(Resource, Debug)]
 pub struct SwimWakeState {
     slots: [WakeSlot; SLOTS],

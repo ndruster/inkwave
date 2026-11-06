@@ -21,10 +21,19 @@ mod boss_render;
 // Task 51: the FX system (≡ src/fx/fx.js + fxHooks.js) — data core, batched
 // quad renderer and the gameplay → VFX hooks, wired by `WorldPlugin`.
 mod fx;
+// Task 52 batch E: the ripple table (≡ paint.js L551-587) is consumed by the
+// E2 wiring; the quality tier seed stays allow-gated until Task 55.
 mod ink_render;
+mod ink_ripple;
 mod input;
+mod level_render;
 mod net;
 mod nettest;
+#[allow(dead_code)] // Task 55 消费后移除
+mod quality;
+// Task 52: schema/materials/bake/res are all wired through
+// `level_render` + `world::build_level_world` (batch E2 bake + upload).
+mod texlib;
 mod ui;
 mod world;
 

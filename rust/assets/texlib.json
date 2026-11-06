@@ -1,0 +1,936 @@
+{
+  "ink": {
+    "glow": 0.06,
+    "ppm": 20,
+    "ripples": 24,
+    "teamA": "#ff8a14",
+    "teamB": "#2f5bff"
+  },
+  "lamps": {
+    "hex": "#ffc48a",
+    "intensity": 16,
+    "max": 12,
+    "radius": 10
+  },
+  "layers": [
+    {
+      "alpha": false,
+      "ao": 0.5,
+      "detail": 1,
+      "group": 0,
+      "hr": [
+        -0.004,
+        0.0008
+      ],
+      "mode": 1,
+      "name": "concrete",
+      "scale": 4,
+      "sym": 7,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.55,
+      "detail": 0.9,
+      "group": 0,
+      "hr": [
+        -0.008,
+        0.001
+      ],
+      "mode": 1,
+      "name": "pavers",
+      "scale": 4,
+      "sym": 7,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.5,
+      "detail": 0.15,
+      "group": 0,
+      "hr": [
+        -0.003,
+        0.0006
+      ],
+      "mode": 1,
+      "name": "tiles",
+      "scale": 2,
+      "sym": 7,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.45,
+      "detail": 0.4,
+      "group": 0,
+      "hr": [
+        -0.0014,
+        0.0008
+      ],
+      "mode": 2,
+      "name": "asphalt",
+      "scale": 2,
+      "sym": 7,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.4,
+      "detail": 0.3,
+      "group": 0,
+      "hr": [
+        -0.015,
+        0.0012
+      ],
+      "mode": 1,
+      "name": "boardwalk",
+      "scale": 2,
+      "sym": 1,
+      "tint": false
+    },
+    {
+      "alpha": false,
+      "ao": 0.45,
+      "detail": 0.2,
+      "group": 0,
+      "hr": [
+        -0.006,
+        0.003
+      ],
+      "mode": 1,
+      "name": "metalpanel",
+      "scale": 2,
+      "sym": 3,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.3,
+      "detail": 0.2,
+      "group": 0,
+      "hr": [
+        -0.03,
+        0.001
+      ],
+      "mode": 0,
+      "name": "corrugated",
+      "scale": 2.4,
+      "sym": 0,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.3,
+      "detail": 0.5,
+      "group": 0,
+      "hr": [
+        -0.0004,
+        0.0004
+      ],
+      "mode": 0,
+      "name": "hazard",
+      "scale": 2,
+      "sym": 0,
+      "tint": false
+    },
+    {
+      "alpha": true,
+      "ao": 0.35,
+      "detail": 0.3,
+      "group": 0,
+      "hr": [
+        -0.009,
+        0.0006
+      ],
+      "mode": 1,
+      "name": "grate",
+      "scale": 1.2,
+      "sym": 3,
+      "tint": false
+    },
+    {
+      "alpha": false,
+      "ao": 0.5,
+      "detail": 0.7,
+      "group": 0,
+      "hr": [
+        -0.007,
+        0.0008
+      ],
+      "mode": 1,
+      "name": "brick",
+      "scale": 2,
+      "sym": 1,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.35,
+      "detail": 0.35,
+      "group": 0,
+      "hr": [
+        -0.0007,
+        0.0007
+      ],
+      "mode": 2,
+      "name": "rubber",
+      "scale": 2,
+      "sym": 7,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.45,
+      "detail": 0,
+      "group": 0,
+      "hr": [
+        -0.004,
+        0.0018
+      ],
+      "mode": 1,
+      "name": "glasstile",
+      "scale": 1.2,
+      "sym": 7,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.4,
+      "detail": 0.35,
+      "group": 1,
+      "hr": [
+        -0.022,
+        0.0016
+      ],
+      "mode": 1,
+      "name": "planks",
+      "scale": 2.24,
+      "sym": 1,
+      "tint": false
+    },
+    {
+      "alpha": false,
+      "ao": 0.3,
+      "detail": 0.25,
+      "group": 1,
+      "hr": [
+        -0.004,
+        0.003
+      ],
+      "mask": true,
+      "mode": 1,
+      "name": "hullpaint",
+      "scale": 3.2,
+      "sym": 1,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.4,
+      "detail": 0.5,
+      "group": 1,
+      "hr": [
+        -0.012,
+        0.0015
+      ],
+      "mask": true,
+      "mode": 1,
+      "name": "nonslip",
+      "scale": 2.4,
+      "sym": 7,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.3,
+      "detail": 0.1,
+      "group": 1,
+      "hr": [
+        -0.0016,
+        0.0005
+      ],
+      "mask": true,
+      "mode": 1,
+      "name": "gelcoat",
+      "scale": 2.4,
+      "sym": 1,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.5,
+      "detail": 0.9,
+      "group": 1,
+      "hr": [
+        -0.01,
+        0.0012
+      ],
+      "mask": true,
+      "mode": 1,
+      "name": "yard",
+      "scale": 3.2,
+      "sym": 7,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.55,
+      "detail": 0.3,
+      "group": 1,
+      "hr": [
+        -0.016,
+        0.0006
+      ],
+      "mask": true,
+      "mode": 1,
+      "name": "weatherboard",
+      "scale": 2.4,
+      "sym": 1,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.4,
+      "detail": 0.8,
+      "group": 1,
+      "hr": [
+        -0.0016,
+        0.0012
+      ],
+      "mask": true,
+      "mode": 2,
+      "name": "render",
+      "scale": 2.4,
+      "sym": 7,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.1,
+      "detail": 0.25,
+      "group": 2,
+      "hr": [
+        -0.1,
+        0.002
+      ],
+      "mask": true,
+      "mode": 1,
+      "name": "treads",
+      "scale": 1.12,
+      "stair": [
+        0.28,
+        4,
+        0.5,
+        1
+      ],
+      "sym": 1,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.1,
+      "detail": 0.6,
+      "group": 2,
+      "hr": [
+        -0.115,
+        0.002
+      ],
+      "mask": true,
+      "mode": 1,
+      "name": "stonestep",
+      "scale": 1.92,
+      "stair": [
+        0.32,
+        6,
+        0.5,
+        2
+      ],
+      "sym": 1,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.3,
+      "detail": 0.35,
+      "group": 2,
+      "hr": [
+        -0.022,
+        0.03
+      ],
+      "mode": 1,
+      "name": "rampboard",
+      "scale": 1.6,
+      "stair": [
+        0.4,
+        4,
+        0.45,
+        3
+      ],
+      "sym": 1,
+      "tint": false
+    },
+    {
+      "alpha": false,
+      "ao": 0.3,
+      "detail": 0.3,
+      "group": 2,
+      "hr": [
+        -0.004,
+        0.02
+      ],
+      "mode": 1,
+      "name": "gangdeck",
+      "scale": 1.2,
+      "stair": [
+        0.3,
+        4,
+        0.4,
+        4
+      ],
+      "sym": 1,
+      "tint": false
+    },
+    {
+      "alpha": false,
+      "ao": 0,
+      "detail": 0,
+      "group": 0,
+      "hr": [
+        -0.0003,
+        0.0002
+      ],
+      "mode": 0,
+      "name": "detail",
+      "scale": 0.5,
+      "sym": 0,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0,
+      "detail": 0,
+      "group": 0,
+      "hr": [
+        -0.006,
+        0.006
+      ],
+      "mode": 0,
+      "name": "gel",
+      "scale": 1,
+      "sym": 0,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.5,
+      "detail": 0.6,
+      "group": 3,
+      "hr": [
+        -0.012,
+        0.0014
+      ],
+      "mask": true,
+      "mode": 0,
+      "name": "tidewater:herringbone",
+      "scale": 2.4,
+      "sym": 0,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.3,
+      "detail": 0.3,
+      "group": 3,
+      "hr": [
+        -0.0016,
+        0.0006
+      ],
+      "mask": true,
+      "mode": 1,
+      "name": "tidewater:terrazzo",
+      "scale": 2.4,
+      "sym": 4,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.5,
+      "detail": 0.6,
+      "group": 3,
+      "hr": [
+        -0.008,
+        0.0012
+      ],
+      "mask": true,
+      "mode": 1,
+      "name": "tidewater:stucco",
+      "scale": 2.4,
+      "sym": 1,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.45,
+      "detail": 0.6,
+      "group": 4,
+      "hr": [
+        -0.004,
+        0.0012
+      ],
+      "mask": true,
+      "mode": 2,
+      "name": "kelpline:tarmac",
+      "scale": 4,
+      "sym": 7,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.5,
+      "detail": 0.9,
+      "group": 4,
+      "hr": [
+        -0.008,
+        0.001
+      ],
+      "mask": true,
+      "mode": 1,
+      "name": "kelpline:quay",
+      "scale": 4.8,
+      "sym": 7,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.3,
+      "detail": 0.3,
+      "group": 4,
+      "hr": [
+        -0.004,
+        0.003
+      ],
+      "mask": true,
+      "mode": 1,
+      "name": "kelpline:chequer",
+      "scale": 1.2,
+      "sym": 3,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.35,
+      "detail": 0.45,
+      "group": 5,
+      "hr": [
+        -0.005,
+        0.003
+      ],
+      "mask": true,
+      "mode": 1,
+      "name": "saltpan:saltcrust",
+      "scale": 3.2,
+      "sym": 7,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.55,
+      "detail": 0.9,
+      "group": 5,
+      "hr": [
+        -0.016,
+        0.003
+      ],
+      "mask": true,
+      "mode": 1,
+      "name": "saltpan:drymud",
+      "scale": 2.4,
+      "sym": 7,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.45,
+      "detail": 0.35,
+      "group": 5,
+      "hr": [
+        -0.02,
+        0.0015
+      ],
+      "mask": true,
+      "mode": 1,
+      "name": "saltpan:saltboard",
+      "scale": 2.4,
+      "sym": 1,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.6,
+      "detail": 0.55,
+      "group": 6,
+      "hr": [
+        -0.02,
+        0.006
+      ],
+      "mode": 1,
+      "name": "crossmarket:setts",
+      "scale": 1.92,
+      "sym": 3,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.5,
+      "detail": 0.8,
+      "group": 6,
+      "hr": [
+        -0.009,
+        0.0025
+      ],
+      "mode": 1,
+      "name": "crossmarket:ashlar",
+      "scale": 2.88,
+      "sym": 1,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.6,
+      "detail": 0.5,
+      "group": 6,
+      "hr": [
+        -0.028,
+        0.006
+      ],
+      "mask": true,
+      "mode": 0,
+      "name": "crossmarket:tramway",
+      "scale": 2.5,
+      "sym": 0,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.55,
+      "detail": 0.6,
+      "group": 7,
+      "hr": [
+        -0.016,
+        0.006
+      ],
+      "mask": true,
+      "mode": 1,
+      "name": "lockgate:setts",
+      "scale": 2,
+      "sym": 1,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.5,
+      "detail": 0.55,
+      "group": 7,
+      "hr": [
+        -0.009,
+        0.001
+      ],
+      "mask": true,
+      "mode": 1,
+      "name": "lockgate:engbrick",
+      "scale": 1.8,
+      "sym": 1,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.4,
+      "detail": 0.5,
+      "group": 7,
+      "hr": [
+        -0.016,
+        0.03
+      ],
+      "mask": true,
+      "mode": 1,
+      "name": "lockgate:hoofsteps",
+      "scale": 1.8,
+      "stair": [
+        0.45,
+        4,
+        0.55,
+        3
+      ],
+      "sym": 1,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.3,
+      "detail": 0.7,
+      "group": 8,
+      "hr": [
+        -0.004,
+        0.002
+      ],
+      "mask": true,
+      "mode": 0,
+      "name": "terraces:calce",
+      "scale": 3.6,
+      "sym": 0,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.45,
+      "detail": 0.35,
+      "group": 8,
+      "hr": [
+        -0.004,
+        0.0012
+      ],
+      "mode": 1,
+      "name": "terraces:cotto",
+      "scale": 1.2,
+      "sym": 7,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.4,
+      "detail": 0.5,
+      "group": 8,
+      "hr": [
+        -0.007,
+        0.003
+      ],
+      "mode": 1,
+      "name": "terraces:pebble",
+      "scale": 2.4,
+      "sym": 7,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.45,
+      "detail": 0.6,
+      "group": 9,
+      "hr": [
+        -0.004,
+        0.0012
+      ],
+      "mask": true,
+      "mode": 2,
+      "name": "cargo:tarmac",
+      "scale": 4,
+      "sym": 7,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.5,
+      "detail": 0.9,
+      "group": 9,
+      "hr": [
+        -0.008,
+        0.001
+      ],
+      "mask": true,
+      "mode": 1,
+      "name": "cargo:quay",
+      "scale": 4.8,
+      "sym": 7,
+      "tint": true
+    },
+    {
+      "alpha": false,
+      "ao": 0.3,
+      "detail": 0.3,
+      "group": 9,
+      "hr": [
+        -0.004,
+        0.003
+      ],
+      "mask": true,
+      "mode": 1,
+      "name": "cargo:chequer",
+      "scale": 1.2,
+      "sym": 3,
+      "tint": true
+    }
+  ],
+  "mat": {
+    "clearcoat": 1,
+    "clearcoatRoughness": 0.08,
+    "metalness": 0,
+    "roughness": 0.82
+  },
+  "schema": "inkwave.texlib.v1",
+  "slots": {
+    "map": [
+      "concrete",
+      "pavers",
+      "tiles",
+      "concrete",
+      "rubber",
+      "corrugated",
+      "boardwalk",
+      "metalpanel",
+      "tiles",
+      "concrete",
+      "asphalt",
+      "metalpanel",
+      "grate",
+      "brick",
+      "rubber",
+      "glasstile",
+      "pavers",
+      "planks",
+      "hullpaint",
+      "nonslip",
+      "gelcoat",
+      "yard",
+      "weatherboard",
+      "render",
+      "treads",
+      "stonestep",
+      "rampboard",
+      "gangdeck",
+      "tidewater:herringbone",
+      "tidewater:terrazzo",
+      "tidewater:stucco",
+      "kelpline:tarmac",
+      "kelpline:quay",
+      "kelpline:chequer",
+      "saltpan:saltcrust",
+      "saltpan:drymud",
+      "saltpan:saltboard",
+      "crossmarket:setts",
+      "crossmarket:ashlar",
+      "crossmarket:tramway",
+      "lockgate:setts",
+      "lockgate:engbrick",
+      "lockgate:hoofsteps",
+      "terraces:calce",
+      "terraces:cotto",
+      "terraces:pebble",
+      "cargo:tarmac",
+      "cargo:quay",
+      "cargo:chequer",
+      "concrete"
+    ],
+    "onTop": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      17,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      29,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      40,
+      42,
+      44,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49
+    ],
+    "onWall": [
+      0,
+      1,
+      2,
+      3,
+      49,
+      5,
+      6,
+      7,
+      8,
+      9,
+      49,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      18,
+      20,
+      49,
+      22,
+      23,
+      18,
+      23,
+      17,
+      11,
+      30,
+      30,
+      30,
+      3,
+      3,
+      18,
+      34,
+      36,
+      36,
+      38,
+      38,
+      38,
+      41,
+      41,
+      41,
+      43,
+      43,
+      43,
+      3,
+      3,
+      18,
+      49
+    ]
+  },
+  "source": {
+    "commit": "3b734a848b52f808a0e1461258341021ac8d6b57",
+    "path": "src/world/texlib.js + src/world/levelMaterial.js + src/world/inkShading.js + src/world/stages/surfaces.js"
+  },
+  "tex": {
+    "sizeHigh": 512,
+    "sizeLow": 256,
+    "sub": 2
+  }
+}

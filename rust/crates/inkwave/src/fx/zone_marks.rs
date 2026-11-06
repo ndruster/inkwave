@@ -411,6 +411,11 @@ impl ZoneMarksCore {
     pub fn u_far_k(&self) -> f32 {
         self.u_far_k
     }
+    /// 每区 flood 前沿记录（Task 52 批次 E2：ripple 接线在 `t0` 变化沿发一次
+    /// 涌浪，≡ paint.js L729）。
+    pub fn floods(&self) -> &[Option<FloodRec>] {
+        &self.floods
+    }
 }
 
 /// Resource: the data core + the placeholder band-mesh handles.

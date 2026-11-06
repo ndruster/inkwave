@@ -48,6 +48,10 @@ pub struct InkExt {
 }
 
 /// Ink-blended standard material.
+///
+/// Legacy since Task 52 D2: the level geometry batches switched to
+/// [`crate::level_render::LevelExt`] (the full ported `level.wgsl` surface);
+/// this extension and `ink.wgsl` remain only as the M1 reference path.
 pub type InkMaterial = ExtendedMaterial<StandardMaterial, InkExt>;
 
 impl MaterialExtension for InkExt {
@@ -120,6 +124,7 @@ pub struct InkImage(pub Handle<Image>);
 
 /// Replay the demo match's recorded splats onto the atlas and upload the
 /// bitmap when it changed (whole-texture copy on the dirty-version edge).
+#[allow(clippy::too_many_arguments)] // Bevy system params are individual resources by design
 pub fn ink_upload(
     time: Res<Time>,
     mut atlas: ResMut<InkAtlasRes>,
@@ -128,6 +133,7 @@ pub fn ink_upload(
     image: Res<InkImage>,
     pc: Res<crate::input::PlayerControls>,
     nms: Res<crate::net::match_link::NetMatchState>,
+    mut ripple: ResMut<crate::ink_ripple::RippleTable>,
 ) {
     if pc.paused {
         // Esc pause freezes the match (camera and atlas stay as-is).
@@ -137,10 +143,10 @@ pub fn ink_upload(
         // Task 24: a net match is live — `net_tick` owns the sim step (the
         // replication controller drives bots, masked physics and playback).
         // Only replay its paint stream onto the atlas here.
-        demo.drain_atlas(&mut atlas);
+        demo.drain_atlas(&mut atlas, &mut ripple);
     } else {
         demo.player = Some((pc.intent, pc.yaw, pc.pitch));
-        demo.step_and_drain(&mut atlas, time.delta_secs().min(0.1));
+        demo.step_and_drain(&mut atlas, &mut ripple, time.delta_secs().min(0.1));
     }
     if atlas.atlas.version() != atlas.last_upload {
         atlas.last_upload = atlas.atlas.version();
@@ -234,7 +240,12 @@ impl DemoSim {
 
     /// Advance the match at the fixed 60 Hz step (frame-rate independent) and
     /// replay every recorded splat onto the ink atlas.
-    fn step_and_drain(&mut self, atlas: &mut InkAtlasRes, dt: f32) {
+    fn step_and_drain(
+        &mut self,
+        atlas: &mut InkAtlasRes,
+        ripple: &mut crate::ink_ripple::RippleTable,
+        dt: f32,
+    ) {
         self.acc += dt;
         let mut steps = 0;
         while self.acc >= FIXED_DT && steps < 4 {
@@ -242,13 +253,21 @@ impl DemoSim {
             self.step_once();
             steps += 1;
         }
-        self.drain_atlas(atlas);
+        self.drain_atlas(atlas, ripple);
     }
 
     /// Task 24: replay the match's recorded splat stream onto the atlas
     /// (the drain half of [`step_and_drain`], reused while `net_tick` owns
     /// the sim step of a net match).
-    pub fn drain_atlas(&mut self, atlas: &mut InkAtlasRes) {
+    ///
+    /// Task 52 batch E2: each splat also feeds the presentation ripple table
+    /// (≡ paint.js `splat()` → `ripple()` L540 — the birth clock is the
+    /// table's pre-advance value, matching the JS flush order).
+    pub fn drain_atlas(
+        &mut self,
+        atlas: &mut InkAtlasRes,
+        ripple: &mut crate::ink_ripple::RippleTable,
+    ) {
         if self.m.paint.version < self.last_grid_version {
             // Match::restart rebuilt the gameplay grid: wipe the bitmap so
             // both views stay in lock-step.
@@ -258,6 +277,9 @@ impl DemoSim {
         let stream = self.m.paint.drain_ink();
         self.splats += stream.len() as u64;
         for s in stream {
+            ripple.apply(&crate::ink_ripple::RippleSource::Splat(
+                crate::ink_ripple::splat_event_from_ink(&s),
+            ));
             atlas
                 .atlas
                 .splat(&self.world, s.center, s.radius, s.team, &s.opts);
@@ -581,5 +603,173 @@ mod tests {
         assert_eq!(d.m.mode, MatchMode::Turf);
         d.step_once();
         assert!(d.boss_events.is_empty(), "turf raises no boss events");
+    }
+}
+
+// Task 52 batch D1: structural smoke tests for the ported level shader text.
+// Weak anchors on purpose - D2 wiring + review will strengthen them.
+#[cfg(test)]
+mod level_wgsl_tests {
+    const LEVEL: &str = include_str!("level.wgsl");
+
+    fn code_only(src: &str) -> String {
+        src.lines()
+            .map(|l| match l.find("//") {
+                Some(i) => &l[..i],
+                None => l,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn level_wgsl_braces_and_parens_balance() {
+        let code = code_only(LEVEL);
+        for (open, close) in [('{', '}'), ('(', ')')] {
+            let mut depth = 0i32;
+            for c in code.chars() {
+                if c == open {
+                    depth += 1;
+                } else if c == close {
+                    depth -= 1;
+                }
+                assert!(depth >= 0, "unbalanced '{open}{close}' in level.wgsl");
+            }
+            assert_eq!(depth, 0, "unclosed '{open}' in level.wgsl");
+        }
+    }
+
+    #[test]
+    fn level_wgsl_binding_contract_complete() {
+        // Header contract: bindings 20..=42 (atlas/sampler follow InkExt 20/21).
+        for b in 20..=42u32 {
+            assert!(
+                LEVEL.contains(&format!("@binding({b})")),
+                "binding {b} missing from level.wgsl"
+            );
+        }
+        for name in [
+            "ink_atlas",
+            "t_albedo",
+            "t_normal",
+            "t_orm",
+            "mural_atlas",
+            "uTL",
+            "uTLt",
+            "uTLs",
+            "uRip",
+            "uRipP",
+            "uWake",
+            "uWakeB",
+            "uSwimH",
+            "uSwimF",
+            "uLamps",
+            "uMurA",
+            "uMurB",
+            "uMurC",
+            "LevelParams",
+            "BatchParams",
+        ] {
+            assert!(
+                LEVEL.contains(name),
+                "binding-contract name {name} missing from level.wgsl"
+            );
+        }
+    }
+
+    #[test]
+    fn level_wgsl_uniform_table_parity() {
+        // Names ≡ JS uniforms (camelCase -> snake_case), incl. deviation ③ batch params.
+        for name in [
+            "u_ink_clock",
+            "u_time",
+            "u_ppm",
+            "u_atlas_px",
+            "u_ink_glow",
+            "u_gel",
+            "u_tex_size",
+            "u_ao",
+            "u_lamp_n",
+            "u_lamp_col",
+            "u_team_a",
+            "u_team_b",
+            "u_see_on",
+            "u_see_feet",
+            "u_see_a2c",
+            "u_grate",
+            "u_sun_dir",
+            "u_pattern",
+            "u_wet_base",
+            "u_fsz",
+            "u_tan",
+            "u_mur",
+        ] {
+            assert!(
+                LEVEL.contains(name),
+                "JS-parity uniform {name} missing from level.wgsl"
+            );
+        }
+    }
+
+    #[test]
+    fn level_wgsl_array_lengths_match_js_constants() {
+        // INK_RIPPLES = 24 (inkShading.js L22) -> uRip + uRipP
+        assert_eq!(LEVEL.matches("array<vec4<f32>, 24u>").count(), 2);
+        // TL_SLOTS = 50 (levelMaterial.js L101) -> uTL/uTLt/uTLs
+        assert_eq!(LEVEL.matches("array<vec4<f32>, 50u>").count(), 3);
+        // wake pool: 4 swimmers x 12 nodes (L174) + per-swimmer vec4 tables
+        assert_eq!(LEVEL.matches("array<vec4<f32>, 48u>").count(), 1);
+        assert_eq!(LEVEL.matches("array<vec4<f32>, 4u>").count(), 3);
+        // MAX_LAMPS = 12 (L11), MUR = 12 (L106)
+        assert_eq!(LEVEL.matches("array<vec3<f32>, 12u>").count(), 1);
+        // uMurC is vec2[12] in JS, vec4-padded for WGSL uniform stride.
+        assert_eq!(LEVEL.matches("array<vec4<f32>, 12u>").count(), 3);
+    }
+
+    #[test]
+    fn level_wgsl_key_functions_present() {
+        for f in [
+            "fn texlib_sample",
+            "fn texlib_tap",
+            "fn texlib_tri_grid",
+            "fn texlib_detail",
+            "fn texlib_specular_aa",
+            "fn texlib_macro",
+            "fn texlib_coverage",
+            "fn texlib_perturb_normal",
+            "fn texlib_tangent_frame",
+            "fn ink_bspl",
+            "fn paint_at",
+            "fn paint_cubic",
+            "fn perturb_ink",
+            "fn fragment(",
+        ] {
+            assert!(LEVEL.contains(f), "missing function anchor {f:?}");
+        }
+    }
+
+    #[test]
+    fn level_wgsl_all_nine_ink_chunks_marked() {
+        // inkShading.js chunks L49/L98/L189/L194/L221/L257/L261/L282/L303.
+        for chunk in [
+            "INK_PARS",
+            "INK_COLOR",
+            "INK_ROUGH",
+            "INK_GEL",
+            "INK_SLOPE",
+            "INK_EMISSIVE",
+            "INK_LIGHTS",
+            "INK_LIGHT_MAPS",
+            "INK_SHADE",
+        ] {
+            assert!(LEVEL.contains(chunk), "chunk marker {chunk} missing");
+        }
+        // Toksvig modulation + sym bit-mask mirror/transpose ported (texlib.js L1250/L1241).
+        assert!(LEVEL.contains("Toksvig"));
+        assert!(LEVEL.contains("mirror-u"));
+        // Deviation declarations ②③④⑤ (spec.md D-T52-7) documented in the header.
+        for dev in ["②", "③", "④", "⑤"] {
+            assert!(LEVEL.contains(dev), "deviation {dev} not declared");
+        }
     }
 }
