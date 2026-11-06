@@ -412,6 +412,7 @@ pub fn level_material_wiring(
     demo: Option<Res<crate::ink_render::DemoSim>>,
     mut feed: ResMut<RippleFeed>,
     cams: Query<&GlobalTransform, With<Camera>>,
+    props: Option<Res<crate::props::PropsState>>,
     mut mats: ResMut<Assets<LevelMaterial>>,
 ) {
     if pc.paused {
@@ -463,6 +464,22 @@ pub fn level_material_wiring(
     let u_swim_h = vec4_table::<4>(wake.swim_h());
     let u_swim_f = vec4_table::<4>(wake.swim_f());
     let clock = table.clock;
+    // Task 53 (D-T53-3): uLamps ≡ setLevelLamps (levelMaterial.js L28-36).
+    // The manifest baked the final world positions (bulb x∓0.92, ground+4.9,
+    // ≤12); the night factor rides `PropsState.night_k` — 0 for the day/
+    // golden default theme ⇒ `uLampN = 0` (lamps off) ≡ JS main.js L116
+    // `mapTheme(map, 'day')`; the theme picker wiring is Task 55/57 scope.
+    let (u_lamps, lamp_n) = match props.as_deref() {
+        Some(p) if p.night_k > 0.01 && !p.lamps.is_empty() => {
+            let mut arr = [Vec4::ZERO; 12];
+            let n = p.lamps.len().min(12);
+            for (slot, l) in arr.iter_mut().zip(p.lamps.iter()) {
+                *slot = Vec4::new(l[0], l[1], l[2], 0.0);
+            }
+            (arr, n as i32)
+        }
+        _ => ([Vec4::ZERO; 12], 0),
+    };
     for (_id, m) in mats.iter_mut() {
         let ext = &mut m.extension;
         ext.u_rip = rip;
@@ -471,6 +488,8 @@ pub fn level_material_wiring(
         ext.u_wake_b = u_wake_b;
         ext.u_swim_h = u_swim_h;
         ext.u_swim_f = u_swim_f;
+        ext.u_lamps = u_lamps;
+        ext.params.lamp_n = lamp_n;
         ext.params.ink_clock = clock;
     }
 }

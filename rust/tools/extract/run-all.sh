@@ -14,3 +14,8 @@ node extract-layout.mjs crossmarket
 node extract-layout.mjs lockgate
 node extract-layout.mjs terraces
 node extract-layout.mjs cargo
+# props archives + manifests (Task 53 / D-T53-1: dressing bake + decor + lamps + murals)
+for stage in tidewater kelpline halyard saltpan crossmarket lockgate terraces cargo; do
+  node extract-props.mjs "$stage"
+done
+node extract-special.mjs

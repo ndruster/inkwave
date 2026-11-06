@@ -37,6 +37,31 @@
 - **D-T47-11 zones catch_up 时延补偿**：`match_/zones.rs` 的 `'zo` field2 / `'zs` field10 时钟戳 + follower `catch_up` 回放补偿是 JS 无对应的新逻辑（tr37 frame 6913 `pen` 差 0.083=5/60 复现证据、修复方式、互操作安全结论见 spec.md 条目）。**专项评审已完成（2026-11-05）**：机制正确性 6 项核对通过；F-1 保真缺口（catch_up 缺 `_tick` tie-point 边沿检测）已修复并复验（sim 592/net-harness 20 全绿，spec.md D-T47-11a）；F-2（`+FIXED_DT` 时序假设）留档。**用户裁定（2026-11-05）：①接受 sim 侧网络路径偏差（JS 树零改动纪律不变，「JS 同步补补偿」否决）②兼容超集定位（JS 按下标读、尾部字段忽略；Rust 按 `len` 门降级；字节等价门只对 fixture 重放路径生效）③性质=网络一致性强化。条目闭环**，定位全文见 spec.md D-T47-11a 与 PORT_MAP zones catch_up 行。
 - **D-T47-12 rebuild_shields 每帧重建**：JS 仅 scan 时刷新成员、Rust 每帧重建（canopy 出现/消失至多早一个 scan 周期 ≤0.25s）。评审已定级 P1 可接受，留档备查。
 
+### Task 53 props/murals/dressing 装饰（2026-11-06 登记；沙箱无 GPU，以下均需用户机器视觉复核）
+- **12 桶材质近似档**（偏差②）：paint/gloss/fence 的 atlas canvas 纹理未移植——纯 vertexColor；fence 链网 alphaTest 缺失、blob 整体不画、glow 无 blob 贴图、clearcoat→roughness 沿用 D-T52-7②。重点复核=主体 props 木纹/金属磨损在纯顶点色下的可读性。
+- **mural atlas 像素未移植**（偏差③）：uMur A/B/C 表保持零占位失活+1×1 atlas；placement 表与 maps json `normBrush.mural` 面 id 对账已交付（layout ⊆ manifest；tidewater rows 6/10 有绘制无面贴放——JS 运行时亦不采样）。复核=墙面缺墨观感，atlas 移植随 Task 55/57 重议。
+- **cloth 旗帜静态姿态**（偏差④）：flags/banners 无 shader 动画（uTime 相位）；烘焙静态姿态 flag=16 tris/banner=80 tris（crosscheck 钉值）。复核=静止旗面观感。
+- **量化带宽**（偏差⑥）：pos i32 mm/normal i16×1e-3/col u8，焊接 1e-3；复核=近景剪影与色带。
+- **prop collider 不移植**（偏差①）：长凳/塔体可穿——JS main.js L229-237 将 colliders 交还 Level，Rust 锁定 M2 口径（map json 无 prop 盒、sim 物理不含 props）纯呈现层；既定后果非新增回归，复核=穿点与地图口径一致。
+- **~ns 桶阴影口径**：`gloss/glow/blob/blink~ns` JS `castShadow=false`；Rust 实例投影**照常投影**（ns 旗标已解析入桶表但未接 shadow_casts）——阴影浓淡差异复核。
+- **spin/blink 世界系记录**：spin 存世界 base 矩阵、blink 存世界 pos/scale/col，运行时零二次变换 ≡ props.js update；blink 球 Rust 几何 80 tris，crosscheck 按 JS 口径钉 84（props.js L1180 注释本身 84、真实球 80——忠实继承）；绕序由 `blink_sphere_winds_outward` 钉 +3.51861。
+- **uLamps 夜间门**：manifest 烘最终世界灯位（x∓0.92/ground+4.9/≤12 ≡ levelMaterial L28-36，经真 Level.groundHeight 重算）；`PropsState.night_k` 恒 0（day/golden 默认主题 ≡ main.js L116 `mapTheme(map,'day')`）→ **uLampN=0 灯墨反光恒关**——黄昏/主题接线=Task 55，届时复核灯光。
+- **bin.gz 运行时加载**（偏差⑦）：native `INKWAVE_ASSETS`/`CARGO_MANIFEST_DIR` 相对路径；**wasm fetch 未接**（trunk copy-dir+fetch=Task 57 接线；当前 wasm 构建静默跳过=无装饰）——用户机复核 wasm 资产路径。
+- **special props 数据面**：loader+5 kind 几何交付，**无消费方**（`#[allow(dead_code)]`——武器手持=Task 54、大厅展示=Task 57）。
+- **spawn pad ShaderMaterial/Barrier 特效**：不移植（偏差⑤），顺延 Task 55 fx。
+- **mapthumb 3 主题 24/24 golden**：Rust 纯函数与 node 参考串逐字节（layout 解析走**自研 mini-JSON 解析器**——serde_json 大尾数系数与 JS 精确解析差 1 ulp 会翻 `toFixed(1)` 位，mini 解析器正确舍入，`mapthumb.rs` 头注详述）；缩略图观感随 Task 56 大厅复核。
+- **独立评审处置**（2026-11-06）：**1 P0 / 3 P1 / 6 P2 → PASS-with-fixes，P0/P1 全部当场修复**：
+  - **P0-1 ✅**：`fmt_fixed` 负 tie 舍入与 ECMA `toFixed` 相反（JS 先摘号再"选较大 n"，`(-0.25).toFixed(1)==="-0.3"`；原实现向 +∞ 舍出 -0.2）。现 24 golden 无负向奇数/2^(f+1) 坐标属**潜伏字节分叉地雷**——改 |x| 计算贴回负号，新增 `fmt_fixed_negative_tie_matches_tofixed`（9 组期望 Node `toFixed` 真值交叉验证）。
+  - **P1-2 ✅**：blink 球绕序内向（Bevy 默认背面剔除→远半球渲染内壁）。**评审建议修法（照搬 Three 索引模式）经实测不成立**：本模块 u 参数化（x=−sinφ,z=+cosφ）与 Three（x=−cosφ,z=+sinφ）互为镜像，Three 模式改名后带符号体积仍 −3.51861；改本布局外向对角 (a,b,d)/(b,d,c)，新增 `blink_sphere_winds_outward` 钉 +3.51861（≡Three SphereGeometry(1,8,6)）。
+  - **P1-3 ✅**：两处伪造 JS 锚更正——`mod.rs`「≡ main.js L229 `if (this.quality !== 'low')`」（JS L228-241 实无 low 档 props 门，quality 仅入 PropKit 几何分段；Low=skip=本 spec D-T53-2 Rust 侧决策）；`archive.rs` try/catch 行号 L237-242→实 L232-240。同 D-T52-5 类锚点错误。
+  - **P1-4 ✅**：本节登记（`mod.rs` ~ns 阴影偏差注释所引 REVIEW_CHECKLIST 条目现已存在）。
+  - **P2-5 crosscheck 复读点/缺口**（留档）：`BLINK_TRIS=84` 与 extractor 同常数（忠实继承 JS 口径）、逐 placement 循环系 extractor 镜像；缺口=blink pos/scale/col、spin base 矩阵、decor 实例仅计数/范围校验未与 live 场景逐值比对。
+  - **P2-6 turf colliders 烘焙**（留档）：decor/lamps y 按 turf 模式 groundHeight 烘——zones 模式（长凳移除）JS 地高不同→灯罩/棕榈 y 与 uLamps y 微差（modeFlags 只筛实例、单表双模式）。
+  - **P2-7 队色烘死**（留档）：flags/decor 按默认 TEAM_COLORS 烘焙，JS 运行时 `setTeamColors` 换色不回灌烘焙表——Task 55/57 消费面需知。
+  - **P2-8 special.json 键名**（留档）：`bins` vs stage manifest `bin`——Rust 未读该字段，仅文档不一致。
+  - **P2-9 bbox 回退**（留档）：空几何 placement 的 bbox Infinity→0 回退，spin/blink-only 放置的 bbox 误导 Task 54 剔除消费方。
+  - **P2-10 测试强度**（留档）：decor 断言 `>=` 偏弱；manifest↔bin 往返测同源（价值在跨语言 IKP1 读写一致性，已覆盖）。
+
 ### Task 52 ink 着色 + 地表材质（2026-11-06 登记；沙箱无 GPU，以下均需用户机器视觉复核）
 - **湿润/光泽对比档**（TR-52.2）：inkShading 9 chunk 全量（INK_PARS/COLOR/ROUGH/GEL/SLOPE/EMISSIVE/LIGHTS/LIGHT_MAPS/SHADE）替换 M1 简化 ink.wgsl——高度位移/队伍色/tone jitter/光泽/湿润 roughness 调制/墨缘斜面法线，对照 JS 浏览器版重点=落墨瞬间 wet 高光衰减与 slope 边缘观感。
 - **46 层材质观感**（D-T52-7①）：CPU 烘焙替代 GPU MRT——与 JS GPU 输出**逐像素不对等**（同参数 Rust 自洽逐字节已由 golden 钉死）；逐层抽看 concrete/pavers/hazard/grate/gelcoat + 至少 2 个 stage 层（kelpline/lockgate/terraces/cargo 槽位）的 albedo/normal/orm 观感。

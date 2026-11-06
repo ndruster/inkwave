@@ -29,6 +29,9 @@ mod input;
 mod level_render;
 mod net;
 mod nettest;
+// Task 53 (D-T53-2): the props runtime — IKP1 archive decode + dressing/decor
+// spawn + spin/blink animation (≡ PropKit.build/update).
+mod props;
 #[allow(dead_code)] // Task 55 消费后移除
 mod quality;
 // Task 52: schema/materials/bake/res are all wired through
@@ -211,6 +214,9 @@ fn main() {
             .add_plugins(world::WorldPlugin {
                 layout: inkwave_sim::embedded_tidewater(),
             })
+            // Task 53 (D-T53-2): set dressing after the world — reads
+            // `LayoutRes` for the stage id, silently skips a missing archive.
+            .add_plugins(props::PropsPlugin)
             // Task 46 C1: the boss presentation tier (silhouette / telegraph
             // markers / crablets), driven off DemoSim.bm.
             .add_plugins(boss_render::BossRenderPlugin);

@@ -1,0 +1,458 @@
+{
+  "kinds": {
+    "crab": {
+      "extras": {
+        "ballR": 0.95,
+        "cannon": {
+          "at": [
+            -0.4,
+            1.05,
+            -0.24
+          ]
+        },
+        "cannonDir": [
+          0,
+          0.8820753183692411,
+          0.47110840867448106
+        ],
+        "cannonMuzzle": [
+          -0.4,
+          1.405216938506649,
+          -0.10903186238849424
+        ],
+        "gun": {
+          "at": [
+            0,
+            0.66,
+            0.48
+          ]
+        },
+        "gunMuzzle": [
+          0,
+          0.66,
+          0.9650000000000001
+        ],
+        "gunSpinAt": [
+          0,
+          0.66,
+          0.64
+        ],
+        "hatchR": 0.25,
+        "hatchY": 1.16,
+        "height": 1.16,
+        "kind": "crab",
+        "legs0": {
+          "at": [
+            0.56,
+            0.6,
+            0.22
+          ],
+          "index": 0,
+          "side": 1
+        },
+        "legs1": {
+          "at": [
+            0.56,
+            0.6,
+            -0.06
+          ],
+          "index": 1,
+          "side": 1
+        },
+        "legs2": {
+          "at": [
+            0.56,
+            0.6,
+            -0.34
+          ],
+          "index": 2,
+          "side": 1
+        },
+        "legs3": {
+          "at": [
+            -0.56,
+            0.6,
+            0.22
+          ],
+          "index": 0,
+          "side": -1
+        },
+        "legs4": {
+          "at": [
+            -0.56,
+            0.6,
+            -0.06
+          ],
+          "index": 1,
+          "side": -1
+        },
+        "legs5": {
+          "at": [
+            -0.56,
+            0.6,
+            -0.34
+          ],
+          "index": 2,
+          "side": -1
+        },
+        "seatAt": [
+          0,
+          0.41999999999999993,
+          -0.06
+        ],
+        "width": 2
+      },
+      "parts": [
+        {
+          "bucket": "gloss",
+          "name": "body",
+          "tid": 13,
+          "tris": 9948,
+          "verts": 4890
+        },
+        {
+          "bucket": "paint",
+          "name": "ink",
+          "tid": 14,
+          "tris": 3772,
+          "verts": 1898
+        },
+        {
+          "bucket": "gloss",
+          "name": "gunSpin",
+          "tid": 15,
+          "tris": 1340,
+          "verts": 576
+        },
+        {
+          "bucket": "paint",
+          "name": "gunSpinInk",
+          "tid": 16,
+          "tris": 280,
+          "verts": 140
+        },
+        {
+          "bucket": "gloss",
+          "name": "ballBody",
+          "tid": 17,
+          "tris": 10272,
+          "verts": 5084
+        },
+        {
+          "bucket": "paint",
+          "name": "ballInk",
+          "tid": 18,
+          "tris": 1144,
+          "verts": 612
+        },
+        {
+          "bucket": "gloss",
+          "name": "legs0.body",
+          "tid": 19,
+          "tris": 1008,
+          "verts": 494
+        },
+        {
+          "bucket": "paint",
+          "name": "legs0.ink",
+          "tid": 20,
+          "tris": 256,
+          "verts": 128
+        },
+        {
+          "bucket": "gloss",
+          "name": "legs1.body",
+          "tid": 21,
+          "tris": 1008,
+          "verts": 494
+        },
+        {
+          "bucket": "paint",
+          "name": "legs1.ink",
+          "tid": 22,
+          "tris": 256,
+          "verts": 128
+        },
+        {
+          "bucket": "gloss",
+          "name": "legs2.body",
+          "tid": 23,
+          "tris": 1008,
+          "verts": 494
+        },
+        {
+          "bucket": "paint",
+          "name": "legs2.ink",
+          "tid": 24,
+          "tris": 256,
+          "verts": 128
+        },
+        {
+          "bucket": "gloss",
+          "name": "legs3.body",
+          "tid": 25,
+          "tris": 1008,
+          "verts": 494
+        },
+        {
+          "bucket": "paint",
+          "name": "legs3.ink",
+          "tid": 26,
+          "tris": 256,
+          "verts": 128
+        },
+        {
+          "bucket": "gloss",
+          "name": "legs4.body",
+          "tid": 27,
+          "tris": 1008,
+          "verts": 494
+        },
+        {
+          "bucket": "paint",
+          "name": "legs4.ink",
+          "tid": 28,
+          "tris": 256,
+          "verts": 128
+        },
+        {
+          "bucket": "gloss",
+          "name": "legs5.body",
+          "tid": 29,
+          "tris": 1008,
+          "verts": 494
+        },
+        {
+          "bucket": "paint",
+          "name": "legs5.ink",
+          "tid": 30,
+          "tris": 256,
+          "verts": 128
+        },
+        {
+          "bucket": "gloss",
+          "name": "gun.body",
+          "tid": 31,
+          "tris": 664,
+          "verts": 310
+        },
+        {
+          "bucket": "paint",
+          "name": "gun.ink",
+          "tid": 32,
+          "tris": 280,
+          "verts": 140
+        },
+        {
+          "bucket": "gloss",
+          "name": "cannon.body",
+          "tid": 33,
+          "tris": 1324,
+          "verts": 594
+        },
+        {
+          "bucket": "paint",
+          "name": "cannon.ink",
+          "tid": 34,
+          "tris": 760,
+          "verts": 380
+        }
+      ]
+    },
+    "jetpack": {
+      "extras": {
+        "kind": "jetpack",
+        "nozzles": [
+          [
+            0.138,
+            -0.224,
+            -0.012
+          ],
+          [
+            -0.138,
+            -0.224,
+            -0.012
+          ]
+        ],
+        "width": 0.39
+      },
+      "parts": [
+        {
+          "bucket": "gloss",
+          "name": "body",
+          "tid": 10,
+          "tris": 4900,
+          "verts": 2346
+        },
+        {
+          "bucket": "paint",
+          "name": "ink",
+          "tid": 11,
+          "tris": 1340,
+          "verts": 680
+        },
+        {
+          "bucket": "glow",
+          "name": "glow",
+          "tid": 12,
+          "tris": 168,
+          "verts": 60
+        }
+      ]
+    },
+    "kraken": {
+      "extras": {
+        "eyesAt": [
+          0,
+          1.11,
+          0.5516392269111668
+        ],
+        "height": 2.1,
+        "kind": "kraken",
+        "mouthAt": [
+          0,
+          0.82,
+          0.5271927069870324
+        ],
+        "radius": 0.62
+      },
+      "parts": [
+        {
+          "bucket": "gloss",
+          "name": "body",
+          "tid": 0,
+          "tris": 7146,
+          "verts": 3351
+        },
+        {
+          "bucket": "paint",
+          "name": "ink",
+          "tid": 1,
+          "tris": 7384,
+          "verts": 3682
+        }
+      ]
+    },
+    "missile": {
+      "extras": {
+        "kind": "missile",
+        "length": 1.327,
+        "nose": [
+          0,
+          0,
+          0.655
+        ],
+        "radius": 0.105,
+        "tail": [
+          0,
+          0,
+          -0.672
+        ]
+      },
+      "parts": [
+        {
+          "bucket": "gloss",
+          "name": "body",
+          "tid": 7,
+          "tris": 6664,
+          "verts": 3411
+        },
+        {
+          "bucket": "paint",
+          "name": "ink",
+          "tid": 8,
+          "tris": 1480,
+          "verts": 792
+        },
+        {
+          "bucket": "glow",
+          "name": "glow",
+          "tid": 9,
+          "tris": 160,
+          "verts": 62
+        }
+      ]
+    },
+    "speaker": {
+      "extras": {
+        "coneAt": [
+          0,
+          0.7,
+          0.537
+        ],
+        "depth": 0.8,
+        "height": 1.53,
+        "kind": "speaker",
+        "mouth": [
+          0,
+          0.7,
+          0.5090000000000001
+        ],
+        "width": 1.1
+      },
+      "parts": [
+        {
+          "bucket": "gloss",
+          "name": "body",
+          "tid": 2,
+          "tris": 10940,
+          "verts": 5288
+        },
+        {
+          "bucket": "paint",
+          "name": "ink",
+          "tid": 3,
+          "tris": 592,
+          "verts": 294
+        },
+        {
+          "bucket": "glow",
+          "name": "glow",
+          "tid": 4,
+          "tris": 828,
+          "verts": 428
+        },
+        {
+          "bucket": "gloss",
+          "name": "cone",
+          "tid": 5,
+          "tris": 1960,
+          "verts": 938
+        },
+        {
+          "bucket": "paint",
+          "name": "coneInk",
+          "tid": 6,
+          "tris": 1080,
+          "verts": 512
+        }
+      ]
+    }
+  },
+  "meta": {
+    "binBytes": 596557,
+    "binSha256": "07f08647703ca167c78a8b3bd71983a18d93b5950653c4c5489523749541d944",
+    "bins": "special.bin.gz",
+    "buckets": [
+      {
+        "name": "gloss",
+        "ns": 0
+      },
+      {
+        "name": "glow",
+        "ns": 0
+      },
+      {
+        "name": "paint",
+        "ns": 0
+      }
+    ],
+    "rawBytes": 1828648,
+    "templates": 35,
+    "tris": 82010,
+    "verts": 40200
+  },
+  "source": {
+    "commit": "cb595c9d28867846383c47e56d07a737ad0fc37b"
+  }
+}

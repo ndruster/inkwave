@@ -3186,6 +3186,7 @@ name = "inkwave"
 version = "0.1.0-m1"
 dependencies = [
  "bevy",
+ "flate2",
  "glam 0.30.10",
  "inkwave_sim",
  "relay-shim",

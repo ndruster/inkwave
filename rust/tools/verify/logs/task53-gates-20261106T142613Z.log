@@ -1,0 +1,1203 @@
+=== fmt ===
+FMT_EXIT=0
+=== clippy ===
+CLIPPY_EXIT=0
+[1m[92m    Finished[0m ]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\`dev` profile [unoptimized + debuginfo]]8;;\ target(s) in 1.30s
+=== test ===
+TEST_EXIT=0
+[1m[92m   Compiling[0m net-harness v0.1.0-m1 (/root/work/project/inkwave/rust/tools/net-harness)
+[1m[92m   Compiling[0m relay-shim v0.1.0-m1 (/root/work/project/inkwave/rust/tools/relay-shim)
+[1m[92m   Compiling[0m inkwave_sim v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave_sim)
+[1m[92m    Finished[0m ]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\`test` profile [unoptimized + debuginfo]]8;;\ target(s) in 9.41s
+[1m[92m     Running[0m unittests src/main.rs (target/debug/deps/inkwave-9595b7f24f752b78)
+
+running 341 tests
+test actors::tests::team_colors_match_upstream_hex ... ok
+test actors::tests::blink_stays_in_band_and_swings ... ok
+test actors::tests::lean_clamps_at_run_speed ... ok
+test audio::graph::tests::delay_feedback_cycle_renders ... ok
+test audio::graph::tests::kill_stops_sources ... ok
+test audio::graph::tests::lfo_modulation_is_applied ... ok
+test audio::graph::tests::panner_downmix_matches_sum ... ok
+test audio::graph::tests::tone_bakes_deterministically_and_finite ... ok
+test audio::boss_audio::tests::stop_all_clears_pending_and_loops ... ok
+test audio::boss_audio::tests::music_and_duck_cues_drive_the_runtime ... ok
+test audio::boss_audio::tests::director_state_syncs_into_the_remap ... ok
+test audio::music::tests::full_song_bake_smoke ... ignored, whole-song bakes are minutes of per-note graph rendering
+test audio::music::tests::play_fade_floor_and_unknown_track ... ok
+test audio::music::tests::compile_song_anchors ... ok
+test audio::music::tests::play_switch_sequence_matches_js ... ok
+test audio::music::tests::duck_merge_and_envelope ... ok
+test audio::music::tests::remap_routes_battle_requests_to_boss ... ok
+test audio::music::tests::taper_matches_js ... ok
+test audio::music::tests::runtime_request_tracks_voices ... ok
+test audio::music::tests::set_volumes_smooths_like_js ... ok
+test audio::sfx_table::tests::gate_at_and_delay_schedule_the_birth_time ... ok
+test audio::sfx_table::tests::gate_jitter_bounds ... ok
+test audio::sfx_table::tests::gate_jitter_zero_speed_is_exact_pitch ... ok
+test audio::sfx_table::tests::gate_global_voice_cap_evicts_oldest ... ok
+test audio::sfx_table::tests::gate_min_gap_merges_identical_plays ... ok
+test audio::sfx_table::tests::gate_per_name_cap_steals_oldest ... ok
+test audio::sfx_table::tests::gate_zero_volume_is_silent ... ok
+test audio::sfx_table::tests::loop_entries_have_no_one_shot_arm ... ok
+test audio::boss_audio::tests::sfx_and_loop_cues_spawn_and_despawn_players ... ok
+test audio::sfx_table::tests::table_is_complete_and_unique ... ok
+test audio::synth::tests::ahr_and_adsr_endpoints ... ok
+test audio::synth::tests::biquad_bandpass_peak_gain_is_unity ... ok
+test audio::synth::tests::biquad_dc_gains ... ok
+test audio::synth::tests::biquad_peaking_boosts_at_center ... ok
+test audio::synth::tests::drive_curve_reference ... ok
+test audio::synth::tests::mtof_reference ... ok
+test audio::synth::tests::naive_shapes_reference_values ... ok
+test actors::tests::spawn_and_sync_builds_and_switches_visual_trees ... ok
+test audio::synth::tests::osc_is_deterministic ... ok
+test audio::synth::tests::pan_mix_scale_delay ... ok
+test audio::synth::tests::param_automation_semantics ... ok
+test audio::synth::tests::perc_endpoints ... ok
+test audio::synth::tests::pink_noise_is_darker_than_white ... ok
+test audio::synth::tests::pink_noise_samples_match_js ... ok
+test audio::synth::tests::pts_and_sweep ... ok
+test audio::synth::tests::noise_buffer_shape_and_determinism ... ok
+test audio::synth::tests::rng_matches_mulberry32_reference ... ok
+test audio::synth::tests::sine_one_cycle ... ok
+test audio::tests::boss_audio_crablet_cues ... ok
+test audio::tests::boss_audio_events_music_and_loops ... ok
+test audio::tests::boss_audio_hit_dedupe_gates ... ok
+test audio::tests::boss_audio_move_phase_table ... ok
+test audio::tests::cue_mapping_mirrors_upstream_credit_cases ... ok
+test audio::tests::cue_names_mirror_the_js_play_calls ... ok
+test audio::synth::tests::pulse_wave_is_band_limited_and_normalized ... ok
+test audio::tests::decodable_source_reports_metadata ... ok
+test audio::tests::mute_switch_stops_spawns_and_global_volume ... ok
+test audio::tests::dry_fire_clicks_once_per_cooldown ... ok
+test audio::sfx_table::tests::bake_is_deterministic ... ok
+test audio::tests::shot_edge_detects_last_fire_reset ... ok
+test audio::sfx_table::tests::group_value_goldens ... ok
+test audio::tests::unknown_names_bake_and_cue_to_none ... ok
+test boss_render::tests::barrage_barrel_params_match_js ... ok
+test audio::tests::paused_screen_hears_nothing ... ok
+test boss_render::tests::charge_lane_params_match_js ... ok
+test boss_render::tests::fan_mesh_matches_js_vertex_layout ... ok
+test boss_render::tests::frenzy_params_match_js ... ok
+test audio::music::tests::bake_short_segment_is_finite_deterministic ... ok
+test boss_render::tests::slam_marker_params_match_js ... ok
+test boss_render::tests::sweep_params_match_js ... ok
+test fx::api::tests::after_timings ... ok
+test fx::api::tests::contract_apis_spawn ... ok
+test fx::api::tests::determinism_double_run ... ok
+test fx::api::tests::frame_surface ... ok
+test fx::api::tests::immediate_apis_and_caps ... ok
+test fx::api::tests::near_culling ... ok
+test fx::api::tests::player_recipes ... ok
+test fx::api::tests::super_water_misc_recipes ... ok
+test fx::api::tests::weapon_and_boss_recipes ... ok
+test audio::tests::shot_and_splat_events_spawn_players ... ok
+test fx::hooks::tests::ambient_feather_and_spray_fire_with_camera ... ok
+test boss_render::tests::non_boss_match_spawns_nothing ... ok
+test boss_render::tests::boss_smoke_headless_entities ... ok
+test fx::hooks::tests::charger_fire_drives_beam_trail ... ok
+test fx::hooks::tests::dive_emerge_cycle_via_submerged ... ok
+test fx::hooks::tests::fire_event_muzzles_and_disables_projectile_fallback ... ok
+test fx::hooks::tests::pools_shrink_as_particles_age_out ... ok
+test fx::hooks::tests::form_pop_edge_on_kid_squid_transition ... ok
+test fx::hooks::tests::hit_send_drives_hit_splash ... ok
+test fx::hooks::tests::polling_drives_land_jump_and_footsteps ... ok
+test fx::hooks::tests::respawn_resets_state ... ok
+test fx::hooks::tests::slam_polling_fallback_fires_when_event_never_arrives ... ok
+test fx::hooks::tests::special_use_and_slam_events ... ok
+test fx::hooks::tests::splat_event_draws_ghost_and_counts ... ok
+test fx::particles::tests::beams_replace_first_consuming_only_the_seed_rand ... ok
+test fx::particles::tests::collider_probe_budget ... ok
+test fx::particles::tests::color_forms_srgb_and_named ... ok
+test fx::particles::tests::drops_recycle_at_cap ... ok
+test fx::particles::tests::ghost_rot_is_zero_others_random ... ok
+test fx::particles::tests::kill_is_swap_remove ... ok
+test fx::particles::tests::mark_pillar_immediate_no_rand_defaults ... ok
+test fx::particles::tests::motes_shift_the_stream ... ok
+test fx::particles::tests::quality_presets_map_to_config_particles ... ok
+test fx::particles::tests::ripple_hook_or_decal ... ok
+test fx::particles::tests::schedule_cap_and_timing ... ok
+test fx::particles::tests::sprites_rings_shells_random_replace ... ok
+test fx::particles::tests::update_clamps_dt ... ok
+test fx::particles::tests::water_crossing_and_paint_landing ... ok
+test fx::render::tests::quadbuf_builds_a_valid_indexed_batch ... ok
+test fx::render::tests::sprite_alpha_ramps_in_and_out ... ok
+test fx::hooks::tests::stats_shape_matches_js_l711 ... ok
+test fx::screen_fx::tests::decay_all_settles_to_idle ... ok
+test fx::screen_fx::tests::edge_point_stays_in_bounds ... ok
+test fx::hooks::tests::superjump_polling_launch_and_land ... ok
+test fx::hooks::tests::water_splat_adds_sea_splash ... ok
+test fx::screen_fx::tests::lens_splat_recycles_at_capacity ... ok
+test fx::screen_fx::tests::countdown_sets_urgency_baseline ... ok
+test fx::screen_fx::tests::flood_in_sequence_covers_and_recedes ... ok
+test fx::screen_fx::tests::reset_is_partial_like_js_object_assign ... ok
+test fx::screen_fx::tests::full_frame_smoke_no_nan ... ok
+test fx::screen_fx::tests::phase_transitions_reset_and_fadeout ... ok
+test fx::screen_fx::tests::punch_spring_is_stable_and_settles ... ok
+test fx::screen_fx::tests::respawn_local_starts_reveal ... ok
+test fx::screen_fx::tests::reveal_iris_opens_and_finishes ... ok
+test fx::screen_fx::tests::slam_blasts_with_dedup ... ok
+test fx::swim_wake::tests::buffers_have_no_nan ... ok
+test fx::swim_wake::tests::local_swimmer_first_far_bots_culled_at_38m ... ok
+test fx::swim_wake::tests::non_swimmers_are_never_selected ... ok
+test fx::swim_wake::tests::reset_clears_slots ... ok
+test fx::swim_wake::tests::results_phase_stops_selection ... ok
+test fx::swim_wake::tests::teleport_inserts_break_and_leak_frees_slot ... ok
+test fx::swim_wake::tests::trail_pushes_spaced_points_and_head_closes ... ok
+test fx::zone_marks::tests::band_geometry_is_finite_and_indexed ... ok
+test fx::zone_marks::tests::build_seeds_centres_and_ghost_sweep ... ok
+test fx::zone_marks::tests::capture_event_sets_flash_and_flood_front ... ok
+test fx::zone_marks::tests::contest_and_held_flags ... ok
+test fx::zone_marks::tests::events_drive_build_clear_and_active_sync ... ok
+test fx::zone_marks::tests::over_dimms_vis_to_055 ... ok
+test fx::zone_marks::tests::rotation_wipe_cancels_inflight_fill ... ok
+test ink_render::level_wgsl_tests::level_wgsl_all_nine_ink_chunks_marked ... ok
+test ink_render::level_wgsl_tests::level_wgsl_array_lengths_match_js_constants ... ok
+test ink_render::level_wgsl_tests::level_wgsl_binding_contract_complete ... ok
+test ink_render::level_wgsl_tests::level_wgsl_braces_and_parens_balance ... ok
+test ink_render::level_wgsl_tests::level_wgsl_key_functions_present ... ok
+test ink_render::level_wgsl_tests::level_wgsl_uniform_table_parity ... ok
+test fx::screen_fx::tests::splat_local_victim_starts_flood_and_attacker_kill_flash ... ok
+test fx::screen_fx::tests::superjump_polling_edges_drive_geyser ... ok
+test fx::screen_fx::tests::water_splat_adds_34_droplets ... ok
+test ink_render::tests::tr12_1_no_override_keeps_bots ... ok
+test ink_render::tests::demo_replay_leaves_the_boss_mode_behind ... ok
+test ink_ripple::tests::dead_slot_reuse_and_negative_age ... ok
+test ink_ripple::tests::flood_jet_gate_and_ripple ... ok
+test ink_ripple::tests::flood_jet_params_pins ... ok
+test ink_ripple::tests::full_table_score_eviction_order ... ok
+test ink_ripple::tests::ink_splat_conversion_marks_specks_cosmetic ... ok
+test ink_ripple::tests::pack_uniforms_verbatim_copy ... ok
+test ink_ripple::tests::reset_pokes_like_js ... ok
+test ink_ripple::tests::rip_n_matches_texlib_document ... ok
+test ink_ripple::tests::rippled_near_gate_pins ... ok
+test ink_ripple::tests::score_formula_pins ... ok
+test ink_ripple::tests::source_apply_dispatch ... ok
+test ink_ripple::tests::splat_gate_dedupes_via_rippled_near ... ok
+test ink_ripple::tests::splat_gate_semantics ... ok
+test ink_ripple::tests::splat_params_pins ... ok
+test ink_ripple::tests::view_cull_38m ... ok
+test input::tests::diagonal_is_normalised_like_the_js_stick ... ok
+test input::tests::move_basis_matches_js_forward_right ... ok
+test input::tests::move_dir_decomposes_to_camera_axes ... ok
+test level_render::tests::level_ext_u_tl_tables_equal_slot_uniforms ... ok
+test level_render::tests::level_params_defaults_take_doc_values ... ok
+test level_render::tests::texlib_placeholders_have_one_layer_per_bake_layer ... ok
+test ink_render::tests::tr12_1_player_input_drives_slot0 ... ok
+test ink_render::tests::demo_boss_hp_tracks_the_difficulty_tier ... ok
+test level_render::tests::wiring_feeds_ripple_wake_and_clock ... ok
+test level_render::tests::wiring_freezes_when_paused ... ok
+test net::match_link::tests::tr24_local_roster_index_follows_prune_gate ... ok
+test ink_render::tests::demo_boss_match_drives_and_records_events ... ok
+test net::match_link::tests::tr24_local_slot_follows_leave_removal ... ok
+test net::match_link::tests::tr24_build_net_match_roster_order ... ok
+test net::match_link::tests::tr24_match_end_returns_lobby ... ok
+test net::native_transport::tests::native_join_ladder_rejects_unknown_room ... ok
+test net::native_transport::tests::native_connect_welcome_ping_close ... ok
+test net::native_transport::tests::origin_for_maps_ws_scheme ... ok
+test net::native_transport::tests::resolve_relay_base_prefers_cli_override ... ok
+test nettest::tests::tr26_parse_full_host_config ... ok
+test nettest::tests::tr26_parse_join_keeps_case_and_shape ... ok
+test nettest::tests::tr26_parse_no_seam_params_is_none ... ok
+test nettest::tests::tr26_parse_only_net_create_counts ... ok
+test nettest::tests::tr39_parse_loadout_knobs ... ok
+test net::match_link::tests::tr24_lobby_flow_two_clients ... ok
+test props::tests::decode_rejects_corrupt_archives ... ok
+test net::native_transport::tests::native_transport_end_to_end_against_relay_shim ... ok
+test props::tests::manifest_lamps_and_murals_are_sane ... ok
+test props::tests::manifest_meta_counts_are_self_consistent ... ok
+test props::tests::mapthumb_golden_audit ... ignored
+test nettest::tests::tr46_boss_b_arrival_gates_on_the_follower_role ... ok
+test props::tests::mode_filter_matches_variants_js ... ok
+test props::tests::mural_rows_reconcile_with_layout_markers ... ok
+test props::tests::mapthumb_goldens_match_byte_for_byte ... ok
+test props::tests::special_archive_decodes_with_empty_tables ... ok
+test props::tests::special_kit_parts_map_to_templates ... ok
+test quality::tests::tier_from_env_defaults_and_overrides ... ok
+test quality::tests::tier_name_roundtrip ... ok
+test quality::tests::tier_paint_atlas_sizes ... ok
+test quality::tests::tier_shadow_semantics ... ok
+test quality::tests::tier_anti_tiling_flag ... ok
+test quality::tests::tier_texlib_size_table ... ok
+test texlib::bake::tests::box_down_rounds_and_clamps ... ok
+test texlib::bake::tests::build_mips_shape ... ok
+test texlib::bake::tests::flat_program_channel_semantics ... ok
+test texlib::bake::tests::bake_is_byte_deterministic ... ok
+test texlib::bake::tests::neutral_surf_defaults ... ok
+test texlib::bake::tests::mini_fbm_golden_sha256 ... ok
+test texlib::bake::tests::sha256_self_test ... ok
+test texlib::bake::tests::srgb_encode_pins ... ok
+test texlib::bake::tests::store8_pins ... ok
+test texlib::materials::tests::bake_sanity ... ok
+test texlib::materials::tests::registry_covers_25_base_layers ... ok
+test texlib::materials::tests::bake_goldens ... ok
+test texlib::materials_stage::tests::bake_goldens ... ok
+test texlib::materials_stage::tests::registry_covers_21_stage_layers ... ok
+test texlib::r#gen::tests::aa_endpoints_are_exact ... ok
+test texlib::r#gen::tests::edge_prof_pins_node_reference ... ok
+test texlib::r#gen::tests::fbm_r_pins_and_empty ... ok
+test texlib::r#gen::tests::gn_is_periodic ... ok
+test texlib::r#gen::tests::gn_pins_and_lattice_zero ... ok
+test texlib::r#gen::tests::gr_maps_to_unit_range ... ok
+test texlib::r#gen::tests::hf_hf2_are_exact_f32 ... ok
+test texlib::r#gen::tests::hu_pins_node_reference ... ok
+test texlib::r#gen::tests::jd_sd_rb_and_helpers ... ok
+test texlib::r#gen::tests::lin_decodes_srgb ... ok
+test texlib::r#gen::tests::pcg_pins_node_reference ... ok
+test texlib::r#gen::tests::request_builders_mirror_glsl ... ok
+test texlib::r#gen::tests::wor_r_is_periodic ... ok
+test texlib::r#gen::tests::wor_r_pins_and_invariants ... ok
+test texlib::r#gen::tests::wrp_wraps_negatives_into_period ... ok
+test texlib::res::tests::bake_all_small_size_is_complete ... ok
+test texlib::res::tests::bake_poll_swaps_placeholders_in_place ... ok
+test texlib::res::tests::bake_timing_report ... ignored, bake timing measurement (release only)
+test texlib::res::tests::chain_bytes_matches_wgpu_layer_layout ... ok
+test texlib::res::tests::inert_bake_never_touches_images ... ok
+test texlib::res::tests::mip_count_for_pins ... ok
+test texlib::res::tests::pack_layers_offsets_and_neutral_fill ... ok
+test texlib::res::tests::used_layer_indices_dedups_and_resolves ... ok
+test texlib::schema::tests::base_layer_meta_pins_texlib_js ... ok
+test texlib::schema::tests::extracted_constants_pin_js_sources ... ok
+test texlib::schema::tests::on_wall_on_top_resolution ... ok
+test texlib::schema::tests::slot_map_pins_level_material_literal ... ok
+test texlib::schema::tests::slot_uniform_tables_match_construction ... ok
+test texlib::schema::tests::stage_layers_appended_in_registry_order ... ok
+test texlib::schema::tests::texlib_json_parses_with_expected_shape ... ok
+test ui::boss_hud::tests::callout_timeout_3s2 ... ok
+test ui::boss_hud::tests::chip_hold_then_lagging_drain ... ok
+test ui::boss_hud::tests::defeat_sunk_and_gone ... ok
+test ui::boss_hud::tests::event_stream_smoke_no_panic ... ok
+test ui::boss_hud::tests::hp_fallback_from_live_read ... ok
+test ui::boss_hud::tests::intro_fill_gates_and_curve ... ok
+test ui::boss_hud::tests::move_callout_lifecycle ... ok
+test ui::boss_hud::tests::notch_crossings_latch ... ok
+test ui::boss_hud::tests::phase_banner_shield_pips ... ok
+test ui::boss_hud::tests::setmode_seeds_from_live_hp ... ok
+test ui::boss_hud::tests::stun_open_window ... ok
+test ui::boss_hud::tests::times_up_ending_and_guards ... ok
+test ui::boss_hud::tests::writebar_pct_and_low ... ok
+test ui::minimap::tests::boss_dot_normalises ... ok
+test ui::minimap::tests::clamp_u8_matches_uint8_clamped ... ok
+test ui::minimap::tests::clock_edges ... ok
+test ui::minimap::tests::clock_first_refresh_then_bands ... ok
+test ui::minimap::tests::compose_flash_decay_window ... ok
+test texlib::materials_stage::tests::bake_sanity ... ok
+test ui::minimap::tests::draw_base_full_deck_uniform_block_matches_js_formula ... ok
+test ui::minimap::tests::draw_base_grate_hatch_alternates ... ok
+test ui::minimap::tests::draw_base_sea_and_sunset_palette ... ok
+test ui::minimap::tests::draw_ink_all_zero_and_all_one ... ok
+test ui::minimap::tests::draw_ink_band_rows_only_touch_band ... ok
+test ui::minimap::tests::draw_ink_bilinear_edge_values ... ok
+test ui::minimap::tests::draw_ink_emboss_dark_rim ... ok
+test ui::minimap::tests::draw_ink_emboss_lit_rim ... ok
+test ui::minimap::tests::draw_ink_fast_path_team2_and_dead_cell ... ok
+test ui::minimap::tests::draw_zones_active_fill_and_outline ... ok
+test ui::minimap::tests::draw_zones_inactive_ghost_is_dashed_and_unfilled ... ok
+test ui::minimap::tests::hex_rgb_parses_like_world_hex_color ... ok
+test ui::minimap::tests::lin2s_known_values ... ok
+test ui::minimap::tests::map_layout_corner_and_expanded ... ok
+test ui::minimap::tests::player_dots_filter_and_transform ... ok
+test ui::minimap::tests::player_dots_flip_mirrors_and_adds_pi ... ok
+test ui::minimap::tests::player_dots_special_override_keeps_swimmer_visible ... ok
+test ui::minimap::tests::projector_flip_mirrors_both_axes ... ok
+test ui::minimap::tests::projector_matches_js_canvas_math ... ok
+test ui::minimap::tests::draw_base_and_ink_are_bytewise_deterministic ... ok
+test ui::minimap::tests::smooth_matches_js ... ok
+test ui::minimap::tests::spring_settles_to_target ... ok
+test ui::minimap::tests::zone_paths_project_corners ... ok
+test ui::online::tests::tr24_code_char_feedback ... ok
+test ui::online::tests::tr24_error_copy_matches_errmap ... ok
+test ui::online::tests::tr24_first_empty_and_auto_join_armed ... ok
+test ui::online::tests::tr24_leave_confirm_two_step ... ok
+test ui::online::tests::tr24_list_names_and_waiting_banner ... ok
+test ui::online::tests::tr24_project_hub_gating ... ok
+test ui::online::tests::tr24_project_start_enable_needs_all_ready ... ok
+test ui::online::tests::tr24_run_cmd_maps_to_session ... ok
+test ui::online::tests::tr24_settle_error_routing ... ok
+test ui::online::tests::tr24_start_block_banner ... ok
+test ui::online::tests::tr39_loadout_cmds_converge_and_sanitize ... ok
+test ui::online::tests::tr39_project_lobby_mode_and_loadout ... ok
+test ui::online::tests::tr39_set_mode_host_only_and_broadcast ... ok
+test ui::online::tests::tr39_start_roster_carries_loadout ... ok
+test ui::minimap::tests::raster_tables_build_is_deterministic_on_tidewater ... ok
+test net::native_transport::tests::native_broadcast_and_send_to_between_two_clients ... ok
+test ui::tests::apply_action_transitions_and_freeze ... ok
+test ui::tests::fmt_clock_matches_upstream_ceil ... ok
+test props::tests::every_stage_archive_decodes_to_its_manifest ... ok
+test ui::tests::results_text_boss_branch_shows_outcome_hp_and_time ... ok
+test ui::tests::results_text_shows_the_zones_final_count ... ok
+test ui::tests::results_text_uses_winner_and_percents ... ok
+test ui::tests::boss_hud_headless_drain_updates_labels ... ok
+test ui::tests::splat_text_covers_all_credit_cases ... ok
+test ui::tests::feed_drains_expires_and_mirrors_labels ... ok
+test ui::tests::timer_color_states ... ok
+test ui::tests::pause_edge_flips_hud_and_pause ... ok
+test ui::tests::tr39_cycle_helpers ... ok
+test world::tests::batch_params_rederive_from_keys ... ok
+test world::tests::boom_next_shrinks_on_wall_and_clamps ... ok
+test world::tests::embedded_tidewater_batches_to_expected_keys ... ok
+test world::tests::emit_box_makes_24_verts_36_indices ... ok
+test world::tests::emit_box_uvs_are_face_metres_zero_to_size ... ok
+test world::tests::emit_sphere_is_wound_outward_for_front_cull ... ok
+test world::tests::face_frame_matches_js_table ... ok
+test world::tests::frame_of_box_is_axis_aligned ... ok
+test world::tests::frame_of_obox_rotates_axes_by_rot_y ... ok
+test world::tests::frame_of_ramp_is_right_handed_and_spans_low_to_high ... ok
+test world::tests::grounded_probe_fires_for_walls_at_the_floor ... ok
+test world::tests::hex_color_parses ... ok
+test world::tests::pattern_slot_clamps_to_texlib_table ... ok
+test world::tests::single_box_makes_six_orientation_batches ... ok
+test world::tests::vfov_matches_camera_rig_formula ... ok
+test ui::tests::stats_rows_boss_mode_shows_dmg_and_weak_columns ... ok
+test ui::tests::tr24_net_mode_results_buttons ... ok
+test ui::tests::screens_switch_display_and_timer_follows_clock ... ok
+test audio::tests::synthesis_is_bounded_finite_and_deterministic ... ok
+test audio::sfx_table::tests::smoke_bake_every_name has been running for over 60 seconds
+test audio::sfx_table::tests::smoke_bake_every_name ... ok
+
+test result: ok. 338 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 67.99s
+
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/inkwave_sim-007df5a024727f90)
+
+running 602 tests
+test actor::tests::fire_beats_squid_when_pressed_later ... ok
+test actor::tests::air_no_input_drifts_down_air_decel ... ok
+test actor::tests::enemy_ink_damage_cap_and_slowdown ... ok
+test actor::tests::air_steering_with_input_uses_air_accel ... ok
+test actor::tests::golden_accel_stop_reverse ... ok
+test actor::tests::golden_standing_jump ... ok
+test actor::tests::golden_swim_accel ... ok
+test actor::tests::golden_jump_buffer_edges ... ok
+test actor::tests::hp_regen_after_combat_delay ... ok
+test actor::tests::jump_buffer_and_coyote_time ... ok
+test actor::tests::over_speed_sheds_at_brake_rate ... ok
+test actor::tests::reverse_in_enemy_ink_half_rate ... ok
+test actor::tests::tr5_1_run_accel_matches_analytic_reference ... ok
+test actor::tests::squid_dry_land_is_slower_than_kid ... ok
+test actor::tests::spawn_barrier_pushes_out_of_enemy_pad ... ok
+test actor::tests::golden_turn_90 ... ok
+test actor::tests::tr5_2_squid_swim_ink_refill ... ok
+test actor::tests::tr5_3_fall_into_sea_same_flow ... ok
+test actor::tests::tr5_2_kid_ink_refill_after_delay ... ok
+test actor::tests::tr5_3_splat_respawn_invuln ... ok
+test actor::tests::tr5_4_swim_accel_matches_reference ... ok
+test actor::tests::tr5_4_jump_apex_and_airtime ... ok
+test actor::tests::tr5_4_brake_distance ... ok
+test autopilot::tests::idle_control_run_makes_no_progress ... ok
+test autopilot::tests::tr9_1_full_run_no_panic_all_bots_active_and_both_teams_paint ... ok
+test autopilot::tests::tr9_3_no_bot_stalls_past_the_watchdog_window ... ok
+test boss::brain::tests::act_and_rec_scale_with_phase_pace ... ok
+test boss::brain::tests::barrage_barrel_count_phase1 ... ok
+test boss::brain::tests::barrage_barrel_count_phase2 ... ok
+test boss::brain::tests::barrage_barrel_count_phase3 ... ok
+test boss::brain::tests::barrage_pts_are_quadruples_on_the_throw_clock ... ok
+test boss::brain::tests::brain_sequence_is_seed_deterministic ... ok
+test autopilot::tests::run_boss_win_branch ... ok
+test boss::brain::tests::charge_fields_phase1 ... ok
+test boss::brain::tests::charge_fields_phase2 ... ok
+test boss::brain::tests::charge_fields_phase3 ... ok
+test boss::brain::tests::crab_burst_without_squad_defers_to_the_pending_queue ... ok
+test boss::brain::tests::crablet_contact_pops_with_victim_side_burst_damage ... ok
+test boss::brain::tests::crablet_lifetime_pops_at_crab_life ... ok
+test boss::brain::tests::crablets_count_phase2 ... ok
+test boss::brain::tests::crablets_count_phase3 ... ok
+test boss::brain::tests::frenzy_spin_follows_roominess_and_rot0_is_recorded ... ok
+test boss::brain::tests::crablets_spawn_at_tele_and_target_the_nearest_kid ... ok
+test autopilot::tests::tr9_2_same_seed_is_bit_identical ... ok
+test boss::brain::tests::min_tele_floor_clips_short_phase3_tele ... ok
+test boss::brain::tests::popped_crabs_are_cleared_1_2s_after_the_pop ... ok
+test boss::brain::tests::slam_act_is_fixed_1_2 ... ok
+test boss::brain::tests::slam_rings_phase1 ... ok
+test boss::brain::tests::slam_rings_phase2 ... ok
+test boss::brain::tests::slam_rings_phase3 ... ok
+test boss::brain::tests::sweep_arc_is_symmetric_about_the_target_bearing ... ok
+test boss::hazards::tests::barrel_pos_endpoints ... ok
+test boss::hazards::tests::beam_angle_endpoints_and_smoothstep_monotonic ... ok
+test boss::hazards::tests::beam_len_bucket_is_js_round ... ok
+test boss::brain::tests::sweep_span_phase1 ... ok
+test boss::hazards::tests::charge_dist_ramp_and_cap ... ok
+test boss::brain::tests::sweep_span_phase2 ... ok
+test boss::hazards::tests::charge_time_round_trips_through_charge_dist ... ok
+test boss::brain::tests::sweep_span_phase3 ... ok
+test boss::brain::tests::tele_never_below_min_tele ... ok
+test boss::hazards::tests::move_phase_at_windows ... ok
+test boss::hazards::tests::beam_len_truncates_at_walls_and_reaches_full_when_open ... ok
+test boss::hazards::tests::charge_ram_hits_once_and_bowls_the_kid_over ... ok
+test boss::hazards::tests::host_and_guest_agree_on_current_move_and_geometry ... ok
+test boss::hazards::tests::hz_add_idempotent_and_logged ... ok
+test boss::hazards::tests::paint_is_host_only_and_team1 ... ok
+test boss::hazards::tests::ring_radius_is_linear_in_u ... ok
+test boss::hazards::tests::paint_rejects_points_at_or_below_water ... ok
+test boss::hazards::tests::paint_rejects_spawn_pads ... ok
+test boss::hazards::tests::remote_actors_are_never_hurt ... ok
+test autopilot::tests::run_boss_lose_branch ... ok
+test boss::hazards::tests::reach_prunes_at_walls_on_tidewater ... ok
+test boss::hazards::tests::safe_pad_actors_are_immune ... ok
+test boss::hazards::tests::slam_impact_hits_once_per_actor ... ok
+test boss::hazards::tests::slam_ring_band_sweeps_at_low_framerate ... ok
+test boss::hazards::tests::submerged_kids_duck_the_sweep_beam ... ok
+test boss::hazards::tests::sweep_beam_stops_where_the_wall_blocks_the_eye_line ... ok
+test boss::hazards::tests::sweep_beam_damage_is_dps_times_dt ... ok
+test boss::hazards::tests::threat_basic ... ok
+test boss::hazards::tests::threat_charge_reports_the_lane_and_escapes_across_it ... ok
+test boss::hazards::tests::threat_frenzy_inside_the_spin_circle_covers ... ok
+test boss::hazards::tests::threat_slam_inside_and_outside_the_circle ... ok
+test boss::nav::tests::min_heap_tie_order ... ok
+test boss::nav::tests::cast_detects_walls ... ok
+test boss::mode::tests::boss_mode_hp_scaling ... ok
+test boss::nav::tests::floor_at_snaps_to_main_floor ... ok
+test boss::nav::tests::kind_at_out_of_bounds_is_drop ... ok
+test boss::nav::tests::line_ok_walkable_vs_water ... ok
+test boss::nav::tests::nearest_plan_matches_js ... ok
+test boss::nav::tests::pads_block_poses ... ok
+test boss::nav::tests::path_endpoints_and_bounds ... ok
+test boss::nav::tests::path_pinned_to_js_reference ... ok
+test boss::nav::tests::plan_has_poseable_points ... ok
+test boss::nav::tests::turn_ok_behaviour ... ok
+test boss::nav::tests::random_point_deterministic ... ok
+test boss::nav::tests::tidewater_build_matches_js ... ok
+test boss::tests::adopt_and_handoff ... ok
+test boss::tests::check_phase_boundaries ... ok
+test boss::tests::hp_scaling_follows_tuning ... ok
+test boss::tests::crab_pop_records_and_paints ... ok
+test boss::tests::hit_multiplier_chain ... ok
+test boss::tests::on_move_is_idempotent_by_t0 ... ok
+test boss::tests::rain_batches_per_03s_as_storm ... ok
+test boss::tests::pack_unpack_follow_roundtrip ... ok
+test boss::tests::ray_dist_hits_nearest_sphere ... ok
+test boss::tests::dmg_mul_per_difficulty ... ok
+test boss::tests::follow_crab_lifecycle_and_defeat_bit ... ok
+test boss::tests::hit_blocked_and_guest_predict ... ok
+test boss::tests::roll_hit_low_layer_filter_and_crabs ... ok
+test boss::tests::seg_hit_dead_boss_only_crabs ... ok
+test boss::tests::seg_hit_prefers_weak_in_front ... ok
+test boss::tests::remote_hit_body_cap_and_crab ... ok
+test boss::tests::shape_active_rules ... ok
+test boss::tests::spawn_point_is_a_valid_plan_pose ... ok
+test boss::tests::update_returns_early_while_loading ... ok
+test boss::tests::splash_falloff_crabs_and_cover ... ok
+test boss::tests::same_seed_same_result ... ok
+test bot::boss::tests::dry_ink_refills_but_a_crab_on_us_holds ... ok
+test bot::boss::tests::perceive_picks_a_visible_hit_shape ... ok
+test boss::weapon_wiring_tests::charger_beam_hurts_the_boss ... ok
+test bot::boss::tests::perceive_targets_a_live_crablet_in_sight ... ok
+test bot::tests::blade_stay_in_and_target_bias_arms ... ok
+test bot::boss::tests::slam_telegraph_gates_on_reaction_then_evades ... ok
+test bot::tests::brush_and_roller_fight_fire_gates ... ok
+test bot::tests::close_visible_enemy_aims_and_fires_after_reaction ... ok
+test bot::tests::difficulty_get_resolves_ids_and_falls_back_to_normal ... ok
+test bot::tests::dead_bot_emits_nothing_and_clears_plan ... ok
+test bot::tests::enemy_beyond_awareness_is_ignored ... ok
+test bot::tests::dry_land_squid_enemy_is_perceived_swimming_one_is_not ... ok
+test bot::tests::enemy_in_awareness_becomes_the_fight_target ... ok
+test bot::tests::fight_sub_gates_and_bomb_throw ... ok
+test bot::tests::kit_fight_hooks_gate_by_kit_state ... ok
+test boss::weapon_wiring_tests::round_flattens_a_crablet ... ok
+test bot::tests::kit_paint_hooks_blade_bow_mitts ... ok
+test bot::tests::kit_sub_fight_range_gates_and_boomerang_chain ... ok
+test bot::tests::low_ink_switches_to_refill ... ok
+test bot::tests::melee_pusher_charges_generic_duelist_backs_off ... ok
+test bot::tests::paint_sub_mine_requires_contested_middle ... ok
+test bot::tests::bot_moves_and_paints_over_a_long_run ... ok
+test bot::tests::paint_pitch_ladder_per_kind ... ok
+test bot::tests::paint_pitch_kit_ladder ... ok
+test bot::tests::special_ctl_barrage_presses_sub_and_chains_release ... ok
+test bot::tests::special_ctl_stamp_guard_vetoes_the_front_arc ... ok
+test bot::tests::special_ctl_cheers_a_teammate_booyah ... ok
+test bot::tests::tail_two_frame_sub_release ... ok
+test bot::tests::tr471_blade_tactics_close_cut_pulse ... ok
+test bot::tests::tr471_mitts_fight_pounces_mid_range ... ok
+test bot::tests::want_special_fight_table_and_paint_turf_gate ... ok
+test bot::tests::weapon_and_sub_family_tables_match_js ... ok
+test bot::threat::threat_tests::tr471_canopy_ctl_sidesteps_and_breaks ... ok
+test bot::threat::threat_tests::tr471_dev_trigger_branches ... ok
+test bot::tests::wounded_bot_with_a_target_retreats ... ok
+test bot::threat::threat_tests::tr471_pick_evade_prefers_dry_ground ... ok
+test bot::threat::threat_tests::tr471_shield_fight_flanks_and_holds_fire ... ok
+test bot::threat::threat_tests::tr471_stamp_steer_cone_and_backoff ... ok
+test bot::threat::threat_tests::tr471_threat_ai_ab_switch ... ok
+test bot::threat::threat_tests::tr471_threat_scan_team_and_dead_filter ... ok
+test collision::tests::body_fits_basic ... ok
+test collision::tests::capsule_cannot_cross_wall ... ok
+test collision::tests::flat_box_ground_height ... ok
+test bot::threat::threat_tests::tr471_threat_score_branches ... ok
+test collision::tests::ground_probe_center_and_step_up ... ok
+test collision::tests::mirrored_ramp_heights ... ok
+test collision::tests::point_and_block_queries ... ok
+test collision::tests::ramp_ground_three_points ... ok
+test collision::tests::raycast_grate_filter ... ok
+test collision::tests::raycast_known_faces ... ok
+test boss::weapon_wiring_tests::round_hits_the_weak_sphere_2_5x ... ok
+test collision::tests::tidewater_mirror_and_spawns ... ok
+test geometry::tests::cargo_stage_info ... ok
+test geometry::tests::crossmarket_counts_match_meta ... ok
+test geometry::tests::crossmarket_stage_info ... ok
+test geometry::tests::crossmarket_zones ... ok
+test collision::tests::tidewater_spawn_ray_face ... ok
+test geometry::tests::for_mode_filters_variant_flags ... ok
+test geometry::tests::in_mode_matches_js ... ok
+test geometry::tests::halyard_stage_info ... ok
+test geometry::tests::half_slice_is_mirrored_verbatim ... ok
+test geometry::tests::kelpline_stage_info ... ok
+test geometry::tests::lockgate_stage_info ... ok
+test geometry::tests::known_mirrored_primitives_exist ... ok
+test geometry::tests::primitive_counts_match_meta ... ok
+test geometry::tests::rail_and_grate_flags ... ok
+test geometry::tests::saltpan_counts_match_meta ... ok
+test geometry::tests::saltpan_stage_info ... ok
+test geometry::tests::saltpan_zones ... ok
+test geometry::tests::stage_info ... ok
+test geometry::tests::terraces_stage_info ... ok
+test geometry::tests::tidewater_for_mode_is_a_noop ... ok
+test geometry::tests::tidewater_zones ... ok
+test geometry::tests::zone_def_parts_normalisation ... ok
+test ink_atlas::tests::clear_wipes_pixels_and_bumps_version ... ok
+test ink_atlas::tests::hsh_matches_upstream_formula ... ok
+test ink_atlas::tests::layout_is_deterministic_and_pads_faces ... ok
+test ink_atlas::tests::over_composite_newest_wins ... ok
+test geometry::tests::new_stages_spawn_pads_land ... ok
+test geometry::tests::new_stages_walkable_sampling ... ok
+test ink_atlas::tests::pack_origin_keeps_the_zero_uv_sentinel_clean ... ok
+test ink_atlas::tests::tr11_1_atlas_matches_grid_per_cell ... ok
+test boss::weapon_wiring_tests::flick_drop_sheet_dedups_within_0_3s ... ok
+test ink_atlas::tests::wall_splat_stamps_wall_face ... ok
+test ink_atlas::tests::uv_at_matches_sample_face ... ok
+test ink_atlas::tests::splat_sequence_is_deterministic ... ok
+test match_::tests::dead_actor_fires_nothing ... ok
+test match_::tests::clock_emits_final_countdown_and_skips_one_minute ... ok
+test match_::tests::kill_routes_splash_credit_splat_count_and_bus ... ok
+test match_::tests::roster_is_4v4_on_the_spawn_rings ... ok
+test match_::tests::respawn_is_gated_outside_play ... ok
+test match_::tests::soft_push_mask_weights_follow_js_ternary ... ok
+test match_::tests::soft_push_separates_overlapping_bodies ... ok
+test match_::tests::tr8_2_intro_barrier_holds_until_active ... ok
+test match_::tests::tr8_1_full_run_settles_with_result_and_restart_zeroes ... ok
+test match_::zones::tests::tr36_01_zone_thresholds_match_the_config_values ... ok
+test match_::tests::tr8_3_gameplay_state_serde_roundtrips ... ok
+test match_::tests::water_death_inherits_recent_attacker ... ok
+test match_::zones::tests::tr36_02_tick_rates_and_the_penalty_counts_off_first ... ok
+test match_::zones::tests::tr36_03_penalty_formula_bounds_and_zp_before_zo ... ok
+test match_::zones::tests::tr36_04_rotation_window_min_stint_final_lock_and_overtime_freeze ... ok
+test match_::zones::tests::tr36_05_knockout_ends_with_the_exact_r3_ze_record ... ok
+test match_::zones::tests::tr36_06_time_up_branches_and_the_overtime_exits ... ok
+test match_::zones::tests::tr36_07_capture_floods_to_share_one_and_the_wipe_gates_recapture ... ok
+test match_::zones::tests::tr36_08_zs_snapshot_carries_ten_r3_fields ... ok
+test match_::zones::tests::tr37_crossmarket_side_zone_survives_the_turf_drop ... ok
+test match_::zones::tests::tr36_10_placeholder_layout_branch ... ok
+test nav::tests::flat_floor_samples_one_node_per_cell ... ok
+test nav::tests::nearest_snaps_to_the_grid_and_path_walks_it ... ok
+test nav::tests::roof_top_is_not_sampled ... ok
+test nav::tests::step_pair_connects_walk_and_jump_edges ... ok
+test match_::zones::tests::tr36_09_follower_replays_the_host_stream_to_the_same_state ... ok
+test nav::tests::unreachable_island_is_pruned ... ok
+test nav::tests::wet_ring_marks_water_edges ... ok
+test net::playback::tests::tr22_1_hermite_is_c1_and_exact_through_owner_tangents ... ok
+test net::playback::tests::tr22_1_tp_jump_cuts_the_path ... ok
+test net::playback::tests::tr22_2_delay_stays_in_the_85_to_300ms_band ... ok
+test net::playback::tests::tr22_2_extrapolation_capped_at_180ms ... ok
+test net::playback::tests::tr22_3_correction_settles_without_a_pop ... ok
+test net::playback::tests::tr22_3_hermite_y_never_through_a_floor ... ok
+test net::playback::tests::tr22_ang_diff_shortest_arc ... ok
+test net::playback::tests::tr22_apply_writes_invuln_window_and_turf_ratchet ... ok
+test net::playback::tests::tr22_buffer_capacity_and_monotonic_guard ... ok
+test net::playback::tests::tr22_handoff_and_adopt_reset_the_path ... ok
+test net::playback::tests::tr22_quantile_matches_js ... ok
+test nav::tests::tidewater_graph_is_connected_between_the_spawn_pads ... ok
+test bot::tests::tr38_zone_bots_survive_every_weapon_kind ... ok
+test net::replication::tests::nfr_m2_2_playback_overlay_stays_under_20_percent ... ignored
+test net::replication::tests::guest_clock_steers_and_follower_gates_hold ... ok
+test net::replication::tests::hit_wire_shape_matches_js ... ok
+test net::replication::tests::phase_strings_match_js_states ... ok
+test net::replication::tests::nfr_m4_3_boss_tick_stays_in_the_bandwidth_budget ... ok
+test ink_atlas::tests::tr11_2_1000_splats_stable ... ok
+test net::replication::tests::st_frame_without_t_leaves_the_clock_alone ... ok
+test net::replication::tests::no_bots_bind_prunes_leavers ... ok
+test net::replication::tests::regression_recording_survives_render_draining ... ok
+test match_::zones::tests::tr37_zone_cells_are_live_on_the_new_stages ... ok
+test net::replication::tests::tr21_1_owner_proxy_split_and_nid_routing ... ok
+test net::replication::tests::tr21_2_hit_channel_end_to_end ... ok
+test net::replication::tests::tr21_3_guest_leave_actor_adopted_as_bot ... ok
+test net::replication::tests::tr21_3_no_bots_stage_removes_leavers ... ok
+test net::replication::tests::tr23_1_splat_replay_matches_grid_and_never_loops_back ... ok
+test net::replication::tests::tr23_2_ghost_never_paints_and_splats_land_on_the_sender_clock ... ok
+test net::replication::tests::tr23_2_ghost_round_never_damages ... ok
+test net::replication::tests::tr30_2_brolly_pose_converges_rust_to_rust ... ok
+test net::replication::tests::tr21_3_host_migration_completes_the_match ... ok
+test net::replication::tests::tr30_2_kit_record_ghost_blocks_local_shots ... ok
+test net::replication::tests::tr34_2_bomb_ghost_record_is_presentation_only ... ok
+test net::replication::tests::tr34_2_boomerang_ghost_never_bursts_on_a_local_foe ... ok
+test net::replication::tests::tr30_2_pack_slots_three_loadouts ... ok
+test net::replication::tests::tr34_2_torpedo_ghost_locks_launches_but_decides_nothing ... ok
+test net::replication::tests::tr34_2_dh_owner_applies_the_ghost_hit_non_owner_ignores ... ok
+test net::replication::tests::tr34_2_waddle_dh_kills_the_real_one_and_broadcasts_the_end ... ok
+test net::replication::tests::tr45_1_2_guest_bhit_uplink_converges_on_the_host ... ok
+test net::session::tests::bot_roster_rolls_sub_and_special_about_half_the_time ... ok
+test net::session::tests::connection_loss_surfaces_lost_connection ... ok
+test net::session::tests::create_exhausts_four_retries_and_fails ... ok
+test net::session::tests::create_mints_valid_code_and_reaches_lobby ... ok
+test net::session::tests::create_retries_with_a_new_code_when_taken ... ok
+test net::session::tests::emote_broadcasts_and_echoes_locally ... ok
+test net::session::tests::fix_teams_caps_honours_requests_and_balances ... ok
+test net::session::tests::game_messages_only_forward_during_a_match ... ok
+test net::session::tests::go_fallback_fires_at_12s ... ok
+test net::replication::tests::tr45_1_1_boss_path_converges_rust_to_rust ... ok
+test net::session::tests::guest_me_roundtrips_through_the_host ... ok
+test net::session::tests::host_migration_on_leave ... ok
+test net::session::tests::join_a_full_room_gets_room_is_full ... ok
+test net::session::tests::guest_accepts_a_boss_start ... ok
+test net::session::tests::join_a_locked_room_gets_match_in_progress ... ok
+test net::session::tests::join_sanitises_the_code_and_surfaces_relay_refusals ... ok
+test net::session::tests::leave_resets_the_local_view_and_peers_see_it ... ok
+test net::session::tests::member_dropped_while_loading_counts_as_ready ... ok
+test net::session::tests::no_bots_stage_gates_the_start ... ok
+test net::session::tests::no_bots_stage_needs_one_player_per_team ... ok
+test net::session::tests::set_me_rejects_unknown_weapon_locally ... ok
+test net::session::tests::lobby_ping_flows_to_the_host_and_back ... ok
+test net::session::tests::set_settings_accepts_boss_and_falls_back ... ok
+test net::session::tests::solo_on_a_no_bots_stage_blocks_the_start ... ok
+test net::session::tests::set_settings_clamps_and_validates_like_js ... ok
+test net::session::tests::start_boss_roster_single_team_eight_slots ... ok
+test net::session::tests::start_ready_go_full_sequence ... ok
+test net::session::tests::zones_mode_flows_to_the_start_cfg ... ok
+test net::tests::flags_match_upstream_table ... ok
+test net::session::tests::wire_encoders_are_byte_exact_against_fixtures ... ok
+test net::replication::tests::tr45_1_3_host_migration_adopts_the_boss ... ok
+test net::tests::splat_record_mirrors_paint_splat ... ok
+test net::replication::tests::tr45_1_4_boss_move_timeline_replays_on_the_guest ... ok
+test net::transport::tests::fake_handshake_join_routing_and_lock_flow ... ok
+test net::transport::tests::fake_handshake_times_out_at_8s ... ok
+test net::transport::tests::fake_join_ladder_matches_relay_wording ... ok
+test net::transport::tests::fake_send_before_open_is_dropped ... ok
+test net::transport::tests::relay_url_matches_js_resolution ... ok
+test net::transport::tests::room_url_mirrors_transport_js_l44 ... ok
+test net::transport::tests::rtt_ema_matches_js_expression ... ok
+test net::transport::tests::rx_state_handles_every_js_frame_shape ... ok
+test net::transport::tests::sim_draws_jitter_then_spike_in_that_order ... ok
+test net::transport::tests::sim_jitter_bunches_like_tcp_and_is_deterministic ... ok
+test net::transport::tests::sim_lag_delays_everything_in_order ... ok
+test net::transport::tests::sim_spike_stalls_everything_behind_it ... ok
+test net::wire::tests::bhit_crab_id_wider_than_i8_round_trips ... ok
+test net::wire::tests::boss_and_unknown_record_tags_decode_to_none_without_panic ... ok
+test net::wire::tests::boss_records_produce_and_round_trip ... ok
+test net::wire::tests::boss_snap_round_trips_to_golden_wire ... ok
+test net::wire::tests::control_frames_round_trip_to_golden_wire ... ok
+test net::wire::tests::direct_messages_round_trip_to_golden_wire ... ok
+test net::wire::tests::envelopes_split_relay_frames ... ok
+test net::wire::tests::event_payloads_pass_through_verbatim ... ok
+test net::wire::tests::event_records_round_trip_to_golden_wire ... ok
+test net::wire::tests::forward_event_wire_names_match_table ... ok
+test net::wire::tests::host_messages_round_trip_to_golden_wire ... ok
+test net::wire::tests::kit_and_zone_records_round_trip ... ok
+test net::wire::tests::non_boss_ticks_never_carry_b ... ok
+test net::wire::tests::pack_actor_matches_golden_wire_for_every_case ... ok
+test net::wire::tests::pack_trig_covers_all_three_branches ... ok
+test net::wire::tests::res_boss_round_trips_and_short_stats_default_zero ... ok
+test net::wire::tests::round_edges_are_js_half_up_and_minus_zero_collapses ... ok
+test net::wire::tests::session_messages_pass_through_verbatim ... ok
+test net::wire::tests::tick_boss_key_rides_between_e_and_c ... ok
+test net::wire::tests::tick_round_trips_to_golden_wire ... ok
+test net::wire::tests::timed_event_prefixes_the_timestamp ... ok
+test net::wire::tests::trigger_and_event_records_round_trip_through_decode_encode ... ok
+test net::wire::tests::unpack_actor_matches_golden_unpacked_for_every_case ... ok
+test net::wire::tests::unpack_trig_matches_golden ... ok
+test net::wire::tests::zone_seq_records_round_trip_to_golden_wire ... ok
+test paint::tests::blob_wobble_bounds ... ok
+test paint::tests::cross_face_splat_accumulates ... ok
+test paint::tests::dead_cells_write_grid_but_skip_counts ... ok
+test paint::tests::flood_ease_out_leads_linear_at_half_duration ... ok
+test paint::tests::flood_fill_front_completes_region ... ok
+test paint::tests::flood_order_skips_dead_cells ... ok
+test paint::tests::flood_same_region_replaces_running_flood ... ok
+test paint::tests::flood_wipe_clears_region_and_counts ... ok
+test paint::tests::grazing_dn_behind_plane_still_paints ... ok
+test paint::tests::ink_query_trait ... ok
+test paint::tests::non_paintable_never_claims ... ok
+test paint::tests::roll_band_stamps_along_direction ... ok
+test paint::tests::smear_stretch_line_is_asymmetric ... ok
+test paint::tests::tr6_1_circle_area_matches_pi_r_squared ... ok
+test paint::tests::tr6_1_counts_track_ownership ... ok
+test paint::tests::tr6_2_ramp_local_coords ... ok
+test paint::tests::tr6_2_rotated_face_local_coords ... ok
+test paint::tests::tr6_3_coverage_normalisation ... ok
+test paint::tests::wall_face_splat_paints_without_turf ... ok
+test net::tests::sample_is_built_losslessly_from_sim_state ... ok
+test special::tests::tr35_2_sp_kit_records_are_byte_exact_on_the_wire ... ok
+test net::replication::tests::tr45_1_5_boss_result_settles_the_guest ... ok
+test net::tests::tick_and_messages_survive_serde_round_trip ... ok
+test net::tests::sample_survives_serde_round_trip ... ok
+test special::tests::tr35_3_gauge_blocked_while_active_and_no_special_variant ... ok
+test special::tests::tr35_3_gauge_charges_and_emits_ready_once ... ok
+test special::tests::tr35_3_splat_keeps_share_and_drops_shield ... ok
+test special::tests::tr35_2_host_drain_rewrites_op2_gid_to_the_nid_form ... ok
+test special::tests::tr35_2_three_slots_pack_from_actor_state ... ok
+test special::tests::tr35_b2_slam_ghost_is_a_bare_active ... ok
+test special::tests::tr35_b2_bubbler_shield_ladder ... ok
+test special::tests::tr35_b2_sonar_reveal_ladder ... ok
+test special::tests::tr35_b2_storm_cloud_rain_dps_and_expiry ... ok
+test special::tests::tr35_b2_slam_impact_paint_and_damage_ladder ... ok
+test special::tests::tr35_b3_barrage_gaps_and_subs ... ok
+test special::tests::tr35_b3_ghost_kinds_and_bubble_roundtrip ... ok
+test special::tests::tr35_b2_sonar_slow_and_ink_burn ... ok
+test special::tests::tr35_b3_strike_ladder ... ok
+test special::tests::tr35_b3_wail_place ... ok
+test special::tests::tr35_b4_crab_gatling_cannon_hull_break ... ok
+test special::tests::tr35_b2_kraken_trample_ladder ... ok
+test special::tests::tr35_b4_jetpack_launch_hover_boost_blast ... ok
+test special::tests::tr35_b4_review_ghost_blast_attacker_drop ... ok
+test special::tests::tr35_b4_stamp_swing_flip_guard_throw_slam ... ok
+test special::tests::tr35_b4_zipcaster_tether_zip_hang_impact ... ok
+test special::tests::tr35_determinism_two_matches_same_seed ... ok
+test special::tests::tr35_b4_determinism_same_seed_identical_streams ... ok
+test special::tests::tr35_filter_damage_gates ... ok
+test special::tests::tr35_lifecycle_body_kind_expiry ... ok
+test special::tests::tr35_lifecycle_start_records_and_timer_expiry ... ok
+test special::tests::tr35_lifecycle_start_special_handoff ... ok
+test special::tests::tr35_b3_blower_bubble_ladder ... ok
+test special::tests::tr35_ghost_tick_expiry_and_death ... ok
+test special::tests::tr35_playback_ghost_gets_the_off_grace ... ok
+test special::tests::tr35_playback_special_flag_builds_and_clears_the_placeholder ... ok
+test special::tests::tr35_net_state_crab_round_trip ... ok
+test special::tests::tr35_remaining_matches_the_js_ladder ... ok
+test special::tests::tr35_playback_spst_feeds_the_ghost_crab_snapshot ... ok
+test special::tests::tr35_spawn_records_the_slot_form_gid ... ok
+test special::tests::tr35_slam_phase_machine ... ok
+test sub::boomerang_tests::tr34_1_boomerang_contact_arms_and_big_blast ... ok
+test sub::boomerang_tests::tr34_1_boomerang_hover_shred_kills ... ok
+test sub::boomerang_tests::tr34_1_boomerang_lifecycle_phases_and_end_burst ... ok
+test sub::boomerang_tests::tr34_1_boomerang_orbit_graze ... ok
+test sub::boomerang_tests::tr34_1_boomerang_owner_splatted_fizzles ... ok
+test sub::boomerang_tests::tr34_1_boomerang_throw_plan_and_record ... ok
+test sub::boomerang_tests::tr34_1_boomerang_tuning_values ... ok
+test sub::boomerang_tests::tr34_2_boomerang_ghost_replays_but_decides_nothing ... ok
+test sub::boomerang_tests::tr34_3_boomerang_one_out ... ok
+test sub::shaker_tests::tr34_1_shaker_blast_damage_and_radius ... ok
+test sub::shaker_tests::tr34_1_shaker_fuse_and_blast_cadence ... ok
+test sub::shaker_tests::tr34_1_shaker_hold_charge_levels ... ok
+test sub::shaker_tests::tr34_1_shaker_ink_cost_and_throw ... ok
+test sub::shaker_tests::tr34_1_shaker_level_sets_blast_count ... ok
+test sub::shaker_tests::tr34_1_shaker_trail_drips_every_038_m ... ok
+test sub::tests::tr34_1_beacon_plants_a_shootable_device ... ok
+test sub::tests::tr34_1_bomb_deploy_nothing_kits_deploy ... ok
+test sub::tests::tr34_1_burst_direct_hit_pops_for_direct_and_splash_damage ... ok
+test sub::tests::tr34_1_curtain_fades_on_its_decay ... ok
+test sub::tests::tr34_1_ink_cost_matches_the_subs_table ... ok
+test sub::tests::tr34_1_mine_arms_then_trips_and_tracks ... ok
+test sub::tests::tr34_1_mine_plants_an_armed_device_with_ink_under_it ... ok
+test sub::tests::tr34_1_mist_lingers_and_poisons ... ok
+test sub::tests::tr34_1_scan_land_cloud_tracks_the_enemy ... ok
+test sub::tests::tr34_1_seeker_skitters_to_its_target_and_blasts ... ok
+test sub::tests::tr34_1_sprinkler_pulses_drops_on_schedule ... ok
+test sub::tests::tr34_1_sticky_sits_on_its_fuse_then_blasts ... ok
+test sub::tests::tr34_1_thrown_kinds_launch_fly_items_with_recorded_ballistics ... ok
+test sub::tests::tr34_3_beacon_cap_evicts_the_oldest ... ok
+test sub::tests::tr34_3_mine_cap_detonates_the_oldest ... ok
+test sub::tests::tr34_kit_ghost_round_trip ... ok
+test sub::torpedo_tests::tr34_1_torpedo_burst_core_damage_and_drops ... ok
+test sub::torpedo_tests::tr34_1_torpedo_locks_unfolds_launches ... ok
+test sub::torpedo_tests::tr34_1_torpedo_throw_and_feet_paint ... ok
+test sub::torpedo_tests::tr34_1_torpedo_triggered_burst_throws_ten_drops ... ok
+test sub::torpedo_tests::tr34_1_torpedo_tuning_values ... ok
+test sub::torpedo_tests::tr34_1_torpedo_uncontested_bursts_small ... ok
+test sub::torpedo_tests::tr34_3_torpedo_one_out ... ok
+test sub::torpedo_tests::tr34_3_torpedo_shoot_down ... ok
+test sub::tracer_tests::tr34_1_tracer_direct_hit_and_end_record ... ok
+test sub::tracer_tests::tr34_1_tracer_fire_geometry_and_record ... ok
+test sub::tracer_tests::tr34_1_tracer_floor_bounce_skims_and_puddles ... ok
+test sub::tracer_tests::tr34_1_tracer_max_bounces_terminates ... ok
+test sub::tracer_tests::tr34_1_tracer_range_exhausts_without_record ... ok
+test sub::tracer_tests::tr34_1_tracer_trail_touch_marks_once ... ok
+test special::tests::tr35_storm_throw_and_glide ... ok
+test sub::tracer_tests::tr34_1_tracer_tuning_values ... ok
+test sub::tracer_tests::tr34_2_tracer_ghost_flies_but_decides_nothing ... ok
+test sub::waddle_tests::tr34_1_waddle_fuse_blast_in_place ... ok
+test sub::waddle_tests::tr34_1_waddle_lock_walk_and_reached_blast ... ok
+test sub::waddle_tests::tr34_1_waddle_throw_record ... ok
+test sub::waddle_tests::tr34_1_waddle_tuning_values ... ok
+test sub::waddle_tests::tr34_1_waddle_walk_speed_and_travel_cap ... ok
+test tests::scaffold_smoke ... ok
+test sub::waddle_tests::tr34_3_waddle_shoot_down_pops_it ... ok
+test tuning::tests::boss_brain_pref_values ... ok
+test tuning::tests::boss_brain_values ... ok
+test tuning::tests::boss_hit_pos_values ... ok
+test tuning::tests::boss_hit_table_values ... ok
+test tuning::tests::boss_hz_values ... ok
+test tuning::tests::boss_mode_and_squad_units ... ok
+test tuning::tests::boss_moves_values ... ok
+test tuning::tests::boss_nav_values ... ok
+test tuning::tests::boss_pace_min_tele_reach ... ok
+test tuning::tests::boss_stats_values ... ok
+test tuning::tests::difficulty_normal_hard_values ... ok
+test tuning::tests::map_theme_empty_string_fallbacks ... ok
+test tuning::tests::map_flag_functions ... ok
+test tuning::tests::map_theme_function ... ok
+test tuning::tests::maps_flags_values ... ok
+test tuning::tests::maps_theme_times_values ... ok
+test tuning::tests::match_and_difficulty_and_palettes ... ok
+test tuning::tests::player_key_values ... ok
+test tuning::tests::offline_map_list ... ok
+test tuning::tests::schema_and_provenance ... ok
+test tuning::tests::special_ballistic_values ... ok
+test tuning::tests::special_barrage_variants_values ... ok
+test tuning::tests::special_driver_values ... ok
+test tuning::tests::special_field_values ... ok
+test tuning::tests::special_instant_values ... ok
+test tuning::tests::special_order_locked ... ok
+test tuning::tests::spritzer_key_values ... ok
+test tuning::tests::sub_bomb_family_values ... ok
+test tuning::tests::sub_kit_values ... ok
+test tuning::tests::sub_order_locked ... ok
+test tuning::tests::sub_placed_values ... ok
+test tuning::tests::sub_tracked_values ... ok
+test tuning::tests::weapon_blade_values ... ok
+test tuning::tests::weapon_blaster_values ... ok
+test tuning::tests::weapon_bow_values ... ok
+test tuning::tests::weapon_brolly_values ... ok
+test tuning::tests::weapon_bucket_values ... ok
+test tuning::tests::weapon_brush_values ... ok
+test tuning::tests::weapon_charger_values ... ok
+test tuning::tests::weapon_mitts_values ... ok
+test tuning::tests::weapon_order_locked_and_retired_excluded ... ok
+test tuning::tests::weapon_range_table ... ok
+test tuning::tests::weapon_roller_values ... ok
+test tuning::tests::weapon_spinner_values ... ok
+test tuning::tests::weapon_twins_values ... ok
+test tuning::tests::zones_values ... ok
+test weapon::blade_tests::tr32_1_blade_heavy_wave_kit_record ... ok
+test weapon::blade_tests::tr32_1_blade_tap_crescent_values ... ok
+test weapon::blade_tests::tr32_1_blade_wave_over_void_draws_nothing ... ok
+test weapon::blade_tests::tr32_1_blade_wave_stripes_and_end ... ok
+test weapon::blade_tests::tr32_1_blade_wave_wall_burst_impact ... ok
+test weapon::blade_tests::tr32_1_brush_drag_paint_and_ink ... ok
+test weapon::blade_tests::tr32_1_brush_swipe_values_and_alternation ... ok
+test weapon::blade_tests::tr32_1_roller_drag_paint_ink_and_rng ... ok
+test weapon::blade_tests::tr32_2_blade_busy_and_swing_window ... ok
+test weapon::blade_tests::tr32_2_blade_drop_delay_freezes_the_first_frames ... ok
+test weapon::blade_tests::tr32_2_blade_lunge_safe_samples ... ok
+test weapon::blade_tests::tr32_2_brush_melee_box_and_cd ... ok
+test weapon::blade_tests::tr32_2_brush_moving_boundary ... ok
+test weapon::blade_tests::tr32_2_blade_melee_bounds_arc_los_and_once ... ok
+test weapon::blade_tests::tr32_2_ghost_wave_is_silent ... ok
+test weapon::blade_tests::tr32_2_drop_dmg_far_lerp ... ok
+test weapon::blade_tests::tr32_2_roller_flick_timing_and_low_ink ... ok
+test weapon::bow_tests::tr33_1_arrow_dive_past_range ... ok
+test weapon::bow_tests::tr33_1_bow_shot_tier_boundaries ... ok
+test weapon::bow_tests::tr33_1_burst_splash_falloff ... ok
+test weapon::bow_tests::tr33_1_burst_splash_needs_los ... ok
+test weapon::bow_tests::tr33_1_direct_hit_drops_then_lodges ... ok
+test weapon::bow_tests::tr33_1_draw_then_release_full ... ok
+test weapon::blade_tests::tr32_2_roller_melee_gates_and_window ... ok
+test weapon::bow_tests::tr33_1_ghost_arrow_impact ... ok
+test weapon::bow_tests::tr33_1_ghost_arrow_mutes_everything ... ok
+test weapon::bow_tests::tr33_1_lodged_fuse_bursts ... ok
+test weapon::bow_tests::tr33_1_low_ink_empty_click ... ok
+test weapon::bow_tests::tr33_1_max_arrows_cap ... ok
+test weapon::bow_tests::tr33_1_move_speed_drawing_and_firing ... ok
+test weapon::bow_tests::tr33_1_sweep_stalled_draw ... ok
+test weapon::bow_tests::tr33_1_tank_caps_charge ... ok
+test weapon::bow_tests::tr33_1_tap_arrow_impact_splat ... ok
+test weapon::bow_tests::tr33_1_volley_air_fan ... ok
+test weapon::bow_tests::tr33_1_volley_ground_fan_and_record ... ok
+test weapon::bow_tests::tr33_1_trail_drip_two_draws ... ok
+test weapon::brolly_tests::tr30_1_brolly_kit_init ... ok
+test weapon::brolly_tests::tr30_1_brolly_open_then_launch ... ok
+test weapon::brolly_tests::tr30_1_brolly_cadence_ink_and_pellet_cone ... ok
+test weapon::brolly_tests::tr30_1_launched_canopy_slides_paints_blocks ... ok
+test weapon::brolly_tests::tr30_1_pellet_blast_merges_into_one_hit ... ok
+test weapon::brolly_tests::tr30_1_pellet_damage_falloff ... ok
+test weapon::mitts_tests::tr33_2_cling_enter_and_drain ... ok
+test weapon::mitts_tests::tr33_2_cling_enter_rejects_glancing_and_floor ... ok
+test weapon::mitts_tests::tr33_2_cling_exit_causes ... ok
+test weapon::mitts_tests::tr33_2_cling_punches_right_hand_only ... ok
+test weapon::mitts_tests::tr33_2_fist_direct_hit ... ok
+test weapon::mitts_tests::tr33_2_fist_life_bursts_in_air ... ok
+test weapon::mitts_tests::tr33_2_fist_splash_falloff_and_direct_excluded ... ok
+test weapon::mitts_tests::tr33_2_fist_splash_needs_los ... ok
+test weapon::mitts_tests::tr33_2_fist_wall_burst_one_draw ... ok
+test weapon::mitts_tests::tr33_2_guard_arc_halves_frontal_damage ... ok
+test weapon::mitts_tests::tr33_2_guard_arc_uses_owner_position ... ok
+test weapon::mitts_tests::tr33_2_hang_freezes_velocity ... ok
+test weapon::mitts_tests::tr33_2_jump_hook_swallows_and_starts ... ok
+test weapon::mitts_tests::tr33_2_land_splash_damage_and_rng ... ok
+test weapon::mitts_tests::tr33_2_land_splash_needs_los ... ok
+test weapon::mitts_tests::tr33_2_leap_armor_and_grace ... ok
+test weapon::mitts_tests::tr33_2_leap_charge_release ... ok
+test weapon::mitts_tests::tr33_2_leap_velocity_endpoints ... ok
+test weapon::mitts_tests::tr33_2_leap_wall_exit_guard ... ok
+test weapon::mitts_tests::tr33_2_ledge_cancel_charge ... ok
+test weapon::mitts_tests::tr33_2_low_ink_punch_empty_click ... ok
+test weapon::mitts_tests::tr33_2_move_speed_arms ... ok
+test weapon::mitts_tests::tr33_2_punch_backfill_capped_at_two ... ok
+test weapon::mitts_tests::tr33_2_punch_cadence_hands_and_rng ... ok
+test weapon::mitts_tests::tr33_2_stale_seen_resets ... ok
+test weapon::mitts_tests::tr33_2_step_jump_swallowed_by_charge ... ok
+test weapon::tests::ballistic_is_a_noop_outside_its_envelope ... ok
+test weapon::tests::capsule_distance_matches_analytic_values ... ok
+test weapon::tests::rng_is_deterministic_and_bounded ... ok
+test weapon::tests::runner_bloom_and_spread_track_upstream_formulas ... ok
+test weapon::tests::runner_move_speed_uses_firing_penalty ... ok
+test weapon::tests::tr29_2_fire_round_straight_then_parabola_and_life_cutoff ... ok
+test weapon::tests::tr29_2_kind_table_and_dispatch_skeleton ... ok
+test weapon::tests::tr29_2_spread_cone_is_bounded_and_seed_deterministic ... ok
+test weapon::tests::tr29_2_trail_drips_paint_the_deck_under_a_fixed_seed ... ok
+test weapon::tests::tr30_1_blaster_airburst_splash_falloff ... ok
+test weapon::tests::tr30_1_blaster_burst_paints_the_deck ... ok
+test weapon::tests::tr30_1_blaster_cadence_ink_and_fields ... ok
+test weapon::tests::tr30_1_blaster_direct_hit_kills ... ok
+test weapon::tests::tr30_1_twins_cadence_ink_and_bloom ... ok
+test weapon::tests::tr30_1_twins_hit_damage_30 ... ok
+test weapon::brolly_tests::tr30_1_held_canopy_blocks_breaks_regrows ... ok
+test weapon::tests::tr30_1_twins_roll_plants_the_turret ... ok
+test special::tests::tr35_net_ghost_ops ... ok
+test weapon::tests::tr31_1_charger_hitscan_damage_and_events ... ok
+test weapon::tests::tr31_1_charger_charge_curve_and_release_timing ... ok
+test weapon::tests::tr31_2_bucket_windup_and_blob_taper ... ok
+test weapon::tests::tr31_2_lob_aim_solves_the_arc ... ok
+test weapon::tests::tr31_2_volley_passthrough_and_below_falloff ... ok
+test weapon::tests::tr7_1_three_hits_kill_and_invuln_blocks_the_fourth ... ok
+test weapon::tests::tr31_1_spinner_linear_charge_and_burst_stream ... ok
+test weapon::tests::tr7_3_straight_phase_then_parabola_and_range_cutoff ... ok
+test weapon::tests::tr7_4_impact_paints_the_face_queryable_by_the_grid ... ok
+test weapon::tests::tr30_1_twins_roll_chain_lockout_and_refill ... ok
+test special::tests::tr35_b3_zooka_volleys ... ok
+test weapon::tests::tr7_2_ink_gating_and_shots_to_empty ... ok
+test bot::tests::tr38_zone_bots_survive_the_sub_special_matrix ... ok
+test special::tests::tr35_b3_booyah_cheer_and_throw ... ok
+
+test result: ok. 601 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 45.73s
+
+[1m[92m     Running[0m unittests src/bin/ink-atlas-check.rs (target/debug/deps/ink_atlas_check-d3a9b7ca4d8ac0b6)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src/bin/inkwave-autopilot.rs (target/debug/deps/inkwave_autopilot-8d2f666bf47ae5c5)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/net_harness-34849988591e1e44)
+
+running 5 tests
+test match_e2e::tests::kink_is_zero_on_a_steady_line_and_spikes_on_a_snap ... ok
+test match_e2e::tests::teleport_counts_only_clean_big_jumps ... ok
+test match_e2e::tests::kink_skips_dead_and_respawned_brackets ... ok
+test match_e2e::tests::pct_matches_the_js_selection_rule ... ok
+test match_e2e::tests::sample_interpolates_and_guards_brackets ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src/main.rs (target/debug/deps/net_harness-3a6b9a80a672bc18)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/acceptance.rs (target/debug/deps/acceptance-dd6506b29597a1e4)
+
+running 4 tests
+test heartbeat_cadence_and_rtt_end_to_end ... ok
+test fake_scenario_lagless_is_consistent ... ok
+test fake_scenario_lag_jitter_spike_is_consistent_and_deterministic ... ok
+test shim_scenario_is_consistent ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.00s
+
+[1m[92m     Running[0m tests/e2e_match.rs (target/debug/deps/e2e_match-00cda10bfdf4644b)
+
+running 11 tests
+test tr25_guest_dropped_to_bot ... ok
+test tr25_full_match_three_clients ... ok
+test tr25_lag_scenario_stats ... ok
+test tr37_crossmarket_turf_three_clients ... ok
+test tr37_saltpan_turf_three_clients ... ok
+test tr25_full_match_deterministic ... ok
+test tr39_loadout_end_to_end ... ok
+test tr25_host_migration ... ok
+test tr36_zones_match_three_clients ... ok
+test tr37_crossmarket_zones_three_clients ... ok
+test tr38_difficulty_ladder_monotonic has been running for over 60 seconds
+test tr38_difficulty_ladder_monotonic ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 113.92s
+
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/relay_shim-2f593a67ab17d7c4)
+
+running 8 tests
+test tests::base36_ids_have_js_shape ... ok
+test tests::code_valid_is_uppercase_alnum_4_to_8 ... ok
+test tests::clean_name_strips_and_falls_back ... ok
+test tests::origin_ok_matches_worker_regex ... ok
+test tests::hygiene_sweep_drops_a_silent_socket ... ok
+test tests::hygiene_rate_and_msg_max ... ok
+test tests::join_ladder_texts_and_runtime_ping ... ok
+test tests::three_sockets_welcome_election_fanout_leave_and_lock ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.00s
+
+[1m[92m     Running[0m unittests src/main.rs (target/debug/deps/relay_shim-394e297e28a3c576)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m inkwave_sim
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m net_harness
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m relay_shim
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+=== wasm32 check ===
+WASM_EXIT=0
+[1m[92m    Checking[0m inkwave_sim v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave_sim)
+[1m[92m    Checking[0m inkwave v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave)
+[1m[92m    Finished[0m ]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\`dev` profile [unoptimized + debuginfo]]8;;\ target(s) in 17.62s
+=== tree ===
+TREE_EXIT=0
+inkwave_sim v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave_sim)
+[2m├──[0m glam v0.30.10
+[2m│[0m   [2m└──[0m serde_core v1.0.229
+[2m├──[0m serde v1.0.229
+[2m│[0m   [2m├──[0m serde_core v1.0.229
+[2m│[0m   [2m└──[0m serde_derive v1.0.229 (proc-macro)
+[2m│[0m   [2m [0m   [2m├──[0m proc-macro2 v1.0.107
+[2m│[0m   [2m [0m   [2m│[0m   [2m└──[0m unicode-ident v1.0.26
+[2m│[0m   [2m [0m   [2m├──[0m quote v1.0.47
+[2m│[0m   [2m [0m   [2m│[0m   [2m└──[0m proc-macro2 v1.0.107 [33m[2m(*)[39m[22m
+[2m│[0m   [2m [0m   [2m└──[0m syn v3.0.6
+[2m│[0m   [2m [0m   [2m [0m   [2m├──[0m proc-macro2 v1.0.107 [33m[2m(*)[39m[22m
+[2m│[0m   [2m [0m   [2m [0m   [2m├──[0m quote v1.0.47 [33m[2m(*)[39m[22m
+[2m│[0m   [2m [0m   [2m [0m   [2m└──[0m unicode-ident v1.0.26
+[2m└──[0m serde_json v1.0.151
+[2m [0m   [2m├──[0m itoa v1.0.18
+[2m [0m   [2m├──[0m memchr v2.8.3
+[2m [0m   [2m├──[0m serde_core v1.0.229
+[2m [0m   [2m└──[0m zmij v1.0.23
+=== determinism: rerun props/special/mapthumb extractors, compare sha256 ===
+DETERM=BYTE_IDENTICAL
+ac45dabcefb61cab958d9f1697c62af41237ca1fe855cdf283fd8e1492699f09  assets/props/tidewater.json
+3e497949deaf540fdcbf700ab48f21eb961d55a93e98432b7d970c48f1882fff  assets/props/tidewater.bin.gz
+96fe07ccd5a5247fda40f66ccff4c7af613201ad9f67c502f4c8d7ff4a4015ec  assets/props/kelpline.json
+eeed985fc78518c1e3a6462953b5467a78de664124099c189cb5784e574440e8  assets/props/kelpline.bin.gz
+591f7a6f6ea9575a38246217093cba727c06ebcc6c478d0138b4b2de46c4e809  assets/props/halyard.json
+9dfe8d838c28c5e2512897e4beb454458ac0bbe90a1a51a1df0ac8f067d10453  assets/props/halyard.bin.gz
+92d0d5f1feeeab79c129951b16dfa6fbd3fa3be93972c7d3f16d4d52e1fbee6d  assets/props/saltpan.json
+ae790b904eddb2ce21d1e415b043427263d88209f2084240475959c263a23f98  assets/props/saltpan.bin.gz
+53076116658174c38258101e14f6c1d91634427aa4595be65805f64db5be70af  assets/props/crossmarket.json
+14a3c4046a38aef8620ef58f4379939f91dda2e6013b2c69b33e755b41e730f7  assets/props/crossmarket.bin.gz
+39398b5f6463d1652f0adddb55bf6af3fe807864d75be9878626275c59103f86  assets/props/lockgate.json
+6bc38946f691efc15d5c303ee2b3ed0fe74c434a4eebe1035ec0e3949e110f58  assets/props/lockgate.bin.gz
+acf38f1e36e3f52ac424e2ebaf2794d2fd65ef409c46102f0a05edfcbff8180b  assets/props/terraces.json
+63b74c99c7ce95ebc57601f05e8d20be72c50717a655b8eedea883c551e4c256  assets/props/terraces.bin.gz
+33507bd891a9875a209b80c674a4518c10e85294a43b3eb6e197ba45fa92111b  assets/props/cargo.json
+da3ea18c9dca40e96c62df6478ed8cfa42900e3049d4d471303d6319c17a276a  assets/props/cargo.bin.gz
+cae904fde082813ff513149b86ce30f39b08d4c766b7ad94a7086c6ee1198481  assets/props/special.json
+07f08647703ca167c78a8b3bd71983a18d93b5950653c4c5489523749541d944  assets/props/special.bin.gz
+35696cc9d0e99db55b6003815384892e42b0097d7da853794e1ca694454f0208  assets/props/thumb/cargo-day.svg
+2b94ada06b6999c806df3b471722ee0c3d85da83e742f3fb378b06af34dcabfa  assets/props/thumb/cargo-golden.svg
+87a6df82706dec4e43965599218f6bae3d17422239ab37f73b88e19ceed0b560  assets/props/thumb/cargo-sunset.svg
+58f146dce3011adf3df9318bb5162fe8203be22c4a9b7cf9bef9f7d350fbacee  assets/props/thumb/crossmarket-day.svg
+8d64d188116da6e6648c0acc344d127d8c1c6d7d2d1ec4ff18bb635d923e0e41  assets/props/thumb/crossmarket-golden.svg
+c8b2f7c84c0573d4af1866a5cef2bcab3dcd00786ca603d7298864538737cbd8  assets/props/thumb/crossmarket-sunset.svg
+235064389417a9838dd1e22e926b0ca6946bd06bbac52cf1ff0070dd9db4f33d  assets/props/thumb/halyard-day.svg
+6655579e46b433e86e22017592519da29563299455d2ed0653ef625ae83ff28b  assets/props/thumb/halyard-golden.svg
+51e2fcf72e33ff06b60614aab9c76c7fc0f2b668cbf3ef070373ae825be5fdf9  assets/props/thumb/halyard-sunset.svg
+7406770a195993b9fb4c256a076f02bfc462faa6a5d4d9031c4a6db40ee08ddc  assets/props/thumb/kelpline-day.svg
+3fb1bf54d80ddaa282ace8075ae66bd16b22059277c5d5744ab5e194ca224ff1  assets/props/thumb/kelpline-golden.svg
+b5a3bf7e65fb96847cb72571bdb75b6e6472452dd9c5f2098656688d238674db  assets/props/thumb/kelpline-sunset.svg
+40e77b8f58d094e15ac4f3a75ee7f0c3320d5c151194ebabb854a26b9ee62142  assets/props/thumb/lockgate-day.svg
+044c11702a69ccaae4b2ae9f7d21e64d907951df067ef59efb9feca0c6fa5c0a  assets/props/thumb/lockgate-golden.svg
+423836adfb9fb215320c10064c233c2cb4dcdebe569d3067a18f17bb0e4b7da7  assets/props/thumb/lockgate-sunset.svg
+7a447dfd4329930c9e66153fe61800edcc7af1b2145d421d837fbf5fc6e689b5  assets/props/thumb/saltpan-day.svg
+87c3a516a5337a83c19c0f18f14c4123485e7d0ab87ee0758dc7239defdb79a7  assets/props/thumb/saltpan-golden.svg
+d7a8538fe6df8288cfd9ad8687e88a13f409862b2380e225ca27a38d0feaa923  assets/props/thumb/saltpan-sunset.svg
+341871d93e03f8b388ca8a0a2a3863d5daa85b417d50c72ea6683450a3c521aa  assets/props/thumb/terraces-day.svg
+35a37105f4970e843e84c5db8d4e119fb7ccaa9e64b9d4fd5776d77fc0ed5d9d  assets/props/thumb/terraces-golden.svg
+3be6c22d97e361ab9bb15d9421b68b8cb3814317268f22c420d0cb82cecc46eb  assets/props/thumb/terraces-sunset.svg
+09dfd0be3203bef0ab8bd2c90514ef7eddfd515bd70288ab0036992fb8177b56  assets/props/thumb/tidewater-day.svg
+1553e69c86b92d638c30b1f1ee2b06578e63e2578abef3fda5e35c0c03059bd2  assets/props/thumb/tidewater-golden.svg
+9f2cb0f0fd21c7cf0aaaa50cb83e7f99839a49a99ceab9d3185b24a966cb5390  assets/props/thumb/tidewater-sunset.svg
+extract-props tidewater: placements=280 templates=417 verts=323346 tris=359049 instances=1257 spin=0 blink=0 decor=4 bin=2818127B(gz)/11135133B
+extract-props kelpline: placements=223 templates=250 verts=256171 tris=232724 instances=714 spin=0 blink=31 decor=4 bin=1904925B(gz)/8194159B
+extract-props halyard: placements=229 templates=550 verts=326282 tris=377983 instances=1064 spin=10 blink=61 decor=8 bin=3216374B(gz)/11422917B
+extract-props saltpan: placements=351 templates=531 verts=239985 tris=273404 instances=1223 spin=1 blink=5 decor=4 bin=2277790B(gz)/8357076B
+extract-props crossmarket: placements=264 templates=529 verts=627313 tris=607715 instances=1284 spin=0 blink=0 decor=2 bin=5028006B(gz)/20503946B
+extract-props lockgate: placements=217 templates=274 verts=218615 tris=189767 instances=705 spin=0 blink=0 decor=4 bin=1641701B(gz)/6888916B
+extract-props terraces: placements=282 templates=415 verts=287137 tris=365464 instances=869 spin=0 blink=0 decor=4 bin=3547429B(gz)/10441626B
+extract-props cargo: placements=223 templates=250 verts=256636 tris=233080 instances=714 spin=0 blink=31 decor=4 bin=1912836B(gz)/8208196B
+extract-special: kinds=5 templates=35 verts=40200 tris=82010 bin=596557B(gz)/1828648B
+gen-mapthumb-golden tidewater/day: 60670 chars
+gen-mapthumb-golden tidewater/sunset: 60676 chars
+gen-mapthumb-golden tidewater/golden: 60676 chars
+gen-mapthumb-golden kelpline/day: 31665 chars
+gen-mapthumb-golden kelpline/sunset: 31671 chars
+gen-mapthumb-golden kelpline/golden: 31671 chars
+gen-mapthumb-golden halyard/day: 17155 chars
+gen-mapthumb-golden halyard/sunset: 17161 chars
+gen-mapthumb-golden halyard/golden: 17161 chars
+gen-mapthumb-golden saltpan/day: 22411 chars
+gen-mapthumb-golden saltpan/sunset: 22417 chars
+gen-mapthumb-golden saltpan/golden: 22417 chars
+gen-mapthumb-golden crossmarket/day: 25200 chars
+gen-mapthumb-golden crossmarket/sunset: 25206 chars
+gen-mapthumb-golden crossmarket/golden: 25206 chars
+gen-mapthumb-golden lockgate/day: 29804 chars
+gen-mapthumb-golden lockgate/sunset: 29810 chars
+gen-mapthumb-golden lockgate/golden: 29810 chars
+gen-mapthumb-golden terraces/day: 103162 chars
+gen-mapthumb-golden terraces/sunset: 103168 chars
+gen-mapthumb-golden terraces/golden: 103168 chars
+gen-mapthumb-golden cargo/day: 31617 chars
+gen-mapthumb-golden cargo/sunset: 31623 chars
+gen-mapthumb-golden cargo/golden: 31623 chars
+DETERM_EXIT=0
+=== props crosscheck (node, live JS source of truth) ===
+XCHK_EXIT=0
+props-crosscheck tidewater: placements=280 instances=1257 tris(manifest Σ placements)=659358 ok
+props-crosscheck kelpline: placements=223 instances=714 tris(manifest Σ placements)=430450 ok
+props-crosscheck halyard: placements=229 instances=1064 tris(manifest Σ placements)=592408 ok
+props-crosscheck saltpan: placements=351 instances=1223 tris(manifest Σ placements)=439352 ok
+props-crosscheck crossmarket: placements=264 instances=1284 tris(manifest Σ placements)=889046 ok
+props-crosscheck lockgate: placements=217 instances=705 tris(manifest Σ placements)=328648 ok
+props-crosscheck terraces: placements=282 instances=869 tris(manifest Σ placements)=575620 ok
+props-crosscheck cargo: placements=223 instances=714 tris(manifest Σ placements)=430946 ok
+props-crosscheck: OK
+=== trunk build (retry<=3, SIGKILL false-green guard) ===
+2026-11-06T14:31:45.780430Z  INFO 🚀 Starting trunk 0.21.14
+2026-11-06T14:31:45.786366Z  INFO 📦 starting build
+2026-11-06T14:31:45.786781Z  INFO ⏫ Found an update of trunk: 0.21.14 -> 0.22.1
+[1m[92m   Compiling[0m inkwave_sim v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave_sim)
+[1m[92m   Compiling[0m inkwave v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave)
+[1m[92m    Finished[0m ]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\`release` profile [optimized]]8;;\ target(s) in 1m 17s
+2026-11-06T14:33:20.910153Z  INFO applying new distribution
+2026-11-06T14:33:20.911072Z  INFO ✅ success
+trunk attempt 1 succeeded
+TRUNK_EXIT=0
+=== headless ===
+HEADLESS_EXIT=0 (turf) / HEADLESS_BOSS_EXIT=0 (boss)
+[1m[92m   Compiling[0m inkwave_sim v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave_sim)
+[1m[92m   Compiling[0m inkwave v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave)
+[1m[92m    Finished[0m ]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\`release` profile [optimized]]8;;\ target(s) in 1m 32s
+[inkwave] boot: sim crate 0.1.0-m1 (headless = true)
+[inkwave] headless frames complete
+[inkwave] boot: sim crate 0.1.0-m1 (headless = true)
+[inkwave] headless boss: frames=600 bt=10.0 hp=93600/93600 phase=1 events=3
+=== JS tree git status ===
+JS_TREE_CLEAN
+SIM_TREE_CLEAN
+GATES_DONE
+
+=== TRUNK verdict (D-T40-1 precedent) ===

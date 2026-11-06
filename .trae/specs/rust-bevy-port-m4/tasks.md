@@ -289,7 +289,7 @@
 - **九段门禁**：`rust/tools/verify/gate-task52.sh`——首轮 `rust/tools/verify/logs/task52-gates-20261106T120359Z.log` CLIPPY 红（11 条死代码/lint）+DETERM=MISMATCH（`source.commit` 戳刷新，Task 51 同因先例）；修复后重跑 `task52-gates-20261106T122152Z.log` FMT/CLIPPY/TEST(958=329+601+28)/WASM/TREE/**DETERM(BYTE_IDENTICAL)**/XCHK/**TRUNK(rc=0，attempt 1 即成，历史 SIGKILL 环境问题未复现)**/HEADLESS(turf+boss 0)/JS_TREE_CLEAN **全绿**。clippy 修复 14 项全部行为不变：删死代码（`RippleTable::new`→Default、`V2`、`PrepCtx.px`、`SurfCtx.layer`+生命周期参、`MipChain::base_len`）；`slot`/`emit_box`→`#[cfg(test)]`；JS 锚点定向豁免（`RIPPLE_DEFAULT`/`set_clock`/`reset` →`allow(dead_code)` 注 Task 57 消费方；`inert`→`cfg_attr` 镜像 `bake_all` 先例；`ink_upload` too_many_arguments）；机械修 3（`as_chunks_mut`、`needless_range_loop`→enumerate、`manual_contains`）。
 
 ## Task 53: props/murals/dressing 装饰
-- **Status**: `pending`
+- **Status**: `completed`（2026-11-06 完成，评审 PASS-with-fixes：1 P0/3 P1/6 P2（P0/P1 全部当场修复，P2 留档）；证据见下方 Completion Evidence 与 spec.md「Task 53 收口注记」）
 - **Priority**: medium
 - **Depends On**: Task 52
 - **Description**: tidewater `props.js`（2093）+ 各图 props/murals（359）/decor（486）/dressing（129）/mapThumb（116）→ bevy 几何（装饰档，碰撞体外不变）；`special-props.js` 一并。
@@ -298,6 +298,19 @@
   - `rule` TR-53.1: props 清单提取对账（数量/位置/尺寸锚定）；无头冒烟。
   - `rule` TR-53.2: REVIEW_CHECKLIST 视觉登记。
 - **Notes**: 纯呈现层；不改碰撞（提取口径已锁）。
+
+### Task 53 Completion Evidence（2026-11-06）
+- **批次 A（提取管线，D-T53-1）✅**：`rust/tools/extract/extract-props.mjs`（真实模块 harness：import PropKit/dressingFor/Decor+canvas stub，`headless:true` 免 DOM）——逐 stage `dressingFor` → `kit.add` 前后 `_buckets` 快照差取 parts → prop-local 逆变换 → 1e-3 焊接+内容哈希去重模板 → 量化（pos i32 mm/nor i16×1e-3/col u8，21B/vert）→ IKP1 v1 LE bin → gzip；`<stage>.json` stable-json manifest（meta{placements/templates/verts/tris/binSha256/buckets}/placements{type,pos,rotY,scale,modeFlags,tris,bbox}/lamps/murals）；`extract-special.mjs` 同口径（5 kind）；`gen-mapthumb-golden.mjs`（8 图×3 主题=24 SVG 参考串）；`run-all.sh` 纳入；`props.schema.md` 格式文档；确定性=连跑 bin.gz+json 逐字节。产物体量：8 图 2069 placements/3120 模板/2.52M tris，bin.gz 合计 ~22MB。
+- **批次 B（Rust props 核心，D-T53-2）✅**：`crates/inkwave/src/props/`（mod/archive/mapthumb/special/anim/tests 共 2500+ 行）——manifest `include_str!` 内嵌经 **JVal 非 serde** 解析（texlib 先例）；archive 解码器全边界检查+尾随垃圾拒绝+缺失静默跳过 ≡ main.js L232-240 try/catch；模板→Bevy Mesh（POSITION/NORMAL/COLOR_0）+12 桶 StandardMaterial 表≡props.js L3129-3141（atlas 不移植=偏差②）；placement 实体共享 mesh+逐实例 transform，modeFlags≡`inMode` 过滤；Low 档不生成（Rust 侧决策，D-T53-2④）；新依赖仅 flate2。
+- **批次 C（动画+uLamps，D-T53-3）✅**：`anim.rs`——spin ≡props.js update L3279-3290（base×rotY(time·speed+phase)，世界系）、blink 色脉冲 ≡L3291-3300（lo/hi/rate/phase，unlit 球）；flags/banners 静态姿态（偏差④）；**uLamps 收口**（D-T52-7③）：manifest 灯位表→`LevelExt.u_lamps` 每帧上传（`level_render.rs` L467-492，night_k>0.01 门 ≡ JS；day 主题恒 0=登记）；`~ns` 桶照常投影（登记）。
+- **批次 D（special/mapThumb/murals，D-T53-4）✅**：special loader（kind→mesh 集，消费=Task 54/57，`allow(dead_code)`）；`mapthumb.rs` Rust 平移 `layoutThumbSVG` 纯函数（3 主题）+自研 mini-JSON 解析器（serde_json 1-ulp 翻位风险，头注详述）+ECMA `toFixed` tie 规则复刻；murals placement 表+与 maps json `normBrush.mural` 面 id 对账（layout ⊆ manifest，rows 6/10 无面贴放口径钉测），uMur 表/atlas 保持占位失活（偏差③）。
+- **批次 E（对账+门禁，D-T53-5）✅**：`rust/tools/props-crosscheck.mjs`（TR-53.1 独立重验，≠extractor 路径）：live `dressingFor`↔manifest placements 逐条 type/pos/rotY/scale/modeFlags（+inMode 成员双向）；tris 独立重算（bucket 快照差 rawTris/blob 跳过/spin=_tplGeo/blink=84/cloth 16·banner 80）；bin 解析 tie-out（IKP1 表/实例行/binSha256）；lamps 经真 `Level.groundHeight` 重算；murals≡`createMuralTexture` 表——8 stage 全绿；`gate-task53.sh` 九段（DETERM 扩 8×json+8×bin.gz+special+24×svg；XCHK 段接 crosscheck；末段加 SIM_TREE_CLEAN）。
+- **TR-53.1 ✅**：提取连跑逐字节（DETERM=BYTE_IDENTICAL）；Rust 解码↔manifest meta 逐 stage 对账（`every_stage_archive_decodes_to_its_manifest`）；crosscheck 全 stage 全项；headless 600 帧 turf+boss props 加载不 panic。
+- **TR-53.2 ✅**：REVIEW_CHECKLIST「Task 53」12 条视觉/口径登记+评审处置。
+- **评审**：独立实证评审 **PASS-with-fixes（1 P0 / 3 P1 / 6 P2）**→P0/P1 当场修复：P0-1 `fmt_fixed` 负 tie 舍入改 ECMA 摘号口径+钉测（Node 交叉验证）；P1-2 blink 球绕序内向——评审建议的 Three 模式经实测仍内向（u 参数化镜像），改 (a,b,d)/(b,d,c)+体积钉测；P1-3 两处伪造 JS 锚更正（main.js L229 质量门/L237-242 行号）；P1-4 本登记。P2-5~10 留档（详见 REVIEW_CHECKLIST）。保真抽查通过：bakeParts≡mergeParts AO/色乘/负行列式翻绕/法线链路、dressingFor/inMode 零重实现、uLamps 公式逐字、archive 边界防御。
+- **基线**：`inkwave` 329→**340**（+11，`props::` 11 全绿 1 ignored golden 审计）/workspace **958→969 passed**（单调递增）；`inkwave_sim` 601 不变、`cargo tree -p inkwave_sim` 依赖面不变；JS 树/`server/`/wire/net-fixtures 零改动；inkwave 新增依赖仅 flate2（Cargo.toml 注释在案）。
+- **九段门禁**：`rust/tools/verify/gate-task53.sh`——首轮 `rust/tools/verify/logs/task53-gates-20261106T142613Z.log` 与评审修复后复跑 `task53-gates-20261106T145139Z.log`：FMT/CLIPPY/TEST(969)/WASM/TREE/**DETERM(BYTE_IDENTICAL)**/XCHK/**TRUNK(rc=0，未触发 DEGRADED 先例)**/HEADLESS(turf+boss 0)/JS_TREE_CLEAN+SIM_TREE_CLEAN **全绿**。
+
 
 ## Task 54: 角色完整绑定（弹簧姿态）
 - **Status**: `pending`
