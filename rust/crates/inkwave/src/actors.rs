@@ -1,29 +1,28 @@
-//! Task 12 — placeholder character rendering driven by sim `Actor` state.
+//! Task 12 → Task 54 batch C2 — character rendering driven by sim `Actor`
+//! state, now through the real IKC1 rig tree instead of the placeholder
+//! blocks.
 //!
-//! Each of the 8 roster slots gets an entity tree:
-//!   root (position / yaw / lean / alive-hiding / invuln blink)
-//!     ├─ kid parts:   capsule body + sphere head + hair slab + muzzle flash
-//!     └─ squid parts: ground-hugging spindle (capsule on its side) + head
-//!
-//! Form, facing, movement lean, respawn hiding and spawn-invulnerability
-//! blinking all come straight from the sim state (`Actor` fields), matching
-//! upstream `actor.js` / `character.js` behaviour at placeholder fidelity:
-//!   * `!alive` → root hidden and every part hidden (Bevy 0.19 `Visible`
-//!     overrides a Hidden parent, so the death hiding is applied per part)
-//!   * paused → freeze-frame: blink stops, muzzle flash forced off, the rest
-//!     of the scene keeps rendering as-is
-//!   * `invuln > 0` → team material alpha blinks (spawn protection, upstream
-//!     `PLAYER.spawnInvuln` = 1.6 s)
-//!   * `form` → only the matching part subtree stays visible
-//!   * horizontal speed → forward lean (upstream character.js lean is
-//!     spring-damped; M1 uses a direct clamp — declared simplification)
-//!   * `fire_gate.fire` → muzzle flash visible while the trigger is held
-//!     (Spritzer muzzle-flash placeholder)
+//! Each roster slot gets a [`crate::char::rig::spawn_char_rig`] tree
+//! (root → kid → bones → parts, + weapon frame nodes, ≡ char.json manifest);
+//! [`sync_actors`] keeps the engine-owned root motion (position + yaw,
+//! ≡ actor.js L1015-1017) and the death hiding, while the per-frame pose /
+//! material / visibility work is driven by
+//! [`crate::char::bridge::char_pose_bridge`] (wired right after this system
+//! in `world.rs`).
+//!   * `!alive` → root hidden and every rig entity hidden (Bevy 0.19
+//!     `Visible` overrides a Hidden parent, so the death hiding is applied
+//!     per part — the bridge repeats it on every part/kid/model node)
+//!   * paused → freeze-frame: the bridge skips `CharAnim::update` and keeps
+//!     the last transforms (≡ the JS pause halting the anim step)
+//!   * `invuln > 0` → spawn-protection blink runs through the CPU
+//!     `_updateMaterials` pass on the per-character cloned buckets
+//!     (D-T54-5①), no longer the placeholder `ActorMat` strobe.
 
 use bevy::prelude::*;
-use inkwave_sim::actor::Form;
 
+use crate::char::rig::{self, RigSpawnOpts};
 use crate::ink_render::DemoSim;
+use inkwave_sim::sub::SubKind;
 
 /// Root marker of one actor's visual tree (slot indexes `Match::actors`).
 #[derive(Component)]
@@ -31,7 +30,10 @@ pub struct ActorRoot {
     pub slot: usize,
 }
 
-/// Which visual part an entity is, for the per-frame visibility switch.
+/// Legacy placeholder-part marker — kept so the `sync_actors` /
+/// `sync_actor_count` query signatures (world.rs L707-708 wiring) stay
+/// pinned; the rig tree no longer spawns any.
+#[allow(dead_code)] // signature-pinned: the variants are no longer constructed
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub enum ActorPart {
     Kid,
@@ -40,8 +42,9 @@ pub enum ActorPart {
     Muzzle,
 }
 
-/// All materials of one actor the invuln blink dims (team-coloured body/head/
-/// squid/gun parts plus the darkened hair).
+/// Legacy placeholder-material carrier — the rig buckets live on the bridge
+/// clones now; kept for the pinned `sync_actors` signature.
+#[allow(dead_code)] // signature-pinned: the handle list is no longer read
 #[derive(Component)]
 pub struct ActorMat(pub Vec<Handle<StandardMaterial>>);
 
@@ -57,52 +60,76 @@ pub fn team_color(team: usize) -> Color {
 }
 
 /// Blink window for spawn invulnerability: upstream reads as a fast strobe;
-/// M1 uses a 9 Hz full-alpha swing in [0.30, 0.95].
+/// kept for the placeholder-era helper tests + the bridge's fallback.
+#[allow(dead_code)] // helper-test anchor; the rig blink runs through the bridge
 #[must_use]
 pub fn blink_alpha(t: f32) -> f32 {
     0.625 + 0.325 * (t * std::f32::consts::TAU * 9.0).sin()
 }
 
-/// Forward lean from horizontal speed (m/s): up to 0.28 rad at `run_speed`.
+/// Forward lean from horizontal speed (m/s): up to 0.28 rad at `run_speed`
+/// (placeholder-era helper; the rig lean now comes from `CharAnim`).
+#[allow(dead_code)] // helper-test anchor; the rig lean runs through CharAnim
 #[must_use]
 pub fn lean_from_speed(speed: f32, run_speed: f32) -> f32 {
     (speed / run_speed.max(0.001)).min(1.0) * 0.28
 }
 
-/// Shared part geometry (one mesh per kind, reused across all slots).
-struct PartMeshes {
-    kid_body: Handle<Mesh>,
-    head: Handle<Mesh>,
-    hair: Handle<Mesh>,
-    gun: Handle<Mesh>,
-    squid_body: Handle<Mesh>,
-    squid_head: Handle<Mesh>,
-    muzzle: Handle<Mesh>,
-}
-
-fn make_part_meshes(meshes: &mut Assets<Mesh>) -> PartMeshes {
-    PartMeshes {
-        kid_body: meshes.add(Capsule3d::new(0.25, 0.45)),
-        head: meshes.add(Sphere::new(0.32)),
-        hair: meshes.add(Cuboid::new(0.62, 0.20, 0.62)),
-        gun: meshes.add(Cuboid::new(0.10, 0.14, 0.55)),
-        squid_body: meshes.add(Capsule3d::new(0.22, 0.55)),
-        squid_head: meshes.add(Sphere::new(0.26)),
-        muzzle: meshes.add(Sphere::new(0.11)),
-    }
-}
-
-/// Spawn the 8-slot visual trees (kid + squid subtrees, muzzle flash).
+/// Spawn the roster rig trees from the char archive + manifest (≡ CONTRACTS
+/// §1 constructor: tier "game", held weapon from `Match::kinds`, bomb sub
+/// from `Actor::sub`). Missing assets degrade to no characters (the bridge
+/// guards the same way).
 pub fn spawn_actors(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     demo: Res<DemoSim>,
 ) {
-    let pm = make_part_meshes(&mut meshes);
+    let (Some(archive), Some(manifest)) = (rig::load_archive(), rig::manifest()) else {
+        return;
+    };
     for (slot, a) in demo.m.actors.iter().enumerate() {
-        build_actor_tree(&mut commands, &pm, &mut materials, slot, a);
+        let kind = demo.m.kinds.get(slot).map(|k| k.id_str());
+        spawn_slot_rig(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            &archive,
+            &manifest,
+            slot,
+            a,
+            kind,
+        );
     }
+}
+
+/// One slot's rig spawn + the legacy root markers the pinned `world.rs`
+/// queries key on.
+// All eight inputs are distinct borrows the Bevy resource split hands us
+// (`Commands` + two asset collections + the two baked char assets + slot
+// index + sim actor + weapon kind); bundling them would only hide the split.
+#[allow(clippy::too_many_arguments)]
+fn spawn_slot_rig(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    archive: &rig::CharArchive,
+    manifest: &rig::CharManifest,
+    slot: usize,
+    a: &inkwave_sim::actor::Actor,
+    kind: Option<&str>,
+) {
+    let opts = RigSpawnOpts {
+        tier: "game",
+        weapon: kind,
+        bomb: a.sub == SubKind::Bomb,
+    };
+    let built = rig::spawn_char_rig(commands, meshes, materials, archive, manifest, &opts);
+    commands.entity(built.root).insert((
+        ActorRoot { slot },
+        ActorMat(Vec::new()),
+        Visibility::Visible,
+    ));
 }
 
 /// Task 24: the net match swaps `demo.m.actors` for the session roster
@@ -122,136 +149,40 @@ pub fn sync_actor_count(
         return;
     }
     for e in roots {
+        // Bevy 0.19: `despawn` removes the whole subtree (the rig trees
+        // are deep).
         commands.entity(e).despawn();
     }
-    let pm = make_part_meshes(&mut meshes);
+    let (Some(archive), Some(manifest)) = (rig::load_archive(), rig::manifest()) else {
+        return;
+    };
     for (slot, a) in demo.m.actors.iter().enumerate() {
-        build_actor_tree(&mut commands, &pm, &mut materials, slot, a);
+        let kind = demo.m.kinds.get(slot).map(|k| k.id_str());
+        spawn_slot_rig(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            &archive,
+            &manifest,
+            slot,
+            a,
+            kind,
+        );
     }
 }
 
-/// One slot's visual tree (root + kid parts + muzzle + squid parts).
-fn build_actor_tree(
-    commands: &mut Commands,
-    pm: &PartMeshes,
-    materials: &mut Assets<StandardMaterial>,
-    slot: usize,
-    a: &inkwave_sim::actor::Actor,
-) {
-    let col = team_color(a.team);
-    let mat = materials.add(StandardMaterial {
-        base_color: col,
-        alpha_mode: AlphaMode::Blend,
-        perceptual_roughness: 0.6,
-        ..default()
-    });
-    // Hair is a darkened team colour.
-    let hair_mat = materials.add(StandardMaterial {
-        base_color: col.mix(&Color::srgb(0.12, 0.12, 0.14), 0.55),
-        alpha_mode: AlphaMode::Blend,
-        perceptual_roughness: 0.8,
-        ..default()
-    });
-    let flash_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.97, 0.85),
-        emissive: LinearRgba::new(3.0, 2.4, 1.2, 1.0),
-        unlit: true,
-        ..default()
-    });
-
-    let root = commands
-        .spawn((
-            ActorRoot { slot },
-            ActorMat(vec![mat.clone(), hair_mat.clone()]),
-            Visibility::Visible,
-            Transform::default(),
-        ))
-        .id();
-
-    // ---- kid parts (face +Z, the sim yaw convention) ----
-    let kid_parts = [
-        (
-            pm.kid_body.clone(),
-            mat.clone(),
-            Vec3::new(0.0, 0.95, 0.0),
-            ActorPart::Kid,
-        ),
-        (
-            pm.head.clone(),
-            mat.clone(),
-            Vec3::new(0.0, 1.62, 0.0),
-            ActorPart::Kid,
-        ),
-        (
-            pm.hair.clone(),
-            hair_mat,
-            Vec3::new(0.0, 1.86, 0.0),
-            ActorPart::Kid,
-        ),
-        (
-            pm.gun.clone(),
-            mat.clone(),
-            Vec3::new(0.34, 1.05, 0.38),
-            ActorPart::Kid,
-        ),
-        (
-            pm.muzzle.clone(),
-            flash_mat.clone(),
-            Vec3::new(0.34, 1.15, 0.66),
-            ActorPart::Muzzle,
-        ),
-    ];
-    for (mesh, m, pos, part) in kid_parts {
-        commands.spawn((
-            Mesh3d(mesh),
-            MeshMaterial3d(m),
-            part,
-            ActorRoot { slot },
-            Visibility::default(),
-            Transform::from_translation(pos),
-            ChildOf(root),
-        ));
-    }
-
-    // ---- squid parts (spindle hugging the ink surface) ----
-    commands.spawn((
-        Mesh3d(pm.squid_body.clone()),
-        MeshMaterial3d(mat.clone()),
-        ActorPart::Squid,
-        ActorRoot { slot },
-        Visibility::default(),
-        Transform {
-            translation: Vec3::new(0.0, 0.26, 0.0),
-            // Bevy capsule axis is +Y; rotate onto +Z so length runs
-            // along the facing.
-            rotation: Quat::from_rotation_x(90_f32.to_radians()),
-            ..default()
-        },
-        ChildOf(root),
-    ));
-    commands.spawn((
-        Mesh3d(pm.squid_head.clone()),
-        MeshMaterial3d(mat),
-        ActorPart::Squid,
-        ActorRoot { slot },
-        Visibility::default(),
-        Transform::from_translation(Vec3::new(0.0, 0.28, 0.72)),
-        ChildOf(root),
-    ));
-}
-
-/// Push sim state onto the visual trees every render frame.
+/// Push the engine-owned root motion onto the rig trees every render frame
+/// (≡ actor.js L1015-1017: `root.position = pos + smoothY; root.rotation.y =
+/// yaw` — the lean/pitch/form work moved into `CharAnim` + the bridge).
 pub fn sync_actors(
     demo: Res<DemoSim>,
-    time: Res<Time>,
-    pc: Res<crate::input::PlayerControls>,
+    _time: Res<Time>,
+    _pc: Res<crate::input::PlayerControls>,
     mut roots: Query<(&ActorRoot, &mut Visibility, &mut Transform, &ActorMat), Without<ActorPart>>,
-    mut mats: ResMut<Assets<StandardMaterial>>,
-    mut parts: Query<(&ActorRoot, &ActorPart, &mut Visibility)>,
+    _mats: ResMut<Assets<StandardMaterial>>,
+    _parts: Query<(&ActorRoot, &ActorPart, &mut Visibility)>,
 ) {
-    let t = time.elapsed_secs();
-    let paused = pc.paused;
-    for (root, mut vis, mut tf, actor_mat) in roots.iter_mut() {
+    for (root, mut vis, mut tf, _actor_mat) in roots.iter_mut() {
         let Some(a) = demo.m.actors.get(root.slot) else {
             continue;
         };
@@ -264,50 +195,7 @@ pub fn sync_actors(
         // glam 0.30 (sim) vs 0.32 (Bevy): bridge via arrays.
         tf.translation = Vec3::from_array(a.pos.to_array());
         tf.translation.y += a.smooth_y();
-
-        let speed = Vec2::new(a.vel.x, a.vel.z).length();
-        let lean = lean_from_speed(speed, demo.tuning.player.run_speed);
-        let pitch_lean = match a.form {
-            Form::Kid => 0.0,
-            // a swimming squid points along its aim pitch
-            Form::Squid => -a.aim_pitch.clamp(-0.9, 0.9),
-        };
-        tf.rotation = Quat::from_rotation_y(a.yaw) * Quat::from_rotation_x(lean + pitch_lean);
-
-        // spawn-invulnerability blink on every material of the slot
-        let alpha = if a.invuln > 0.0 && !paused {
-            blink_alpha(t + root.slot as f32 * 0.7)
-        } else {
-            1.0
-        };
-        for h in &actor_mat.0 {
-            if let Some(mut m) = mats.get_mut(h) {
-                m.base_color.set_alpha(alpha);
-            }
-        }
-    }
-
-    // part visibility: form switch + muzzle flash (kid form, trigger held)
-    for (root, part, mut vis) in parts.iter_mut() {
-        let Some(a) = demo.m.actors.get(root.slot) else {
-            *vis = Visibility::Hidden;
-            continue;
-        };
-        // Bevy 0.19: `Visibility::Visible` is unconditional and overrides a
-        // Hidden parent, so the death hiding must be applied per part too.
-        // Pause is a freeze-frame: only the muzzle flash is forced off.
-        *vis = if !a.alive {
-            Visibility::Hidden
-        } else {
-            match part {
-                ActorPart::Kid if a.form == Form::Kid => Visibility::Visible,
-                ActorPart::Squid if a.form == Form::Squid => Visibility::Visible,
-                ActorPart::Muzzle if a.form == Form::Kid && a.fire_gate.fire && !paused => {
-                    Visibility::Visible
-                }
-                _ => Visibility::Hidden,
-            }
-        };
+        tf.rotation = Quat::from_rotation_y(a.yaw);
     }
 }
 
@@ -337,12 +225,18 @@ mod tests {
         assert!(hi - lo > 0.5, "blink must actually swing");
     }
 
-    /// Render-layer integration: spawn the 8-slot trees and drive them from a
-    /// live demo match, asserting the form switch / alive hiding actually flip
-    /// part visibilities (the part of Task 12 most likely to get an ECS query
-    /// or ChildOf wiring wrong).
     #[test]
-    fn spawn_and_sync_builds_and_switches_visual_trees() {
+    fn lean_clamps_at_run_speed() {
+        assert_eq!(lean_from_speed(0.0, 6.0), 0.0);
+        assert!((lean_from_speed(3.0, 6.0) - 0.14).abs() < 1e-6);
+        assert_eq!(lean_from_speed(50.0, 6.0), 0.28);
+    }
+
+    /// Render-layer integration: spawn the roster rig trees and drive the
+    /// root sync, asserting the engine-owned root motion + death hiding
+    /// still work on the new trees.
+    #[test]
+    fn spawn_and_sync_drive_rig_roots() {
         use crate::ink_render::{DemoSim, InkAtlasRes};
         use crate::input::PlayerControls;
         use bevy::asset::{AssetApp, AssetPlugin};
@@ -366,102 +260,40 @@ mod tests {
         app.add_systems(Update, sync_actors);
         app.update(); // Startup: spawn_actors
 
-        // 8 roots + 8 * (4 kid + 1 muzzle + 2 squid) = 8 + 56 entities.
         let roots = app
             .world_mut()
             .query_filtered::<&ActorRoot, Without<ActorPart>>()
             .iter(app.world())
             .count();
-        assert_eq!(roots, 8, "one root per roster slot");
-        let parts = app
+        assert_eq!(roots, 8, "one rig root per roster slot");
+        let rigs = app
             .world_mut()
-            .query::<&ActorPart>()
+            .query_filtered::<(), With<crate::char::rig::CharRig>>()
             .iter(app.world())
             .count();
-        assert_eq!(parts, 56, "7 parts per slot");
+        assert_eq!(rigs, 8, "one CharRig per slot");
 
-        // Force slot 0 into Squid to exercise the form switch (slot-exact).
-        app.world_mut().resource_mut::<DemoSim>().m.actors[0].form = Form::Squid;
-        app.update();
-        {
-            let mut q = app
-                .world_mut()
-                .query::<(&ActorRoot, &ActorPart, &Visibility)>();
-            let (mut kid0_vis, mut squid0_vis) = (0, 0);
-            for (r, part, vis) in q.iter(app.world()) {
-                if r.slot != 0 {
-                    continue;
-                }
-                if *vis != Visibility::Visible {
-                    continue;
-                }
-                match part {
-                    ActorPart::Kid | ActorPart::Muzzle => kid0_vis += 1,
-                    ActorPart::Squid => squid0_vis += 1,
-                }
-            }
-            assert_eq!(kid0_vis, 0, "slot0 kid parts must hide in Squid form");
-            assert_eq!(squid0_vis, 2, "slot0 squid parts visible");
-        }
+        // Root motion mirrors the sim (pos + smooth_y, yaw only).
+        let slot0_y = {
+            let mut q = app.world_mut().query::<(&ActorRoot, &Transform)>();
+            q.iter(app.world())
+                .find(|(r, _)| r.slot == 0)
+                .map(|(_, t)| t.translation.y)
+                .expect("slot 0 root transform")
+        };
+        let a = &app.world().resource::<DemoSim>().m.actors[0];
+        assert!((slot0_y - (a.pos.y + a.smooth_y())).abs() < 1e-3);
 
-        // Death must hide the PARTS too (Bevy 0.19 `Visible` overrides a
-        // Hidden parent — review blocker regression guard).
+        // Death hides the root (the bridge hides the parts per entity).
         app.world_mut().resource_mut::<DemoSim>().m.actors[0].alive = false;
         app.update();
-        {
-            let mut rq = app
-                .world_mut()
-                .query_filtered::<(&ActorRoot, &Visibility), Without<ActorPart>>();
-            let mut hidden_roots = 0;
-            for (r, v) in rq.iter(app.world()) {
-                if r.slot == 0 && *v == Visibility::Hidden {
-                    hidden_roots += 1;
-                }
-            }
-            assert_eq!(hidden_roots, 1, "dead slot0 root hidden");
-            let mut q = app
-                .world_mut()
-                .query::<(&ActorRoot, &ActorPart, &Visibility)>();
-            let visible_parts = q
-                .iter(app.world())
-                .filter(|(r, _, v)| r.slot == 0 && *v == Visibility::Visible)
-                .count();
-            assert_eq!(visible_parts, 0, "dead slot0 parts must all hide");
-        }
-
-        // Pause is a freeze-frame: form parts stay visible, only the muzzle
-        // flash is forced off and the blink stops.
-        app.world_mut().resource_mut::<DemoSim>().m.actors[0].alive = true;
-        app.world_mut().resource_mut::<DemoSim>().m.actors[0].form = Form::Kid;
-        app.world_mut().resource_mut::<DemoSim>().m.actors[0]
-            .fire_gate
-            .fire = true;
-        app.world_mut().resource_mut::<PlayerControls>().paused = true;
-        app.update();
-        {
-            let mut q = app
-                .world_mut()
-                .query::<(&ActorRoot, &ActorPart, &Visibility)>();
-            let (mut kid0_vis, mut muzzle0_vis) = (0, 0);
-            for (r, part, vis) in q.iter(app.world()) {
-                if r.slot != 0 || *vis != Visibility::Visible {
-                    continue;
-                }
-                match part {
-                    ActorPart::Kid => kid0_vis += 1,
-                    ActorPart::Muzzle => muzzle0_vis += 1,
-                    ActorPart::Squid => {}
-                }
-            }
-            assert_eq!(kid0_vis, 4, "paused: kid form parts stay visible");
-            assert_eq!(muzzle0_vis, 0, "paused: muzzle flash forced off");
-        }
-    }
-
-    #[test]
-    fn lean_clamps_at_run_speed() {
-        assert_eq!(lean_from_speed(0.0, 6.0), 0.0);
-        assert!((lean_from_speed(3.0, 6.0) - 0.14).abs() < 1e-6);
-        assert_eq!(lean_from_speed(50.0, 6.0), 0.28);
+        let mut rq = app
+            .world_mut()
+            .query_filtered::<(&ActorRoot, &Visibility), Without<ActorPart>>();
+        let hidden = rq
+            .iter(app.world())
+            .filter(|(r, v)| r.slot == 0 && *v == Visibility::Hidden)
+            .count();
+        assert_eq!(hidden, 1, "dead slot0 root hidden");
     }
 }

@@ -19,3 +19,5 @@ for stage in tidewater kelpline halyard saltpan crossmarket lockgate terraces ca
   node extract-props.mjs "$stage"
 done
 node extract-special.mjs
+# character rig + geometry + pose tables (Task 54 / D-T54-1 batch A)
+node extract-character.mjs

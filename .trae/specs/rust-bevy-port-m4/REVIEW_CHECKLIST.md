@@ -110,3 +110,17 @@
 - **zone 标记**：非活动虚线幽灵/活动持有色 fill+双层描边/中立跑马虚线——虚线相位与脉冲节奏对照 `_drawZones`；多 part zone 逐 part even-odd 填充 vs JS nonzero（parts 重叠会双重混合，当前 8 图无此形态）。
 - **HUD 布局**：角标左下 `fit(14.5u)`、TAB 展开 `fit(min(H*0.78,W*0.6))` 居中偏上、弹簧 k=190/c=21（`map_layout`/`MapSpring` 公式已单测，观感需复核）；`is-inside` 图例避让、strike 态复用大地图、beacon 面板/死亡标记/live 矢量层（fx 环/云/炸弹/subs/跳跃线）顺延 Task 51/56（D-T49-5①②）。
 - **flip**：viewerTeam===1 双轴镜像+全量重建（重建帧 ink 立即全量 vs JS 等 timer ≤0.15s，一次性时序差 D-T49 评审 P2-3）。
+
+### Task 54 角色完整绑定（2026-11-11 登记；沙箱无 GPU，以下均需用户机器复核）
+- **P0-1 已修复（仅核验，无需补做）**：wasm 下 `char.bin.gz` 原走 `std::fs::read` → 浏览器版 0 角色；现 `include_bytes!` 内嵌 4.63 MB，`cargo check --target wasm32-unknown-unknown` + `embedded_archive_is_byte_identical_to_disk_and_decodes` 钉测通过。请确认浏览器版本地/远端 8 名角色均正常显示。
+- **姿态手感**：kid 跑动/急停/转向/跳跃落地、squid hop/sink 与 kid⇄squid 弹跳切换——数学面 5640 帧逐值已对 JS，真机复核手感与帧率。
+- **弹跳形变**：squash/stretch、骨盆可达 drop、两骨 IK、hit/stagger、tired/goo、jiggle/fingers。
+- **武器持握**：17 kind 几何 + animateWeapon 帧位（drum/spin/bolt/lever/pivot/off/muzzle）、dual 左手实例、slosher 世界 quat 链。**bow/brolly/bowl 几何与 `poseBow` 未移植（D-T54-5⑩）**，重点确认 bow 玩家空手/无拉弦姿态的观感。
+- **头发弹簧**：head 惯性链、触须曲面；far 档隔帧未接（D-T54-5⑪，随 Task 55 LOD 档位）。
+- **表情可读**：blink/gaze/micro-expression/wink/squint + 8 段舞蹈 blend、lifePost 呼吸。
+- **材质近似档**：StandardMaterial 分桶（skin/cloth/hair/eye/squid/glow）+ 逐角色 clone 的 CPU `_updateMaterials`（ink 水位/hurt 色混/invuln alpha 闪/glow emissive/lowInk 闪烁）；withRim/clearcoat/吸盘点/pattern/uHurt GLSL 面未移植（D-T54-5①），复核近景 rim 与墨渍观感。
+- **LOD 档位**：当前 bridge 固定 `tier:"game"`，无 `pickTier` 屏高切换、无 dither 交叉淡入（D-T54-5②⑪）；复核远景多角色帧率与切档突兀感，运行期档位由 Task 55 质量档位系统交付。
+- **muzzle / footstep 消费面**：`getMuzzle/getHeadPosition/aimReady` 已实现并单测，但生产侧射击/FX 仍用 sim 原点（D-T54-5⑫）；footstep 队列无音频消费者（D-T54-5③）；复核枪口特效位置与脚步声缺失。
+- **9 角色性能预算**：headless 600 帧 turf + 600 帧 boss 零 panic、≤45 draw calls 静态+逐 slot 双测；真机留意 8 players + boss 满场 rig 树帧率。
+- **wasm 体积与构建**：内嵌 4.63 MB 使 wasm 增大；trunk release 在本沙箱持续 OOM SIGKILL（TRUNK=DEGRADED，D-T40-1 先例），用户机确认一次构建通过且首屏加载可接受。
+- **评审处置**：独立评审 PASS-with-fixes（1 P0 / 4 P1 / 6 P2）——P0 当场修复+九段门禁复跑，P1 全部登记偏差或跨任务接线，P2 过时注释已清理；详见 `spec.md` §8 与 `tasks.md` Completion Evidence。

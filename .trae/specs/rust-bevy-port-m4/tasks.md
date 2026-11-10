@@ -313,7 +313,7 @@
 
 
 ## Task 54: 角色完整绑定（弹簧姿态）
-- **Status**: `pending`
+- **Status**: `completed`（2026-11-11 完成；独立评审 PASS-with-fixes，1 P0 当场修复+复验，4 P1 全部闭环，6 P2 留档；证据见下方 Completion Evidence 与 spec.md「Task 54 收口注记」）
 - **Priority**: medium
 - **Depends On**: Task 53
 - **Description**: `character.js`（4062 弹簧姿态）+ character-geo/hair/face/mats/style/weapons/lod 平移——squid/kid 形态、姿态通道、武器手持；体块→程序化绑定升级；locker 更衣室除外（Non-Goal）。
@@ -322,6 +322,17 @@
   - `rule` TR-54.1: 姿态求值纯函数单测（固定输入→关节位置断言）；形态切换状态机测试。
   - `rule` TR-54.2: 8+1 实体性能预算冒烟；REVIEW_CHECKLIST 视觉登记。
 - **Notes**: Phase C 最大单体；执行期拆 2-3 批委派。
+
+### Task 54 Completion Evidence（2026-11-11）
+- **批次 A（提取，D-T54-1）✅**：`rust/tools/extract/extract-character.mjs` 真实模块 harness（THREE 纯 JS + character-geo/hair/face/weapons，G/outfit stub）→ `char.bin.gz`（IKC1，4.63 MB，量化焊接去重）+ `char.json`（bone/part/tier/weapon manifest）+ `char-poses.json`（HOLD/STANCE/FIDGET/XCH/blinkCurve/弹簧常数，字面块切片 eval 钉源行，禁手抄）；`extract-character.mjs` 纳入 `run-all.sh`；`char.schema.md` 格式文档；连跑逐字节一致。
+- **批次 B（姿态核心，D-T54-2）✅**：`crates/inkwave/src/char/` 12 模块 ≈490 KB，纯 Rust 无 Bevy 依赖的 `CharAnim` 状态机（P/sp/tr bank、root motion、gait、feet IK、hair 弹簧、squid、face/gaze/mx/blink、dance、one-shot、lifePost、jiggle/fingers、CPU 材质数据）。`char-pose-reference.mjs` 跑**真 character.js** 输出 5640 帧 × 87 骨 local pos/quat + kid/model/squid/tank/武器帧位 goldens；`pinned.rs` 逐帧逐值比对 ≤1e-4（非抽样），另钉 11 个 B2 RNG 时钟、poseNeutral/HOLD/通道索引、kid⇄squid 切换曲线与 hop 峰值。B2 姿态层全部落地，仅 `meta.b2Noops` 5 个 render-side/Non-Goal 方法两侧打桩。
+- **批次 C（Bevy rig，D-T54-3）✅**：`rig.rs` IKC1 解码（边界检查+尾随垃圾拒绝）+ `include_str!` manifest + 骨父子树/三档部件/武器帧节点；`bridge.rs` 每帧 sim→AnimState→CharAnim→Transform，11 个 one-shot trigger 轮询、per-character clone 材质桶 CPU `_updateMaterials`、CONTRACTS §1 查询 API；`actors.rs` 用 rig 树替换体块；`main.rs`/`world.rs` 挂 `mod char`/`CharBridge`/`char_pose_bridge`。
+- **P0-1 修复（wasm 角色不可见）✅**：评审发现 `load_archive()` 在 wasm32 走 `std::fs::read` 必返回 None → 浏览器版 0 角色。改为 `include_bytes!` 把 4.63 MB gz 编译进 wasm（native 仍可用 `INKWAVE_ASSETS` 覆盖），新增 `embedded_archive_is_byte_identical_to_disk_and_decodes` 钉测；`cargo check -p inkwave --target wasm32-unknown-unknown` 通过。
+- **TR-54.1 ✅**：`char_pose_reference_pinned` / `kid_squid_form_switch` / `pose_neutral_and_hold_anchors` 全绿；XCHK 段独立重放 fixture。
+- **TR-54.2 ✅**：`rig_tree_draw_call_budget_per_tier`（3 tier × 17 kind × bomb，≤45 draw calls/角色）+ `part_budget_within_45_per_slot`；headless release 600 帧 turf + 600 帧 boss（8 players + boss rig 树每帧驱动）零 panic，日志 `HEADLESS_EXIT=0 / HEADLESS_BOSS_EXIT=0`；REVIEW_CHECKLIST「Task 54」11 项视觉/听感登记待用户 GPU 机器复核。
+- **九段门禁**：`rust/tools/verify/gate-task54.sh`（DETERM 扩 4 个 char 产物、XCHK 扩 props-crosscheck + pinned replay、HEADLESS 双模式、JS/SIM 零改动守卫、自动 PASS/FAIL 判定）。首轮 `task54-gates-20261110T195254Z.log` 全绿（TRUNK DEGRADED：wasm-bindgen OOM SIGKILL ×2，D-T40-1 先例），P0 修复后复跑 `task54-gates-20261110T202656Z.log`（见 spec.md 收口注记）；`DETERM=BYTE_IDENTICAL`、`XCHK_EXIT=0`、`JS_TREE_CLEAN`/`SIM_TREE_CLEAN`。
+- **基线**：workspace 969→**997 passed**（inkwave 340→368，char 新增 28 测；sim 601 不变；余 28 测不变），单调递增；`cargo tree -p inkwave_sim` 依赖面不变、无新依赖；JS 树/`server/`/wire/fixtures 零改动。
+- **评审**：独立只读评审 **PASS-with-fixes（1 P0 / 4 P1 / 6 P2）**。P0 已修+复验；P1-1 bow/brolly/bowl 几何+`poseBow` 缺口登记为 D-T54-5⑩；P1-2 门禁完整复跑（评审读到的是运行中日志，实为完整 PASS）；P1-3 LOD 运行期档位切换并入 Task 55 质量档位系统（D-T54-5⑪）；P1-4 muzzle/head 查询 API 无运行期消费者登记 D-T54-5⑫；P2 清理过时注释（harness 头注/mod.rs/anim.rs/build.rs/bridge.rs 测试名）、其余留档。
 
 ## Task 55: 环境（黄昏/海况）+ 后处理链 + 质量档位
 - **Status**: `pending`

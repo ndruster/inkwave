@@ -18,6 +18,9 @@ mod bench;
 mod actors;
 mod audio;
 mod boss_render;
+// Task 54 batch B1: the character spring-pose runtime (≡ src/game/
+// character.js) — headless data core, pinned by char_pose_reference_pinned.
+mod char;
 // Task 51: the FX system (≡ src/fx/fx.js + fxHooks.js) — data core, batched
 // quad renderer and the gameplay → VFX hooks, wired by `WorldPlugin`.
 mod fx;

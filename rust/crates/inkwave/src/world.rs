@@ -646,7 +646,9 @@ impl Plugin for WorldPlugin {
         // Task 52 batch E2: the ripple pool (paint.js L551-587) fed by the
         // splat stream + capture floods, and the flood-edge tracker.
         .init_resource::<crate::ink_ripple::RippleTable>()
-        .init_resource::<crate::level_render::RippleFeed>();
+        .init_resource::<crate::level_render::RippleFeed>()
+        // Task 54 batch C2: per-slot CharAnim + rig binding state.
+        .init_resource::<crate::char::bridge::CharBridge>();
         // Task 24: the online session. Stored as a *non-send* resource — the
         // platform transport is not `Send + Sync` (native `Receiver`, wasm
         // `Rc`), and the Bevy main thread owns it. `RelayBase` is inserted by
@@ -715,6 +717,11 @@ impl Plugin for WorldPlugin {
                 )
                     .chain(),
                 (
+                    // Task 54 batch C2: the pose bridge — CharAnim state →
+                    // rig tree writes; runs right after the root sync group
+                    // (group 1 is at the `chain()` tuple cap, so it heads
+                    // group 2 — still before every consumer below).
+                    crate::char::bridge::char_pose_bridge,
                     // Task 50 batch D: plays the cues `ui_update` recorded this
                     // frame (runs after the director, before the voice GC).
                     crate::audio::boss_audio::boss_audio_playback,
