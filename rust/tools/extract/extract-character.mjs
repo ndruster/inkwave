@@ -23,7 +23,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync } from 'node:child_process';
+import { upstreamCommit } from './upstream-commit.mjs';
 import { gzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { stableStringify } from './stable-json.mjs';
@@ -448,7 +448,20 @@ const binGz = gzipSync(bin, { level: 9 });
 const binSha = createHash('sha256').update(binGz).digest('hex');
 
 // ---- manifest ----
-const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+// Character geometry/pose/style modules plus the two wired kit models.
+const commit = upstreamCommit(repoRoot, [
+  'src/game/character.js',
+  'src/game/character-geo.js',
+  'src/game/character-weapons.js',
+  'src/game/character-lod.js',
+  'src/game/character-style.js',
+  'src/game/character-face.js',
+  'src/game/character-hair.js',
+  'src/game/character-mats.js',
+  'src/game/character-outfit.js',
+  'src/game/kits/mitts-model.js',
+  'src/game/kits/blade-model.js',
+]);
 mkdirSync(OUT_DIR, { recursive: true });
 writeFileSync(resolve(OUT_DIR, 'char.bin.gz'), binGz);
 

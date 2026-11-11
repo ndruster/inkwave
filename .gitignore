@@ -19,3 +19,7 @@ songs/**/*.opus
 songs/**/*.wav
 songs/**/*.flac
 songs/manifest.json
+# local-only scratch: Task 38 ladder-run logs and IDE share packages.
+# These are regenerated on demand and are never review evidence.
+rust/tools/verify/logs/task38-ladder-*.log
+.trae-html-share-packages/

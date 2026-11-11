@@ -283,14 +283,16 @@ node tools/extract/extract-layout.mjs saltpan      # 单图按 stage 提取（Ta
   schema v2）→ `assets/tuning.json`
 - `extract-layout.mjs [stage]`：`src/world/stages/<stage>/layout.js`（mapkit DSL 在 node 侧求值）
   → `assets/maps/<stage>.json`；stage 缺省 `tidewater`，zones 多边形（`zones-data.js`）合并进 `zones` 键
-- 产物确定性：同一 HEAD 连跑两次逐字节一致（TR-3.4/TR-28.1/TR-37.1 已验证）。`source.commit`
-  provenance 戳有**两种口径**：
-  ① **随 Rust HEAD 移动**（D-T37-3）：`extract-tuning.mjs`、layout/maps、texlib、props、
-  `extract-character.mjs`（char）仍用 `git rev-parse HEAD`，故每次 Rust 提交后存量产物重跑会
-  **一次性刷新戳**，门禁以 `DETERM=BYTE_IDENTICAL (rerun)` 留痕（Task 48/49/50/52/55 先例）；
-  ② **钉上游 JS 数据文件的最后提交**：M4 新增的 `extract-environment.mjs` 与
-  `extract-lobbyset.mjs` 用 `git log -1 -- <JS paths>`，Rust 侧提交不改变产物。
-  `char` 属①不属②；内容字段稳定；改完跑 `cargo test -p inkwave_sim` 回归。
+- 产物确定性：连跑两次逐字节一致（TR-3.4/TR-28.1/TR-37.1 已验证）。**全部 8 个提取器**
+  经 `rust/tools/extract/upstream-commit.mjs` 的 `upstreamCommit()` 统一钉
+  **上游 JS 数据文件的最后提交**（`git log -1 --format=%H -- <该提取器读取的 JS 路径>`），
+  Rust 侧提交不再改变产物。不存在的路径（如 halyard 无 `stages/<id>/layout.js`）会被过滤，
+  兜底顺序为「`src/` 最后提交 → HEAD → 40 位全零占位」，保证 `source.commit` 始终是 40 位 full sha
+  （`inkwave_sim`/`tuning.rs` 的几何单测断言长度）。
+  **历史口径 D-T37-3**（M1/M2 曾直接用 `git rev-parse HEAD`，每次 Rust 提交都会刷新 21 个 json
+  的戳，门禁出现一次性 DETERM MISMATCH）已于 2026-11-11 的 M4 后技术债批次消除；Task 48/49/50/52/55
+  历史日志里的 `DETERM=BYTE_IDENTICAL (rerun)` 先例仍由 `gate-task57.sh::legacy_ok()` 按
+  **显式证据**放行。内容字段稳定；改完跑 `cargo test -p inkwave_sim` 回归。
 - 交叉验证：`bash tools/verify/run-crosscheck.sh`（JS 与 Rust 碰撞查询逐点对照）。
 
 ## 6. 上游同步
@@ -410,6 +412,9 @@ trunk build --release                        # 本沙箱常 OOM SIGKILL；用户
 「逐段 `*_EXIT=0`」判定还包含 Task 49/50 已登记的「存量产物 `source.commit`
 戳刷新 → `DETERM=BYTE_IDENTICAL (rerun)」先例；`gate-task57.sh` 的 `legacy_ok()`
 对这两类例外做**显式证据要求**，无证据即判 FAIL，不做无差别吞错。
+2026-11-11 的 M4 后技术债批次已把全部 8 个提取器统一钉上游 JS 提交，
+Rust 侧提交不再刷新 provenance 戳（D-T37-3 消除，见 `SYNC_LEDGER.md` 同名小节）；
+历史日志的戳刷新先例仍保留显式放行，矩阵脚本另加产物数下限与段存在性校验。
 用户 GPU 机器应 `trunk build --release` 一次通过。
 
 九段 = FMT / CLIPPY / TEST / WASM / TREE / DETERM / XCHK / TRUNK / HEADLESS，

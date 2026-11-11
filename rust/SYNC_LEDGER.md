@@ -151,3 +151,35 @@ Phase B 玩法收尾（47–48）→ Phase C 表现完整度（49–56）→ 收
 Task 54 起脚本自动判定 `GATE_VERDICT`，41–53 用逐段 `*_EXIT=0` 口径。
 TRUNK 段在本沙箱因 wasm-bindgen OOM `signal: 9` 判 DEGRADED（D-T40-1 环境性、非阻塞）。
 workspace 测试基线逐任务单调递增（554 → 1017+；精确数字见各任务 Completion Evidence）。
+
+## M4 后技术债批次（2026-11-11，M4 收尾后独立小批次）
+
+M4 的 41–57 任务体系与 AC-M4-1..5 不变；本批次只清理收尾评审留下的 P2 建议与
+D-T37-3 历史口径，**不新增 Task 编号、不改游戏逻辑**。
+
+- **钉源口径统一（D-T37-3 消除）**：新增 `rust/tools/extract/upstream-commit.mjs`
+  的 `upstreamCommit(repoRoot, paths)`，全部 8 个提取器改用它钉
+  `git log -1 --format=%H -- <该提取器实际读取的上游 JS 路径>`；不存在的路径
+  （halyard 无 `stages/<id>/layout.js`）自动过滤，兜底顺序为
+  「`src/` 最后提交 → HEAD → 40 位全零占位」，保证 `source.commit` 恒为 40 位 full sha。
+  此前 `extract-tuning/layout/texlib/props/special/character` 六个提取器用
+  `git rev-parse HEAD`，每次 Rust 提交都会让 21 个 json 的 provenance 戳漂移，
+  门禁出现一次性 `DETERM=MISMATCH` → `BYTE_IDENTICAL (rerun)`（Task 48/49/50/52/55
+  历史先例）。改造后 Rust 侧提交不再改变任何数据产物。
+  - 实测：21 个 `assets/*.json` 的 diff **仅 1 行 `commit`**，所有内容字段零改动；
+    新戳收敛为两个上游 JS 提交（config/world 系 `0d7ab048…`、game/props 系
+    `159ba72b…`），均不等于任何 Rust HEAD；`environment`/`lobbyset` 的戳保持不变，
+    三个独立 crosscheck（93 / 191 / props）与 `run-all.sh` 连跑逐字节一致全部通过。
+  - 历史日志中的戳刷新先例仍由 `gate-task57.sh::legacy_ok()` 按**显式证据**
+    （`DETERM_EXIT=1` 且同行有 `DETERM=BYTE_IDENTICAL (rerun)`）放行，不做无差别吞错。
+- **收尾矩阵加固（评审 P2 建议闭环）**：`gate-task57.sh` 增加
+  `ARTIFACT_COUNT` 下限（当前 59 个 json/gz/svg/fixture，低于 50 直接 FAIL，
+  避免空集合被误判为「逐字节一致」），并要求历史日志必须存在
+  `DETERM_EXIT`/`TRUNK_EXIT` 段记录；`XCHK_EXIT` 自 Task 42 起强制存在且为 0
+  （Task 41 门禁脚本当时未分段，是唯一登记的历史例外）。41–56 共 16 份最终日志
+  复验仍全部 `LEGACY_SEGMENTS_OK`/`PASS`，无假绿无误杀。
+- **工作区清理**：根 `.gitignore` 增加 `rust/tools/verify/logs/task38-ladder-*.log`
+  与 `.trae-html-share-packages/`（本地 scratch，非评审证据，不删除文件只忽略）。
+- **门禁**：按 `rust/tools/verify/gate-task57.sh` 复跑完整九段矩阵，**以最新
+  `logs/task57-m4-matrix-*.log` 内的 `M4_MATRIX_VERDICT` 为最终口径**（不预写结论）；
+  上游 JS 树与 `inkwave_sim` 依赖面仍零改动。提交/`push origin main` 以 git 记录为准。

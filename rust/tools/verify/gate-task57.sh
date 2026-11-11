@@ -63,7 +63,15 @@ echo "RUN_ALL_EXIT=$DET_RC" >> "$LOG"
 echo "DETERM_EXIT=$DETERM_RC" >> "$LOG"
 grep -v "libselinux.so.1" "$RAW" >> "$LOG" 2>/dev/null || true
 rm -f "$RAW"
-echo "ARTIFACT_COUNT=$(printf '%s' "$BEFORE" | grep -c . )" >> "$LOG"
+ARTIFACT_COUNT=$(printf '%s' "$BEFORE" | grep -c . || true)
+echo "ARTIFACT_COUNT=$ARTIFACT_COUNT" >> "$LOG"
+# Defensive floor: the current registry is 59 artifacts (json / bin.gz / svg /
+# pinned fixture). A much smaller count means the find scope broke or a product
+# was deleted, and an empty BEFORE==AFTER would otherwise look "identical".
+if [ "${ARTIFACT_COUNT:-0}" -lt 50 ]; then
+  echo "STAGE_FAIL ARTIFACT_COUNT_TOO_LOW=$ARTIFACT_COUNT" >> "$LOG"
+  FAILED=1
+fi
 
 stage xchk_environment node tools/environment-crosscheck.mjs
 stage xchk_lobbyset node tools/lobbyset-crosscheck.mjs
@@ -129,13 +137,25 @@ exit_code() {
 }
 
 legacy_ok() {
-  local f="$1" key v nz tr
+  local f="$1" n="$2" key v nz tr
   for key in FMT CLIPPY TEST WASM TREE HEADLESS; do
     v=$(exit_code "${key}_EXIT" "$f")
     [ "$v" = "0" ] || return 1
   done
+  # DETERM and TRUNK stage records must EXIST (all Task 41..56 final logs have
+  # them); a missing stage can no longer pass by simply having no failure line.
+  for key in DETERM_EXIT TRUNK_EXIT; do
+    v=$(exit_code "$key" "$f")
+    [ -n "$v" ] || return 1
+  done
   v=$(exit_code XCHK_EXIT "$f")
-  [ -z "$v" ] || [ "$v" = "0" ] || return 1
+  if [ "$n" -ge 42 ]; then
+    # XCHK became a standalone stage from Task 42 onward; Task 41's gate
+    # script predates it and is the single documented historical exception.
+    [ "$v" = "0" ] || return 1
+  else
+    [ -z "$v" ] || [ "$v" = "0" ] || return 1
+  fi
   grep -qE 'GATE_VERDICT=FAIL|STAGE_FAIL|JS_TREE_DIRTY|SIM_TREE_DIRTY|HEADLESS_COMBO .*EXIT=[1-9]|HEADLESS_BOSS_EXIT=[1-9]|RELEASE_BUILD_EXIT=[1-9]' "$f" && return 1
   nz=$(grep -E '^[A-Z_]+_EXIT=[1-9]' "$f" | grep -v '^TRUNK_EXIT=' | wc -l)
   if [ "$nz" -gt 0 ]; then
@@ -161,7 +181,7 @@ for n in $(seq 41 56); do
   fi
   verdict=$(grep '^GATE_VERDICT=' "$f" | tail -1 | cut -d= -f2)
   if [ -z "$verdict" ]; then
-    if legacy_ok "$f"; then verdict="LEGACY_SEGMENTS_OK"; else verdict="LEGACY_SEGMENTS_FAIL"; fi
+    if legacy_ok "$f" "$n"; then verdict="LEGACY_SEGMENTS_OK"; else verdict="LEGACY_SEGMENTS_FAIL"; fi
   fi
   tr=$(exit_code TRUNK_EXIT "$f")
   stamp=$(grep -c 'DETERM=BYTE_IDENTICAL (rerun)' "$f" 2>/dev/null || true)

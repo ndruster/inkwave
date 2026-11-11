@@ -34,7 +34,7 @@ import { gzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync } from 'node:child_process';
+import { upstreamCommit } from './upstream-commit.mjs';
 import { stableStringify } from './stable-json.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));      // rust/tools/extract
@@ -415,10 +415,18 @@ function writeBin(b) {
 
 // ---------------------------------------------------------------- main
 mkdirSync(outDir, { recursive: true });
-let commit = 'unknown';
-try {
-  commit = execSync('git rev-parse HEAD', { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
-} catch { /* keep 'unknown' */ }
+// The dressing builder imports these modules plus each stage's layout
+// (halyard has no stages/<id>/layout.js; the helper filters missing paths).
+const commit = upstreamCommit(repoRoot, [
+  'src/world/props.js',
+  'src/world/dressing.js',
+  'src/world/maps.js',
+  'src/world/variants.js',
+  'src/world/level.js',
+  'src/world/decor.js',
+  'src/world/murals.js',
+  ...STAGES.map((s) => `src/world/stages/${s}/layout.js`),
+]);
 
 for (const stage of (stageArg ? [stageArg] : STAGES)) {
   const b = extractStage(stage);

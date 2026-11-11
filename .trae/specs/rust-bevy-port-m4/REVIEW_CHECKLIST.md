@@ -188,3 +188,25 @@
 
 > 收尾结论以 `tasks.md` Task 57 的 Completion Evidence 与末次总评审为准；
 > 本清单不构成「已通过」，仅为 M4 遗留面的完整索引。
+
+## 技术债批次复核（2026-11-11；以末次门禁矩阵日志为准）
+
+Task 57 后的独立小批次（不新增 Task 编号、不改 AC-M4 口径），闭环收尾总评审的
+P2 建议与 D-T37-3 历史钉源；证据见 `tasks.md`「附录：M4 后技术债批次」与
+`rust/SYNC_LEDGER.md` 同名小节。
+
+- [x] `gate-task57.sh` 加 `ARTIFACT_COUNT` 下限（59 ≥ 50）与历史日志
+  `DETERM_EXIT`/`TRUNK_EXIT`/`XCHK_EXIT` 段存在性校验；41–56 共 16 份日志复验
+  仍全部 OK/PASS，无假绿无误杀。
+- [x] 全部 8 个提取器统一钉上游 JS 文件最后提交，消除每次 Rust 提交刷新
+  21 个 json provenance 戳的噪音；21 个产物 diff 仅 1 行 `commit`，内容字段零改动。
+- [x] 三个独立 crosscheck（93 / 191 / props）与 `run-all.sh` 连跑逐字节一致
+  已在沙箱实证 rc=0。
+- [x] `.gitignore` 忽略 scratch 日志与工具产物目录，工作区只剩真实改动。
+
+九段门禁复跑与上游树/sim 依赖面守卫**以最新
+`rust/tools/verify/logs/task57-m4-matrix-*.log` 内的 `M4_MATRIX_VERDICT` 为最终口径**；
+提交与 `push origin main` 的执行结果以 git 记录为准，本清单不预写结论。
+
+**本批次不改任何 GPU/听感行为**：上方「收尾复核清单」7 项与「逐任务复核索引」
+保持原状，仍全部待用户 GPU 机器复核（NFR-M4-5 双轨验收）。

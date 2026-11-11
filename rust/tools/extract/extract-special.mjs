@@ -20,7 +20,7 @@ import { gzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync } from 'node:child_process';
+import { upstreamCommit } from './upstream-commit.mjs';
 import { stableStringify } from './stable-json.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -150,10 +150,10 @@ const gz = gzipSync(bin, { level: 9 });
 
 mkdirSync(outDir, { recursive: true });
 writeFileSync(resolve(outDir, 'special.bin.gz'), gz);
-let commit = 'unknown';
-try {
-  commit = execSync('git rev-parse HEAD', { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
-} catch { /* keep 'unknown' */ }
+const commit = upstreamCommit(repoRoot, [
+  'src/game/special-props.js',
+  'src/config.js',
+]);
 let verts = 0, tris = 0;
 for (const t of list) { verts += t.verts.length; tris += t.idx.length / 3; }
 const manifest = {

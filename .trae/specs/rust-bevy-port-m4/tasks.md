@@ -392,7 +392,7 @@
 - **台账/文档 ✅**：`rust/SYNC_LEDGER.md` 补「M4 基线核对」（`upstream/main` 仍等于基线 `3e9b550…`，沙箱网络不可达按脚本内置本地 refs 降级口径，如实登记而非伪称远端已核）+「M4 移植说明」（按模块/阶段登记 41–57，非按上游 commit）；`rust/PORT_MAP.md` 补「M4 完成核对」17 行模块映射 + 状态图例扩档（`M4 Tn done` / `placeholder` / `done∗` / `visual-review` / `wontport`）+ 质量档位章节改为四档三主题；`rust/README.md` 标题/操作键位/门禁速查改到 M4 口径并新增第 7 节（Boss 战运行、四档表现表、复核命令、九段门禁矩阵、双轨验收指向）；`REVIEW_CHECKLIST.md` 补「M4 汇总复核清单」（逐任务复核索引 + 7 条收尾复核清单，明确不构成「已通过」）。
 - **九段门禁全矩阵 ✅**：新增 `rust/tools/verify/gate-task57.sh`，落盘 **`rust/tools/verify/logs/task57-m4-matrix-20261111T073550Z.log` → `M4_MATRIX_VERDICT=PASS` / `MATRIX_DONE`**。FMT / CLIPPY / TEST / WASM / TREE / DETERM / 4 路 XCHK / RELEASE_BUILD / 4 组合 HEADLESS / HEADLESS_BOSS / JS_TREE_CLEAN / SIM_TREE_CLEAN 全部 `EXIT=0`；`run-all.sh` 前后比对 **59 个数据产物**（json/gz/svg + pinned fixture）`DETERM=BYTE_IDENTICAL`；`trunk build --release` 实跑一次 `signal: 9` → `TRUNK=DEGRADED`（D-T40-1，环境性非阻塞）。矩阵汇总 Task 41–56 共 16 行：41–53 `LEGACY_SEGMENTS_OK`、54/55/56 `PASS`，并逐行披露 `trunk_exit` 与 Task 49/50 的戳刷新先例；`legacy_ok()` 对历史日志的例外做显式证据要求（无 `signal: 9` 证据的 TRUNK 非零即 FAIL，无 `DETERM=BYTE_IDENTICAL (rerun)` 证据的 DETERM 非零即 FAIL），不做无差别吞错。
 - **TR-57.1 ✅**：README 第 7 节与「门禁速查」列出的命令全部在矩阵内实跑并留退出码：`bash tools/extract/run-all.sh`、`environment`/`lobbyset`/`props` 三个独立对账、`bash tools/verify/run-crosscheck.sh`、`cargo build --release -p inkwave`、4 个 `(theme,tier)` 600 帧组合、boss 600 帧、`trunk build --release`（DEGRADED）、`cargo fmt/clippy/test/wasm/tree`。日志已落盘并随本次提交入库（含此前遗漏的 `task51-gates-20261106T055625Z.log`、`task52-gates-20261106T120359Z.log` 及两份 Task 56 门禁日志）。
-- **M4 总评审 ✅**：独立只读评审员首轮 **FAIL（5 P0 / 3 P1 / 8 P2）** —— P0 为「57 矩阵未跑却预写已闭环」「未提交日志被当证据」「矩阵脚本不实跑 TRUNK」「LEGACY 判定假绿」「DETERM 漏 24 个 SVG/fixture」；P1 为 3 处历史证据文件名失实、README 隐瞒 54/55/56 TRUNK DEGRADED、`source.commit` 归因与实现矛盾。全部当场修复：矩阵脚本重写（实跑 TRUNK、59 产物哈希、`legacy_ok` 显式判据）、文档逐条更正、3 个文件名替换为真实文件、9 个 DEGRADED 如实披露、README 第 5 节澄清两种钉源口径（`char` 用 `rev-parse HEAD` 属①，只有 environment/lobbyset 用 `git log -1 -- <paths>` 属②）。复评 **FAIL（仅余 2 处文档口径）** → 修复 → **最终独立复评 PASS**。P2 建议（给 `ARTIFACT_COUNT` 设下限、`legacy_ok` 强制 DETERM/XCHK 段存在）按项目惯例留档：本轮已实证 41–56 判定无假绿无误杀，属防御性加固，顺延后续窗口。
+- **M4 总评审 ✅**：独立只读评审员首轮 **FAIL（5 P0 / 3 P1 / 8 P2）** —— P0 为「57 矩阵未跑却预写已闭环」「未提交日志被当证据」「矩阵脚本不实跑 TRUNK」「LEGACY 判定假绿」「DETERM 漏 24 个 SVG/fixture」；P1 为 3 处历史证据文件名失实、README 隐瞒 54/55/56 TRUNK DEGRADED、`source.commit` 归因与实现矛盾。全部当场修复：矩阵脚本重写（实跑 TRUNK、59 产物哈希、`legacy_ok` 显式判据）、文档逐条更正、3 个文件名替换为真实文件、9 个 DEGRADED 如实披露、README 第 5 节澄清两种钉源口径（`char` 用 `rev-parse HEAD` 属①，只有 environment/lobbyset 用 `git log -1 -- <paths>` 属②）。复评 **FAIL（仅余 2 处文档口径）** → 修复 → **最终独立复评 PASS**。P2 建议（给 `ARTIFACT_COUNT` 设下限、`legacy_ok` 强制 DETERM/XCHK 段存在）按项目惯例留档：本轮已实证 41–56 判定无假绿无误杀，属防御性加固。**该 P2 与当时并存的两种钉源口径已于 2026-11-11「M4 后技术债批次」全部闭环并统一**（见文末附录）。
 - **纪律 ✅**：上游 JS 树/`server/` 零改动、`inkwave_sim` 依赖面不变、`net/wire.rs` PROTO v1 与 net-fixtures 未动；21 个 `assets/*.json` 的改动经 diff 核实**仅 1 行 `source.commit` 戳**（`run-all.sh` 对齐到当前 HEAD，D-T37-3），无内容字段变化；`environment.json`/`lobbyset.json` 的戳为上游 JS 文件提交、未刷新。
 - **提交 + push ✅/登记**：本次提交包含 Task 56 全部代码/脚本/日志、Task 57 文档/矩阵脚本/日志与对齐后的数据产物。`git push origin main` 在本沙箱受与 `SYNC_LEDGER.md` M4 基线核对相同的网络限制；若推送失败则按 **DEGRADED 待用户机器执行** 如实登记，不作伪完成（执行结果以最终汇报与 `git status -sb` 为准）。
 - **双轨验收 ✅**：无头可测部分（提取确定性、独立对账、锚定单测、headless 600 帧、wasm check、九段门禁、总评审）全部闭环；GPU/听感项由 `REVIEW_CHECKLIST.md`「M4 汇总复核清单」统一登记待用户机器复核（NFR-M4-5），不作沙箱伪验收。
@@ -404,3 +404,37 @@
 - Phase B：47 依赖 44、48 依赖 41（可提前穿插，但默认按序）。
 - Phase C 默认串行（49→50→51→52→53→54→55→56）；50/49 相互独立可依窗口调度。
 - 每任务固定流程：实读 JS 锚点 → spec.md 尾部「TaskNN 实施设计」§0-§7 → 分批委派 → 主上下文实读核验 → 独立评审 → P0/P1/P2 当场修复复验 → 九段门禁 → tasks.md 勾选 + Completion Evidence + Review 附录 → spec §8 定案 → PORT_MAP/台账 → commit → 中文汇报。
+
+---
+
+## 附录：M4 后技术债批次（2026-11-11；代码/文档已落地，结论以门禁日志为准）
+
+> 本批次在 Task 57 收尾之后执行，**不新增 Task 编号**，M4 的 17 个任务与
+> AC-M4-1..5 口径不变；范围仅为收尾总评审的 P2 建议与 D-T37-3 历史钉源口径。
+
+- **Status**: `completed`（代码/文档/数据产物已落地；门禁结论以日志 `M4_MATRIX_VERDICT` 为准，
+  提交与推送以 git 记录为准）
+- **① 统一 `source.commit` 钉源口径 ✅**：新增 `rust/tools/extract/upstream-commit.mjs`
+  （`upstreamCommit()`：路径存在性过滤 + `git log -1 --format=%H` 钉上游 JS 提交 +
+  三级兜底保证 40 位 full sha）。8 个提取器全部改用；此前 6 个（tuning/layout/
+  texlib/props/special/character）用 `git rev-parse HEAD`，会在每次 Rust 提交后
+  刷新 21 个 json 的戳并制造一次性 DETERM MISMATCH（Task 48/49/50/52/55 先例）。
+  **验证**：21 个产物 diff 仅 1 行 `commit`、内容字段零改动；新戳收敛到两个上游
+  JS 提交且均 ≠ Rust HEAD；environment/lobbyset 戳不变；`environment` 93 checks /
+  `lobbyset` 191 checks / `props` 对账全部 rc=0；`run-all.sh` 连跑 `DETERM=BYTE_IDENTICAL`。
+- **② `gate-task57.sh` 加固 ✅**：`ARTIFACT_COUNT` 下限 50（当前 59，防止空集合
+  假绿）；历史日志强制存在 `DETERM_EXIT`/`TRUNK_EXIT`；`XCHK_EXIT` 自 Task 42 起
+  强制存在且为 0（Task 41 未分段是唯一登记例外）。41–56 共 16 份最终日志复验
+  全部 `LEGACY_SEGMENTS_OK`/`PASS`，`BAD=0`；`bash -n` 语法通过。
+- **③ 工作区清理 ✅**：根 `.gitignore` 忽略 `rust/tools/verify/logs/task38-ladder-*.log`
+  与 `.trae-html-share-packages/`（32 个 scratch 日志与工具产物，不删除、只忽略）；
+  `git status --short` 只剩本批次的真实改动。
+- **门禁与纪律（以日志为准）**：按 `gate-task57.sh` 复跑完整九段矩阵，
+  **以最新 `logs/task57-m4-matrix-*.log` 内的 `M4_MATRIX_VERDICT` 为最终口径**；
+  提交与 `push origin main` 的执行结果以 git 记录为准，本节不预写结论。
+  上游 JS 树/`server/` 零改动、`inkwave_sim` 依赖面不变、`net/wire.rs` PROTO v1
+  与 net-fixtures 未动；`rust/README.md` 第 5 节与 `rust/SYNC_LEDGER.md`
+  「M4 后技术债批次」同步更新口径（历史先例仍显式留痕）。
+- **仍待用户 GPU 机器复核**：`REVIEW_CHECKLIST.md`「M4 汇总复核清单」7 项不变，
+  尤其 `trunk build --release`（D-T40-1 DEGRADED）与 3D 大厅/后处理观感；本批次
+  未改变任何 GPU 相关行为。

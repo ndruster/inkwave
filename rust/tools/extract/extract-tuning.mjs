@@ -26,7 +26,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync } from 'node:child_process';
+import { upstreamCommit } from './upstream-commit.mjs';
 // Real three (already a project dependency) for the Task 42 hitPos static
 // evaluation — the boss modules themselves are still NOT imported (they pull
 // browser globals); only their literal blocks are sliced and eval'd below.
@@ -41,13 +41,18 @@ const here = dirname(fileURLToPath(import.meta.url));      // rust/tools/extract
 const repoRoot = resolve(here, '../../..');              // repository root
 const outPath = resolve(here, '../../assets/tuning.json');
 
-let commit;
-try {
-  commit = execSync('git rev-parse HEAD', { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'] })
-    .toString().trim();
-} catch {
-  commit = 'unknown';
-}
+// config.js holds PLAYER/WEAPONS/SUBS/SPECIALS/ZONES/MATCH/MAPS; the boss
+// tables are sliced out of the six src/boss/*.js modules below.
+const commit = upstreamCommit(repoRoot, [
+  'src/config.js',
+  'src/boss/boss.js',
+  'src/boss/bossMode.js',
+  'src/boss/bossHazards.js',
+  'src/boss/bossModel.js',
+  'src/boss/bossBrain.js',
+  'src/boss/bossNav.js',
+  'src/boss/bossModelGeo.js',
+]);
 
 // Project `table` down to `order` (throwing on unknown ids so an upstream
 // rename fails the pipeline instead of silently dropping content).

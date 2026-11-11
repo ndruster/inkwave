@@ -6,7 +6,7 @@
 // assertContains guards pin the surrounding source lines so upstream drift
 // fails the pipeline instead of silently changing the artifact.
 // Output is deterministic (stable-json): rust/assets/lobbyset.json
-import { execSync } from 'node:child_process';
+import { upstreamCommit } from './upstream-commit.mjs';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,15 +15,10 @@ import { stableStringify } from './stable-json.mjs';
 const here = dirname(fileURLToPath(import.meta.url));       // rust/tools/extract
 const repoRoot = resolve(here, '../../..');
 const outPath = resolve(here, '../../assets/lobbyset.json');
-let commit;
-try {
-  // Pin the *upstream JS data* revision (see extract-environment.mjs): the
-  // gate's DETERM re-run must be byte-identical across Rust-side commits.
-  commit = execSync(
-    'git log -1 --format=%H -- src/game/lobbySet.js src/game/showcase.js',
-    { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'] },
-  ).toString().trim();
-} catch { commit = 'unknown'; }
+const commit = upstreamCommit(repoRoot, [
+  'src/game/lobbySet.js',
+  'src/game/showcase.js',
+]);
 
 function sliceBlock(src, file, name, start, end) {
   const i = src.indexOf(start);

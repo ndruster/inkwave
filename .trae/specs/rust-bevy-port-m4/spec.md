@@ -687,6 +687,10 @@ AC-M4-4（boss 呈现部分）：可玩（弹丸掉血/胜负可达）+ 可读�
 - **⑧ 角色 preview 与名牌锚定顺延 M5**：`spawn_char_rig` 预览角色、站姿/舞蹈驱动、`lobbyAnchor/lobbySlotAnchor` 3D→DOM 名牌、emote→dance、ready/host/you 名牌态**未接运行期消费者**。理由：菜单态 rig 需独立于 `CharBridge`（强耦合 `DemoSim`+`paused`），且分层需逐实体 RenderLayers。状态层 `ShowcaseMember`/`emote()`/`ShowcaseCue` 已交付并钉测；8 个站位标记为常显占位圆柱，不随 roster 增减。
 - **⑨ `SwapChar` 分支与 `preset` 参数**（评审 P2-3 留档）：JS `_showPedestal` L1146-1199 中 weapon 变化与 style 变化是**独立并行**分支，`_swapChar` 是动画中途换人语义；状态层把「两者同变 → SwapChar」、`preset → Dip` 作为 Rust 侧扩展语义。运行期 `showcase_sync` 只传 `(weapon, style, false)`，`preset` 恒 false、`SwapChar` 不可达，故不影响实际行为；五分支与 `replay_count` 仍逐值钉测。`rows_to_members` 用绝对 team→slot 映射（P2-4），未实现 JS `myTeam` 视角翻转；3D 侧不绘制角色，故无可见差异。
 - **⑩ `source.commit` 固有一次性漂移**（P2-8）：`git log -1 -- <JS files>` 钉的是这些 JS 文件的最后上游提交；一旦上游提交触及它们，产物戳会一次性刷新（首轮 DETERM MISMATCH→复跑 BYTE_IDENTICAL，Task 48/49/50/52/55 同类先例），已由 `gate-task56.sh` DETERM 段留痕。
+  **2026-11-11 技术债批次补记**：当时其余 6 个提取器仍用 `git rev-parse HEAD`，
+  因此每次 Rust 提交也会刷新 21 个 json 的戳；现已全部统一到 `upstreamCommit()`，
+  Rust 侧提交不再改变任何数据产物（D-T37-3 消除）。上游 JS 变更导致的刷新仍属
+  本条登记的正常行为。
 
 **独立评审（2026-11-11）**：独立只读评审员实证核查数据 8 spots bearing/faceCam 逐值、crosscheck 独立路径、系统链顺序与 Query 无冲突、`level_render.rs` 行为等价、门禁无管道假绿、JS/sim 零改动。**0 P0 / 3 P1 / 8 P2**；结论 **FAIL（证据状态）→ P1 全当场修复复验 → PASS-with-fixes**。P1-1（near/far 残留）、P1-2（逐帧冲掉 `last_cue` + 首帧伪 `HopTwirl`）、P1-3（评审读到运行中门禁日志）处置见 `REVIEW_CHECKLIST.md`「Task 56」独立评审处置条。
 

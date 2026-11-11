@@ -10,7 +10,7 @@
 //   src/core/renderer.js      BLOOM + GradeShader.uniforms defaults
 //   src/config.js             DEFAULT_SETTINGS / QUALITY / TIMES / MAPS /
 //                             mapTheme()
-import { execSync } from 'node:child_process';
+import { upstreamCommit } from './upstream-commit.mjs';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,17 +20,11 @@ const here = dirname(fileURLToPath(import.meta.url));       // rust/tools/extrac
 const repoRoot = resolve(here, '../../..');                // repository root
 const outPath = resolve(here, '../../assets/environment.json');
 
-let commit;
-try {
-  // Pin the *upstream JS data* revision, not the local HEAD: Rust-side commits
-  // must not change the artifact or the gate's DETERM byte-identity check.
-  commit = execSync(
-    'git log -1 --format=%H -- src/world/environment.js src/core/renderer.js src/config.js',
-    { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'] },
-  ).toString().trim();
-} catch {
-  commit = 'unknown';
-}
+const commit = upstreamCommit(repoRoot, [
+  'src/world/environment.js',
+  'src/core/renderer.js',
+  'src/config.js',
+]);
 
 function sliceBlock(src, file, name, start, end) {
   const i = src.indexOf(start);

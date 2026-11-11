@@ -28,7 +28,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync } from 'node:child_process';
+import { upstreamCommit } from './upstream-commit.mjs';
 import { STAGE_SURFACES, FIRST_STAGE_SLOT, LAST_STAGE_SLOT } from '../../../src/world/stages/surfaces.js';
 import { stableStringify } from './stable-json.mjs';
 
@@ -36,13 +36,13 @@ const here = dirname(fileURLToPath(import.meta.url));   // rust/tools/extract
 const repoRoot = resolve(here, '../../..');             // repository root
 const outPath = resolve(here, '../../assets/texlib.json');
 
-let commit;
-try {
-  commit = execSync('git rev-parse HEAD', { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'] })
-    .toString().trim();
-} catch {
-  commit = 'unknown';
-}
+const commit = upstreamCommit(repoRoot, [
+  'src/world/texlib.js',
+  'src/world/levelMaterial.js',
+  'src/world/inkShading.js',
+  'src/world/stages/surfaces.js',
+  'src/world/maps.js',
+]);
 
 function sliceBlock(src, file, name, start, end) {
   const i = src.indexOf(start);

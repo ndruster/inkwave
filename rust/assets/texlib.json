@@ -925,7 +925,7 @@
     ]
   },
   "source": {
-    "commit": "6dd4f209f04eb11abfc8acb265360a73322c588f",
+    "commit": "159ba72b7f12566e8189e1c233d145bdd432a2fd",
     "path": "src/world/texlib.js + src/world/levelMaterial.js + src/world/inkShading.js + src/world/stages/surfaces.js"
   },
   "tex": {

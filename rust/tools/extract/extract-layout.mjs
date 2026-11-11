@@ -25,7 +25,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync } from 'node:child_process';
+import { upstreamCommit } from './upstream-commit.mjs';
 import { PLAYER } from '../../../src/config.js';
 import { ZONE_DEFS } from '../../../src/world/zones-data.js';
 import { stableStringify } from './stable-json.mjs';
@@ -71,13 +71,15 @@ if (stage === 'halyard') {
 }
 const outPath = resolve(here, `../../assets/maps/${stage}.json`);
 
-let commit;
-try {
-  commit = execSync('git rev-parse HEAD', { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'] })
-    .toString().trim();
-} catch {
-  commit = 'unknown';
-}
+// A stage's layout plus the shared map/zones/variant/level modules it imports.
+const commit = upstreamCommit(repoRoot, [
+  sourcePath,
+  'src/config.js',
+  'src/world/zones-data.js',
+  'src/world/maps.js',
+  'src/world/variants.js',
+  'src/world/level.js',
+]);
 
 // --- level.js mirrorDef (180 deg rotation about the Y axis); keep identical.
 function mirrorDef(d) {
