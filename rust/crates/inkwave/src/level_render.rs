@@ -411,7 +411,11 @@ pub fn level_material_wiring(
     wake: Res<crate::fx::swim_wake::SwimWakeState>,
     demo: Option<Res<crate::ink_render::DemoSim>>,
     mut feed: ResMut<RippleFeed>,
-    cams: Query<&GlobalTransform, With<Camera>>,
+    // Task 56: take the ACTIVE camera. The single-camera assumption was
+    // registered in REVIEW_CHECKLIST (M4 L84) as a prerequisite for a lobby
+    // camera; selecting by `is_active` keeps the current one-camera build
+    // byte-identical while making multi-camera setups safe.
+    cams: Query<(&GlobalTransform, &Camera)>,
     props: Option<Res<crate::props::PropsState>>,
     mut mats: ResMut<Assets<LevelMaterial>>,
 ) {
@@ -423,8 +427,8 @@ pub fn level_material_wiring(
     // sim-side glam 0.30 (ink_ripple.rs); bridge via arrays (camera_rig 先例).
     table.set_view(
         cams.iter()
-            .next()
-            .map(|g| glam::Vec3::from_array(g.translation().to_array())),
+            .find(|(_, c)| c.is_active)
+            .map(|(g, _)| glam::Vec3::from_array(g.translation().to_array())),
     );
 
     // New capture floods → one swell each (team < 0 rotation wipes send

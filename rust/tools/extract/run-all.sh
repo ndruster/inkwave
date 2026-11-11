@@ -21,3 +21,7 @@ done
 node extract-special.mjs
 # character rig + geometry + pose tables (Task 54 / D-T54-1 batch A)
 node extract-character.mjs
+# environment themes + renderer defaults + quality tiers (Task 55 batch A)
+node extract-environment.mjs
+# 3D lobby set / showcase layout (Task 56 batch B)
+node extract-lobbyset.mjs

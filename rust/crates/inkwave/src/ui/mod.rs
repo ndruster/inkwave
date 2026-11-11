@@ -37,6 +37,9 @@ pub mod boss_hud;
 pub mod minimap;
 pub mod minimap_ui;
 pub mod online;
+// Task 56 batch C: 3D showcase lobby state + placeholder Bevy set.
+pub mod showcase_scene;
+pub mod showcase_state;
 
 use self::boss_hud::{BOSS_NAME, BossHudFrame, BossHudOut, BossHudState};
 use self::online::{SessionCmd, run_cmd};

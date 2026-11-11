@@ -2301,7 +2301,7 @@
   ],
   "schema": "inkwave.stage_layout.v1",
   "source": {
-    "commit": "3b734a848b52f808a0e1461258341021ac8d6b57",
+    "commit": "6dd4f209f04eb11abfc8acb265360a73322c588f",
     "path": "src/world/maps.js"
   },
   "stage": {

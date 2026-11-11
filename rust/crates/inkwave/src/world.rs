@@ -37,6 +37,11 @@ use bevy::post_process::bloom::Bloom;
 /// independent of the window size; [`REF_ASPECT`] is that constant.
 pub(crate) const BASE_FOV_H: f32 = 82.0;
 const REF_ASPECT: f32 = 16.0 / 9.0;
+/// World camera clip planes. `camera_rig` only rewrites FOV every frame, so
+/// the Task 56 lobby override restores these explicitly when it steps out
+/// (review P1-1: near/far would otherwise stay at the alley's 0.1/140).
+pub(crate) const CAM_NEAR: f32 = 0.15;
+pub(crate) const CAM_FAR: f32 = 6500.0;
 /// Default boom length (cameraRig.js `dist`).
 const BOOM: f32 = 4.5;
 /// Pivot height above the feet (cameraRig.js `hgt`).
@@ -652,7 +657,10 @@ impl Plugin for WorldPlugin {
         .init_resource::<crate::ink_ripple::RippleTable>()
         .init_resource::<crate::level_render::RippleFeed>()
         // Task 54 batch C2: per-slot CharAnim + rig binding state.
-        .init_resource::<crate::char::bridge::CharBridge>();
+        .init_resource::<crate::char::bridge::CharBridge>()
+        // Task 56 batch C: showcase state machine + build-once lobby set.
+        .init_resource::<crate::ui::showcase_state::ShowcaseState>()
+        .init_resource::<crate::ui::showcase_scene::ShowcaseScene>();
         // Task 24: the online session. Stored as a *non-send* resource — the
         // platform transport is not `Send + Sync` (native `Receiver`, wasm
         // `Rc`), and the Bevy main thread owns it. `RelayBase` is inserted by
@@ -726,6 +734,11 @@ impl Plugin for WorldPlugin {
                     // (group 1 is at the `chain()` tuple cap, so it heads
                     // group 2 — still before every consumer below).
                     crate::char::bridge::char_pose_bridge,
+                    // Task 56 batch C: sync the showcase state from the very
+                    // same OnlineView the 2D panel consumed in group 1, then
+                    // build/gate the placeholder alley set from it.
+                    crate::ui::showcase_scene::showcase_sync,
+                    crate::ui::showcase_scene::showcase_scene_update,
                     // Task 50 batch D: plays the cues `ui_update` recorded this
                     // frame (runs after the director, before the voice GC).
                     crate::audio::boss_audio::boss_audio_playback,
@@ -737,6 +750,10 @@ impl Plugin for WorldPlugin {
                     crate::audio::sfx_gc,
                     environment_controls,
                     camera_rig,
+                    // Task 56 batch C: while the alley set is full-frame the
+                    // extracted hub/line-up pose wins over `camera_rig`; on
+                    // exit this system stops writing and the rig reclaims it.
+                    crate::ui::showcase_scene::showcase_camera_update,
                     // Task 52 batch E2: ripple / wake / clock uniform wiring
                     // into every level material; runs right after `camera_rig`
                     // so `setView` sees this frame's camera position.
@@ -966,8 +983,8 @@ fn build_level_world(
                 // cameraRig.js L188: vertical FOV from the horizontal 82° at
                 // the fixed 16/9 reference; Bevy derives `aspect` from the window.
                 fov: vfov(BASE_FOV_H, REF_ASPECT).to_radians(),
-                near: 0.15,
-                far: 6500.0,
+                near: CAM_NEAR,
+                far: CAM_FAR,
                 ..default()
             }),
             DistanceFog {

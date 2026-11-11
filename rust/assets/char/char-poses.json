@@ -1737,7 +1737,7 @@
   "meta": {
     "note": "literal-block slices + eval (assertContains pinned; no hand-typed values). Channel indices computed from the real pose bank layout.",
     "source": {
-      "commit": "d7c471013156c5411b8f6e7e6e38a6d4b1322801",
+      "commit": "6dd4f209f04eb11abfc8acb265360a73322c588f",
       "files": [
         "src/game/character.js",
         "src/game/character-style.js"
