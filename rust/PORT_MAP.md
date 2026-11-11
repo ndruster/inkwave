@@ -1,7 +1,13 @@
 # JS → Rust 模块对照表（PORT MAP）
 
 上游 JavaScript 模块与 Rust 工作区模块的对应关系，供上游同步时快速定位。
-状态：`M1`（M1 移植）· `M2 done`（M2 移植）· `M3 Task n`（M3 移植，见 M3 完成核对）· `M2+`（未移植，顺延 M4）· `skip`（Rust 侧不适用）。
+状态：`M1`（M1 移植）· `M2 done` · `M3 Task n` · `M2+`（历史顺延标记，M4 落地情况见「M4 完成核对」）· `skip`（Rust 侧不适用）。
+
+M4 扩档图例（Task 57）：`M4 Tn done`（第 n 任务全量移植，含锚定单测/独立对账）·
+`M4 Tn placeholder`（第 n 任务占位档，行为/数据面已验、GPU 视觉面登记复核）·
+`M4 Tn done∗`（含**声明偏差**，逐条见 `.trae/specs/rust-bevy-port-m4/spec.md` §8–§10 / D-T 表）·
+`M4 visual-review`（NFR-M4-5 双轨验收：沙箱无头可测部分已闭环，GPU 观感待用户机器复核）·
+`M4 wontport`（M4 Non-Goal，例如 locker 更衣室、高保真 Boss 模型、设置屏属 M5）。
 
 ## 技术栈基线
 
@@ -25,15 +31,59 @@ Task 17–26 已闭环：联网链路全栈落地——codec（逐字节金标�
 
 Task 28–39 已闭环：内容与模式侧全量落地——tuning 全量提取（Task 28，schema v2：WEAPONS 12/SUBS 15/SPECIALS 19/ZONES/DIFFICULTY，锚定单测锁值）；12 主武器全部 wired（Tasks 29–33，net tick 槽 `ch`/`lock`/`ks` 与 `['k']` ghost 语义对齐 JS packer）；15 副 + 设备网络语义 `'dh'`/`['b']`（Task 34）；19 特殊 + `sp`/`spx`/`spst` 实值化（Task 35）；Zone Control 模式（Task 36：规则/`['z']` 8 事件广播/session 放开 zones、boss 仍拒；Task 37：zones 多边形合并与 onlyIn/notIn 按模式过滤）；saltpan/crossmarket 新图（Task 37，提取器泛化为 stage CLI，三图 stable-json 逐字节）；bot normal/hard 档位 + 逐 kind 武器/副/特殊使用 + zone tactic（Task 38）；大厅 loadout UI 与跨端开黑接缝（Task 39；**跨端完整局 scenario C/D 沙箱 DEGRADED，首次真实执行登记于 `.trae/specs/rust-bevy-port-m3/REVIEW_CHECKLIST.md`**）。上表标 M3 的行均已落地；`server/` 与 JS 树零改动、`cargo tree -p inkwave_sim` 依赖面不变（门禁实核，workspace 553 passed，日志 `rust/tools/verify/logs/task39-gates-20261103T073400Z.log`）。M3 未做的行（showcase 大厅、小地图、完整角色绑定、后处理链、boss、props/murals 装饰、flood 呈现层、threat AI 等）顺延 M4，逐项范围见各行"移植备注"。
 
+## M4 完成核对（Task 57）
+
+Task 41–57 收尾（**玩法优先**；完成状态以 `tasks.md` 勾选与末次门禁矩阵为准）：Phase A Boss 战 41–46 → Phase B 玩法收尾 47–48 →
+Phase C 表现完整度 49–56 → 收尾 57。上表历史 `M2+` 行按本节重新判读；逐任务证据见
+`.trae/specs/rust-bevy-port-m4/tasks.md` 各 Completion Evidence，偏差定案见同目录 `spec.md` §8–§10。
+
+| JS 源 | Rust 目标 | M4 状态 |
+|---|---|---|
+| `src/config.js` BOSS/BOSS_MODE + `src/boss/*` 数值、`hitShapes` | `tools/extract/extract-tuning.mjs` → `assets/tuning.json` v3→v7、`net/wire.rs` BossSnap 19 槽 / `['bm']`/`['bc']`/`'bhit'` | `M4 T41 done`（fixture 逐字节回环） |
+| `src/game/boss.js`、`bossNav.js` | `inkwave_sim::boss::{Boss, BossNav}`（状态机/伤害倍率链/导航 A*） | `M4 T42 done`（path 逐点钉 JS） |
+| `bossBrain.js`、`bossHazards.js` | `inkwave_sim::boss::{brain, hazards}`（六招 + victim-side 伤害 + threat 查询） | `M4 T43 done∗`（D-T43） |
+| `bossMode.js`、`match.js` boss 分支、`bots.js` boss 段 | `boss/mode.rs`、`bot/boss.rs`、`match_.rs`、`autopilot.rs` run_boss、MAPS 旗标 v6 | `M4 T44 done`（离线 win/lose 双分支） |
+| `netmatch.js` boss 复制/迁移 | `net/replication.rs` `sample_boss` + adopt/handoff + scenario E | `M4 T45 done∗`（JS guest boss 快照到达留 wasm seam 复核） |
+| `bossModel.js`、`hud-boss.js`、`bossAudio.js` | `boss_render.rs`、`ui/boss_hud.rs`、`audio/boss_audio.rs` | `M4 T46 placeholder` + `visual-review` |
+| `bots.js` L1260-1620 threat / shield / canopy，kits blade/mitts | `bot/threat.rs`、`bot/blade_tactics.rs`、`sub.rs` ThreatView | `M4 T47 done∗`（D-T47-11/11a 兼容超集、网络一致性强化） |
+| `maps.js` 五图 + `config.js` MAPS 旗标 | `assets/maps/*.json` 8 图、`tuning.rs` MapFlags（v7 theme/times） | `M4 T48 done`（8 图 stable-json + 碰撞冒烟） |
+| `src/ui/minimap.js` | `ui/minimap.rs`、`ui/minimap_ui.rs` | `M4 T49 done∗`（点标 DOM 效应顺延） |
+| `audio.js`、`music.js`、`bossAudio.js` | `audio/{synth,graph,sfx_table,music,boss_audio}.rs`（148 SFX / 9 曲 / 烘焙 PCM） | `M4 T50 done∗`（混响/总线/42 名 kit SFX 顺延） |
+| `fx.js`、`screenfx.js`、`fxHooks`、`swimWake`、`zoneMarks` | `fx/{particles,api,render,hooks,zone_marks,swim_wake,screen_fx}.rs` | `M4 T51 placeholder` + `visual-review`（composite pass 未接） |
+| `inkShading.js`、`levelMaterial`、`texlib.js` | `texlib/*`、`materials*.rs`（46 层）、`level.wgsl`、`ink_ripple.rs`、`quality.rs` | `M4 T52 done∗`（CPU≠GPU 逐像素、wasm32 烘焙 inert） |
+| `props.js`、murals、dressing、`special-props.js` | `props/*`、`assets/props/*`（IKP1 8 图 2069 placements） | `M4 T53 done∗`（atlas/ShaderMaterial 未移植） |
+| `character.js` 4062 行弹簧姿态 + geo/hair/face/weapons | `char/*` 12 模块、IKC1 `char.bin.gz`、5640 帧 pinned replay | `M4 T54 done∗`（bow/brolly/bowl 几何与 poseBow 顺延） |
+| `environment.js`、`renderer.js`、`config.js` QUALITY | `environment.rs`、`assets/environment.json`、`world.rs` 灯光/雾/档位接线 | `M4 T55 done∗`（GTAO/grade/SMAA/tilt-shift/composite 属 GPU 项） |
+| `showcase.js`、`lobbySet*.js` | `ui/showcase_state.rs`、`ui/showcase_scene.rs`、`assets/lobbyset.json` | `M4 T56 placeholder` + `visual-review`（D-T56-⑦ 复用主相机、角色 preview 顺延 M5） |
+
+**纪律**：`server/`、上游 JS 树、`net/wire.rs` PROTO v1、net-fixtures 全程零改动；
+`inkwave_sim` 依赖面不变（NFR-M4-1，逐任务 `cargo tree -p inkwave_sim` 门禁段）；
+测试基线逐任务单调递增 554 → 1017+（数字见 `tasks.md` 与 `logs/task*-gates-*.log`）。
+
+**双轨验收（NFR-M4-5）**：无头可测部分（提取确定性、独立 crosscheck、锚定单测、
+headless 600 帧、wasm check、九段门禁）全部闭环；GPU 观感/听感共 11 类清单统一登记
+`.trae/specs/rust-bevy-port-m4/REVIEW_CHECKLIST.md`「逐任务复核记录」与「M4 汇总复核清单」。
+`M4 wontport`：locker 更衣室、高保真 Boss 模型、Rust 设置屏（M5）、DOM 名牌叠层。
+
 ## 质量档位
 
-M1 渲染为**固定简化档**，唯一运行时可调项：
+M1 曾是固定简化档；**M4 Task 55 起**改为四档质量 + 三档主题，全部读
+`assets/environment.json`（从只读 JS 树提取，禁止手抄）：
 
-| 档位 | 控制 | 说明 |
-|---|---|---|
-| 太阳光级联阴影 | `K` 键开关（`world.rs::toggle_shadows`，`DirectionalLightShadowMap` 2048²） | 低配/软件渲染（SwiftShader）建议关闭 |
+| 档位 | 阴影 | pixelRatio | MSAA | Bloom/AO | 粒子 | 角色 LOD | 3D 大厅 |
+|---|---|---|---|---|---|---|---|
+| low | 1024 | 0.75 | 0 | 全关 | 0.4 | far | 关 |
+| medium | 2048 | 1 | 2 | 开 | 0.7 | game | 开 |
+| high | 4096 | 1.5 | 4 | 开 | 1.0 | hero | 开 |
+| ultra | 4096 | 2 | 4 | 开 | 1.0 | hero | 开 |
 
-编译期固定简化（M2+ 再补，均标于上表）：无后处理链（GTAO/bloom/grade/SMAA/tilt-shift diorama）、程序化材质仅 pattern 最小子集、角色为体块占位（完整弹簧姿态绑定 M2+）、环境为白天简化（黄昏/海况/灯光烘焙 M2+）、HUD 仅核心元素（小地图 M2+）、音效为过程化占位。
+运行时 `K` 切阴影、`L` 循环档位、`T` 循环主题（day / sunset / golden，`dusk` 经
+`mapTheme` 落 sunset）；启动时 `INKWAVE_QUALITY` / `INKWAVE_THEME`。`low` 档
+`post_processing_enabled=false` = SwiftShader 保底可玩路径。
+**未移植（`M4 visual-review`）**：GTAO、GradeShader 12 uniform、SMAA、tilt-shift
+diorama、screenfx composite pass、云烘焙/PMREM/远景反射、海面 swell·marina·泡沫、
+天空渐变贴图与已生成 rig 的运行期切档重建（D-T55-⑦）。详见
+`.trae/specs/rust-bevy-port-m4/REVIEW_CHECKLIST.md`「Task 55」。
 
 ## `src/` 玩法核心
 

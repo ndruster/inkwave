@@ -134,5 +134,57 @@
 - **运行时切档边界（D-T55-⑦）**：`K/L/T` 只更新 ClearColor / 环境光 / 太阳 / 阴影尺寸 / 雾 / 相机 Bloom；天空渐变贴图与已生成角色 rig 保留启动值，需重建关卡/名册才切档——确认观感上是否突兀。
 - **sRGB 口径（D-T55-①）**：主题 hex 直读 sRGB 0..1，未做 THREE.Color linear 转换；复核与 JS 明暗/饱和度的偏差。
 - **wasm 构建**：TRUNK 段在本沙箱持续 OOM SIGKILL（DEGRADED 先例）；用户机确认一次构建通过、Bloom/Hdr 相机组件在 WebGL2 下不报错。
-- **档位来源**：`INKWAVE_QUALITY`（low/medium/high/ultra）与 `INKWAVE_THEME`（day/dusk/golden）启动时读取；JS 侧由设置菜单持久化，Rust 设置屏属 M5。
+- **档位来源**：`INKWAVE_QUALITY`（low/medium/high/ultra）与 `INKWAVE_THEME`（day/sunset/golden）启动时读取；JS 侧由设置菜单持久化，Rust 设置屏属 M5。
 - **评审/门禁**：九段门禁 `gate-task55.sh`、独立 `environment-crosscheck.mjs` 93 checks、12 组参数单测全绿；见 `spec.md` §9 与 `tasks.md` Completion Evidence。
+
+### Task 56 showcase 大厅（2026-11-11 登记；沙箱无 GPU，以下均需用户机器视觉复核）
+- **3D alley 占位档几何**（D-T56-①）：`ui/showcase_scene.rs` 只生成地板/左右墙/码头/8 站位圆柱/ink pedestal，尺寸全部来自 `lobbyset.json`（`alley_dims`/`spots`/`pedestal`/`hub_spot`），配色为蓝调占位色。JS `lobbySet-geo/mats/tex.js` 的 atlas、霓虹字牌、蒸汽、湿地面 planar reflection、PMREM/IBL、sky、extraLights 均未移植——重点复核后巷纵深、材质层次与霓虹氛围。
+- **世界与大厅叠加**（D-T56-⑦）：上游 `LobbySet` 持有独立第二相机；Rust 侧复用唯一主相机并在 `full_frame` 时覆盖其 Transform/Projection（`camera_rig` 之后的 `showcase_camera_update`），避免破坏 UI target 与 6 处单相机 `Query<&GlobalTransform, With<Camera>>` 消费者。**后果**：关卡世界未做 RenderLayers 分层，hub/lobby 屏会与占位 alley 同时可见。复核真机观感；若要分层需统一给关卡/角色/props/fx 实体加层并给 UI 指定 target camera（M5）。`level_render.rs` 已改为按 `Camera::is_active` 选相机，为多相机前提加固（单相机时行为不变）。
+- **相机与档位**：Hub→`hubCamera` [-1.2,1.1,5.6]/fov30，Lobby→`CAM` [-2.45,2.25,10.4]/fov32；退出 full-frame 后 `camera_rig` 收回 Transform/FOV，而 `near`/`far`（`camera_rig` 从不重写）由 `showcase_camera_update` 显式恢复到 `world::CAM_NEAR/CAM_FAR`（评审 P1-1 修复，最小 App 冒烟逐值钉定）。复核 hub⇄room 切换是否突兀（上游 `GLIDE=1.7s` 相机滑移与 `SET_FADE=0.45s` cross-dissolve **未移植**）。`low` 档 `reduced=true` → 不生成 3D set，保留现有极简 Bevy UI 大厅；复核低配路径可用性。
+- **角色 preview 与名牌锚定**：`spawn_char_rig` 预览角色、站姿/舞蹈驱动、`lobbyAnchor/lobbySlotAnchor` 3D→DOM 名牌跟随、emote→dance 播放、ready/host/you 名牌态均未接运行期消费者（状态层 `ShowcaseMember`/`ShowcaseState::emote()` 已交付并有单测）。8 个站位圆柱常显，不随实际 roster 增减；复核满房/空房表现。此项顺延 M5（登记原因：菜单态 rig 需独立于 `CharBridge` 的 `DemoSim/paused` 驱动，且需逐实体 RenderLayers）。
+- **loadout cue 占位**：`apply_loadout` 五分支（None/HopTwirl/Pop/Dip/SwapChar）与 `replay_count` 已逐值钉测并由 `showcase_sync` 每帧消费；运行期只把 `cue_yaw` 一次性写到 pedestal 旋转（占位，**不是** JS `_showPedestal` L1146-1199 的 hop/twirl/泳入路径逐帧移植）。复核武器/造型切换时的展示反馈。
+- **房间码/ready 数据来源**：`showcase_sync` 复用 `ui::online::project(&online_facts(...))`（D-T56-⑥），不重实现事件层；复核 3D 场景与 2D 面板的名册/房间码一致性（当前 3D 侧不绘制文字）。
+- **运行期覆盖口径**：`headless` 分支不加载 `WorldPlugin`，九段门禁的 HEADLESS 段无法执行新系统；改由 `wired_systems_build_gate_and_restore_the_camera`（最小 Bevy App，无 GPU）实测 `showcase_scene_update`/`showcase_camera_update` 两系统的 build、Visibility 门控、cue→pedestal 旋转、相机 fov/near/far 覆盖与退出恢复，并排除这两系统间的 Query 冲突；`showcase_sync` 是 `sync_from_online_view` 的薄包装，由状态层单测覆盖；**完整 Update 链（`world.rs`）仅由编译/clippy 保证，未在测试 App 中重放**，真机窗口态仍需人工复核。wasm 侧 `cargo check --target wasm32-unknown-unknown` 通过。
+- **数据可信度**：`extract-lobbyset.mjs` 真实模块切片 eval + `assertContains` 钉源（评审 P2-1 后 `hubSpot`/`hubCamera` 亦改为构造函数切片 eval，不再手抄字面量，产物重跑逐字节不变）；`lobbyset-crosscheck.mjs` 用**独立正则路径**重解析 JS、以 bearing 公式独立重算 8 spots、逐字段对账 SLOTS/PED/DRUM 嵌套表/SWIM 键集（**191 checks**），连跑逐字节一致（`gate-task56.sh` DETERM 段）。
+- **独立评审处置（2026-11-11，独立只读评审员）**：**FAIL（证据状态）→ 全部 P1 当场修复复验 → PASS-with-fixes**。
+  - **P1-1 ✅** 相机 `near`/`far` 退出大厅后永久残留（0.1/140 覆盖世界 0.15/6500，`camera_rig` 不重写）：`world.rs` 提 `CAM_NEAR/CAM_FAR` 常量，`showcase_camera_update` 退出时显式恢复；最小 App 冒烟新增逐值断言。
+  - **P1-2 ✅** 逐帧 sync 把 `last_cue` 冲成 `None`、默认 weapon `"shooter"` 对自选武器首帧伪触发 `HopTwirl`：`apply_loadout` 改为仅非 None 时更新 `last_cue`/`replay_count`；`showcase_sync` 首帧用 `from_online_view` 全量初始化（`ShowcaseScene.synced` 锁存，离屏复位）；修正把缺陷固化为期望的测试断言。
+  - **P1-3 ✅** 评审读到的是**运行中**门禁日志（Task 54 评审 P1-2 同类先例）：首轮 `task56-gates-20261111T055233Z.log` 实际已跑完 `GATE_VERDICT=PASS`；评审修复后按流程复跑第二份完整日志为最终口径，并回填 tasks/spec 台账。
+  - **P2 处置**：P2-1（手抄 hub 字面量）已修；P2-2（crosscheck 漏 SLOTS/PED/DRUM/SWIM）已补强至 191 checks；P2-5（构建帧 Visibility 空窗）已改为构建即 Visible；P2-6（同义反复测试）已换成行为断言；P2-7（D-T56-⑦ 未入 spec）已补。P2-3（`SwapChar` 分支、`preset` 运行期不可达）、P2-4（`rows_to_members` 缺 myTeam/flip）、P2-8（`source.commit` 固有一次性漂移）按惯例留档，见 `spec.md` §10 偏差表。评审实证确认：数据 8 spots bearing/faceCam 逐值正确、crosscheck 为独立路径、系统链顺序与 Query 无冲突、`level_render.rs` is_active 改动单相机下行为等价、门禁脚本无管道假绿、JS 树/sim 零改动。
+
+## M4 汇总复核清单（Task 57 收尾，2026-11-11）
+
+> **NFR-M4-5 双轨验收口径**：沙箱只验无头可测部分（数据确定性、独立 crosscheck、
+> 锚定单测、headless 600 帧、wasm check、九段门禁）。以下 GPU/听感项一律
+> **登记待用户机器复核**，不做伪验收；逐任务证据见各章节与 `tasks.md` 的
+> Completion Evidence。门禁矩阵见 `rust/README.md` 第 7 节与 `rust/tools/verify/gate-task57.sh`。
+
+### 逐任务复核索引
+
+| Task | 复核章节 | 关键待复核项 |
+|---|---|---|
+| 41–45 | D-T42/43/45 表 | guest boss 快照到达 wasm seam（D-T45-8）、host 迁移后的视觉连续性；协议数值 fixture 已沙箱逐字节回环 |
+| 46 | Task 46 | Boss 剪影/telegraph、HUD boss 条、结算 VICTORY/DEFEAT + boss 行、bossAudio 听感、roar 震屏 |
+| 47–48 | Task 47 / 48 | 8 图 competitive 观感、MAPS theme/times、threat AI 与盾/canopy 手感 |
+| 49 | Task 49 | 小地图三档栅格、栅格与场景对位、DOM 点标效应 |
+| 50 | Task 50 | 148 SFX / 9 曲 / 过程化 PCM 烘焙听感、混响与总线、42 名 kit SFX（顺延） |
+| 51 | Task 51 | fx 六池与 hooks、screenfx composite pass、伤害数字 DOM 叠层 |
+| 52 | Task 52 | 46 层材质 CPU≠GPU 逐像素、`level.wgsl` 湿润/光泽、ink ripple、wasm32 烘焙 inert、GTAO/grade/SMAA/tilt-shift |
+| 53 | Task 53 | props atlas / ShaderMaterial / murals / 316 涂装在各图观感 |
+| 54 | Task 54 | 弹簧姿态绑定、poseBow、bow/brolly/bowl 几何（顺延）、切档重建 rig（D-T55-⑦） |
+| 55 | Task 55 | 三主题黄昏、四档后处理链、云/PMREM/远景反射、海面 swell·marina·泡沫 |
+| 56 | Task 56 | 3D alley 材质/霓虹/反射、3D 名牌与角色 preview、世界叠加（D-T56-⑦）、hub⇄room 切换过渡 |
+| 57 | 本清单 | 收尾命令在用户 GPU 机器复跑（沙箱矩阵见 `gate-task57.sh` 落盘日志；GPU 项仍需用户机复核） |
+
+### 收尾复核清单（用户 GPU 机器，按顺序）
+
+- [ ] `cd rust && trunk build --release` 一次通过（本沙箱 wasm-bindgen OOM `signal: 9` ×3 → D-T40-1 DEGRADED，环境性非阻塞）。
+- [ ] `cd rust && cargo run --release -p inkwave`（窗口态）按 `README.md` 第 7 节操作：`K` 阴影、`L` 四档、`T` 三主题、`MODE` 切 boss、online 开黑。
+- [ ] 四组合 headless（`day:low` / `sunset:low` / `golden:high` / `day:ultra` 各 600 帧）+ boss 600 帧在用户机复跑（沙箱均 exit 0）。
+- [ ] Boss 离线 win/lose 双分支、联网 8 人房 host 迁移（`adopt/handoff`）与 `'bhit'` 对账（D-T45-8 seam）。
+- [ ] hub/lobby 屏 3D 大厅观感（D-T56-⑦ 世界叠加）与 `low` 档极简 UI 大厅可用性。
+- [ ] 上表逐任务 GPU/听感项逐条勾选；发现差异按任务登记新的 D-T 偏差并回到对应门禁复跑。
+- [ ] 网络可达时 `bash rust/tools/sync-upstream.sh check` 确认基线后无新上游提交（沙箱为本地 refs 降级口径，见 `SYNC_LEDGER.md` M4 基线核对）。
+
+> 收尾结论以 `tasks.md` Task 57 的 Completion Evidence 与末次总评审为准；
+> 本清单不构成「已通过」，仅为 M4 遗留面的完整索引。

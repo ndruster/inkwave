@@ -104,7 +104,7 @@
   - 新增文件：`boss/mode.rs`（212 行 BossMode 规则）、`bot/boss.rs`（1088 行 bot boss 段 + 4 测试）
   - 改动文件：`boss/hazards.rs`、`boss/mod.rs`、`bot.rs`、`autopilot.rs`（run_boss 驱动 + Report boss_dmg/weak_hits 对账）、`match_.rs`（boss 分支）、`net.rs`/`net/session.rs`/`net/matchbuild.rs`/`net/replication.rs`（session 放行 + matchbuild boss + step 增参）、`tuning.rs`（MAPS schema v6 旗标）、`ui/mod.rs`（lobby MODE 三值 cycle）、`ink_render.rs`（step 签名适配）、`tools/extract/extract-tuning.mjs`（MAPS 旗标提取）、`tools/net-harness/src/match_e2e.rs`、`tools/verify/boss-hitpos-crosscheck.mjs`、`assets/tuning.json`、`assets/tuning.schema.md`、`spec.md`
   - 测试：TR-44.1×2（autopilot/tests.rs win+lose 双分支 + bossDmg 对账）、TR-44.2×4（bot/boss.rs crablet 感知/refill 门/slam 反应/集火选形）、session boss×3（guest 放行/set_settings 回退/start 名册）、tuning 锚点×2、mode hp×1；inkwave_sim 560→572 passed（+12）
-  - 门禁：`task44-gates-*.log` 全绿（TRUNK DEGRADED 同 D-T40-1 先例）
+  - 门禁：`rust/tools/verify/logs/task44-gates-20261104T065807Z.log` 全绿（TRUNK DEGRADED 同 D-T40-1 先例）
   - 偏差注记：离线 Play 菜单模式选择推迟 Task 46（D-T44-5）；splatling 分支省略（D-T44-3）；matchbuild boss 单队构造留驱动层（D-T44-6）；guest boss cfg 放行不步进（D-T44-8）
   - 评审：P0=0；P1-1 已修（D-T44-9）；P1-2/P2-1/P2-6 误报；P1-3/4/5 由 §8 覆盖；其余 P2 留档
 
@@ -123,11 +123,11 @@
 
 ### Task 45 Completion Evidence（2026-11-04）
 - **TR-45.1 ✅**：`replication.rs` tests 六 e2e（FakeRelay pair 先例）——①`tr45_1_1` 双端 BossMode 600 帧路径收敛（近 120 帧最优差 <0.5m + 末帧 <6m、hp 一位小数量化精确、phase 相等）；②`tr45_1_2` guest `hit()`→'bhit'→host `remote_hit`：log.recv/sent、recv_dmg/sent_dmg、host hp 差、stats_by_nid 归属全对齐；③`tr45_1_3` 迁移：adopt 后 sim=true/err 归零/brain 生成/无位置跳变/bt 推进；④`tr45_1_4` ['bm'] 时间线 guest `log.moves` 与 host 逐条 (t0,id) 相等；⑤`tr45_1_5` 击杀→5.2s 胜利窗口→judge→res：`bo` 逐字段重建、st 含 bossDmg 列、guest 时钟不钉零。
-- **TR-45.2 ✅**：scenario E（`net-smoke.mjs` `bossScenario`，C/D 先例复刻）沙箱实跑 **DEGRADED ok=true**（Rust guest tab 被 SwiftShader wgpu 杀死，B 场景同历史表现；dump `net-smoke-2026-11-04T08-19-23-252Z.json`）；可断言子项=握手（`[nettest] loadout` 行 `mode=boss` echo）+ roster 跨认 + host 侧 `__G.netm.bossN>0`（guest 侧 B 到达留 REVIEW_CHECKLIST——wasm seam 无 boss 实体驱动，D-T45-9）；`nfr_m4_3` 带宽压测：最坏满快照（8 小蟹+move_rec）tick <65536B。
+- **TR-45.2 ✅**：scenario E（`net-smoke.mjs` `bossScenario`，C/D 先例复刻）沙箱实跑 **DEGRADED ok=true**（Rust guest tab 被 SwiftShader wgpu 杀死，B 场景同历史表现；dump `rust/tools/verify/logs/net-smoke-2026-11-04T08-19-23-588Z.json`）；可断言子项=握手（`[nettest] loadout` 行 `mode=boss` echo）+ roster 跨认 + host 侧 `__G.netm.bossN>0`（guest 侧 B 到达留 REVIEW_CHECKLIST——wasm seam 无 boss 实体驱动，D-T45-9）；`nfr_m4_3` 带宽压测：最坏满快照（8 小蟹+move_rec）tick <65536B。
 - **接线 ✅**：`BossNet` 扩 `prev_t/prev_raw` + `prev` 改 `Vec3`（D-T45-4）；`sample_boss` ≡ `_sampleBoss` L504-564 逐式（Hermite/离散 11 键/crab 配对/三段修正/阻尼 w=13，评审逐式全对齐）；八处钩子（send_tick `%10` full、on_tick B 消费单调门+40 trim、play_events 'bm' 无门/'bc' 有门、on_message 'bhit' is_host、on_leave adopt/handoff、drive_bots ctx.boss、res 形态+停钟）；host drain 在 send_tick 后 ride 下一 tick ≡ JS（评审 P1-1 修正）+ FX 事件回推（P1-2）。
 - **app 层 ✅/留档**：inkwave crate 22 处 + net-harness 7 处 None 适配（非 boss 局逐字节不变）；nettest `netmode` 放开 boss；**BossMode 跨帧持有不可行**（Bevy Resource:'static 自引用，D-T45-9 借用面实读证据）——app 层 boss 实体驱动留 Task 46。
 - **基线**：`inkwave_sim` 572→578 passed（+6）；`inkwave` 69；workspace 675 全绿；`cargo tree -p inkwave_sim` 依赖面不变；wire.rs/JS 树/`server/` 零改动。
-- **九段门禁**：`rust/tools/verify/logs/task45-gates-<TS>.log` — FMT/CLIPPY/TEST(578+69)/WASM/TREE/DETERM/XCHK/HEADLESS(600 帧)/JS_TREE_CLEAN 全绿；**TRUNK=DEGRADED**（沙箱 wasm-bindgen SIGKILL 同 D-T40-1 先例，不阻塞）。
+- **九段门禁**：`rust/tools/verify/logs/task45-gates-20261104T120512Z.log` — FMT/CLIPPY/TEST(578+69)/WASM/TREE/DETERM/XCHK/HEADLESS(600 帧)/JS_TREE_CLEAN 全绿；**TRUNK=DEGRADED**（沙箱 wasm-bindgen SIGKILL 同 D-T40-1 先例，不阻塞）。
 - **评审**：独立评审 0 P0 / 2 P1 / 4 P2 → P1-1（时序）/P1-2（FX 回推）当场修复复验；P2-1 §8 回填、P2-2/P2-3 注释更正、P2-4 在案 → PASS 闭环。
 
 ## Task 46: Boss 呈现占位档——体块剪影/telegraph 标记/HUD boss 条
@@ -350,12 +350,12 @@
 - **批次 B（接线）✅**：`EnvParams`/`EnvState`/`env_params(theme,tier)`（含 `horizon.lerp(skyMid,0.15)` 雾色、档位开关组合、`char_tier` 角色 LOD 直切）；`world.rs` 移除 SKY/FOG/SUN 等 7 个硬编码常量，灯光/环境光/清屏色/天空渐变/海面色/雾/阴影贴图尺寸全部改走主题与档位数据；相机按档位挂 Bevy 内建 `Bloom`（替代 JS UnrealBloomPass 的开关语义）；`environment_controls` 系统（K 阴影 / L 档位循环 / T 主题循环）运行时改 ClearColor、GlobalAmbientLight、DirectionalLight、DirectionalLightShadowMap、DistanceFog、相机 Bloom；`actors.rs` 角色 rig 档位由 `EnvState.params.char_tier` 决定（**闭环 Task 54 评审 P1-3 / D-T54-5⑪**）；`main.rs` 挂载 `mod environment`。
 - **TR-55.1 ✅**：12 组（4 档×3 主题）参数组合单测 + `env_state_cycles_tier_and_theme` + `environment-crosscheck` 93 checks + `cargo check --target wasm32-unknown-unknown` rc=0 + headless release 4 个 (theme,tier) 启动组合各 600 帧 + boss 600 帧零 panic；`Low` 档 `post_enabled=false` = SwiftShader 全关保底路径。
 - **TR-55.2 ✅**：REVIEW_CHECKLIST「Task 55」10 项逐档视觉/听感登记（黄昏主题、逐档后处理、低配全关可玩、天空/海面/云、角色 LOD 切档等）待用户 GPU 机器复核。
-- **九段门禁**：`rust/tools/verify/gate-task55.sh`（DETERM 扩 environment.json 且校验 Task 54 四个 char 产物哈希不变；XCHK 扩 environment-crosscheck + environment 单测 + 既有 props/pose 回归；HEADLESS 扩 4 组合；自动 PASS/FAIL 判定）。首轮 `task55-gates-20261110T205717Z.log` 仅 DETERM=MISMATCH（`source.commit` 戳刷新，Task 48/49/50/52 同类先例）→ FAIL；复跑 `task55-gates-20261111T050724Z.log` DETERM=BYTE_IDENTICAL、全段 0、TRUNK=DEGRADED（D-T40-1）、**GATE_VERDICT=PASS** 为最终口径（详见 spec.md §9）。
+- **九段门禁**：`rust/tools/verify/gate-task55.sh`（DETERM 扩 environment.json 且校验 Task 54 四个 char 产物哈希不变；XCHK 扩 environment-crosscheck + environment 单测 + 既有 props/pose 回归；HEADLESS 扩 4 组合；自动 PASS/FAIL 判定）。首轮 `task55-gates-20261110T205717Z.log` 仅 DETERM=MISMATCH（`environment.json` 存量产物由提取器早期版本生成，`source.commit` 与最终版钉上游 JS 文件提交的口径不一致，重跑后刷新且此后恒定；非随 HEAD 漂移，Task 48/49/50/52 同类先例）→ FAIL；复跑 `task55-gates-20261111T050724Z.log` DETERM=BYTE_IDENTICAL、全段 0、TRUNK=DEGRADED（D-T40-1）、**GATE_VERDICT=PASS** 为最终口径（详见 spec.md §9）。
 - **基线**：workspace 997→**1007 passed**（inkwave 368→378，新增 10 测；sim 601 不变），单调递增；`inkwave_sim` 依赖面不变、无新增 Cargo 依赖；JS 树/`server/` 零改动。
 - **声明偏差（D-T55）**：①主题色按 sRGB hex 直读不做 linear 转换；②`dusk` 经 `mapTheme` 落 `sunset`；③tilt-shift 属 DOM/cameraRig 而非 renderer pass；④K 键是 Rust 自有；⑤ultra/high 仅 pixelRatio 不同（数据层保留四档，三档内部折叠）；⑥JS medium 实际 texlib bake=256 沿用 Task 52 登记；⑦运行时切档不重建天空渐变贴图与已生成角色 rig（下次关卡/spawn 生效），GTAO/grade/SMAA/screenfx composite/云烘焙/PMREM/远景反射/海面 swell·marina·泡沫均属 GPU 视觉复核项，按 NFR-M4-5 登记而非沙箱伪验收。
 
 ## Task 56: showcase 大厅
-- **Status**: `pending`
+- **Status**: `completed`（2026-11-11 完成；无头可测部分全绿，GPU 视觉项按 NFR-M4-5 登记复核；证据见下方 Completion Evidence 与 `spec.md`「§10 Task 56 收口注记」）
 - **Priority**: medium
 - **Depends On**: Task 54
 - **Description**: `showcase.js`（3109）+ `lobbySet*`（geo/mats/tex）3D 大厅——角色展示台/loadout 实时联动/房间码 UI 场景化；极简大厅保留为低配档。
@@ -365,8 +365,20 @@
   - `rule` TR-56.2: REVIEW_CHECKLIST 视觉登记。
 - **Notes**: 依赖角色绑定与 props 完成；最后的表现项。
 
+### Task 56 Completion Evidence（2026-11-11）
+- **批次 A（状态层接入）✅**：`ui/showcase_state.rs` 此前在途但**未声明进 `ui/mod.rs`**，7 个单测从未编译运行；本轮声明后修正 1 个错误期望（`loadout_change_cues_follow_the_js_branches` 应先把 style 设为 `look0` 才是真正的无变化帧）。新增 `CameraPose`/`camera_pose()`（hubCamera/CAM）、`AlleyDims`/`alley_dims()`、`hub_spot()`、`Pedestal.slot_r/slot_top`、`sync_from_online_view()`（保留 emote、武器变更才出 cue）与 2 个锚测。共 11 个 showcase 单测（状态层 9 + 场景层 2）。
+- **批次 B（数据层）✅**：`rust/tools/extract/extract-lobbyset.mjs` 真实模块切片 eval（ALLEY / CAM+bear+FRONT+BACK+faceCam / QUALITY / 构造函数 `this.hubSpot`/`this.hubCamera`/`this.camera` / showcase 常量·SLOTS·PED·DRUM·SWIM / 3 个 mode Set / LOB_EMOTES）+ THREE.Vector3 stub + `assertContains` 钉源 → `rust/assets/lobbyset.json`（4.3 KB，8 spots 用真 bearing 求值）；`run-all.sh` 挂载；**评审 P2-1 后 hub 字面量改为切片 eval，产物重跑逐字节不变**。`rust/tools/lobbyset-crosscheck.mjs` 用**独立正则路径**重解析 JS、独立重算 8 spots bearing/faceCam、逐字段对账 SLOTS/PED/DRUM 嵌套表/SWIM 键集/mode Set/emotes，**191 checks**。
+- **批次 C（Bevy 接线）✅**：`ui/mod.rs` 声明 `showcase_state`/`showcase_scene`；`world.rs` 注册 `ShowcaseState`/`ShowcaseScene` 并把 `showcase_sync`（group1 的 `ui_state_machine`/`online_ui_update` 之后）、`showcase_scene_update`、`showcase_camera_update`（`camera_rig` 之后）串进 `.chain()`；`level_render.rs` 相机 Query 改 `(&GlobalTransform, &Camera)` 并按 `is_active` 选择（单相机下行为等价，兑现 REVIEW_CHECKLIST L84 多相机前提）。占位 3D 集合（地板/墙/码头/8 站位标记/ink pedestal）全部尺寸来自提取数据，`Visibility` 按 `full_frame` 门控、`low` 档不生成；Hub/Lobby 相机位姿来自 `hubCamera`/`CAM`，退出时 `near`/`far` 显式恢复到 `world::CAM_NEAR/CAM_FAR`。
+- **批次 D（视觉登记）✅**：`REVIEW_CHECKLIST.md`「Task 56」8 类 GPU/听感项逐条登记（材质/反射/PMREM、世界叠加、切换过渡、角色 preview 与名牌、loadout cue、2D/3D 一致性、运行期覆盖口径、数据可信度），按 NFR-M4-5 双轨验收。
+- **TR-56.1 ✅**：11 个 showcase 单测（loadout→cue 五分支、OnlineView→成员/房间码/ready、低配档门、切换序列幂等、相机/后巷/pedestal 锚值、帧同步保真）；`wired_systems_build_gate_and_restore_the_camera` 为**最小 Bevy App 无 GPU 运行期冒烟**，行为断言覆盖 build / Visibility 门控 / cue→pedestal 旋转 / 相机 fov·near·far 覆盖与退出恢复，并排除系统间 Query 冲突；`cargo check --target wasm32-unknown-unknown` rc=0；九段门禁 HEADLESS 4 组合 + boss 各 600 帧零 panic。
+- **TR-56.2 ✅**：REVIEW_CHECKLIST「Task 56」视觉项待用户 GPU 机器复核，明确不作沙箱伪验收。
+- **九段门禁**：`rust/tools/verify/gate-task56.sh`（DETERM 扩 `lobbyset.json` 且校验 Task 54 四个 char 产物哈希不变；XCHK 扩 `lobbyset-crosscheck` + `ui::showcase_state` 单测；HEADLESS 4 组合 + boss；自动 PASS/FAIL）。首轮 `task56-gates-20261111T055233Z.log` `GATE_VERDICT=PASS`；独立评审 P1 全处置后复跑 **`task56-gates-20261111T060902Z.log`：全段 `*_EXIT=0`、DETERM=BYTE_IDENTICAL、JS_TREE_CLEAN/SIM_TREE_CLEAN、TRUNK=DEGRADED（signal:9×2，D-T40-1）、GATE_VERDICT=PASS / GATES_DONE** 为最终口径。
+- **基线**：workspace 1007→**1018 passed**（inkwave 378→389，+11 测；sim 601 不变），单调递增；`inkwave_sim` 依赖面不变、无新增 Cargo 依赖；JS 树/`server/` 零改动。
+- **声明偏差（D-T56-①..⑩）**：见 `spec.md` §10（含 ⑦ 复用主相机与 near/far 显式恢复、⑧ 角色 preview/名牌锚定顺延 M5、⑨ `SwapChar`/`preset` 扩展语义与运行期不可达、⑩ `source.commit` 固有一次性漂移）。
+- **独立评审（2026-11-11）✅**：独立只读评审员实证核查数据逐值、crosscheck 独立路径、系统链顺序与 Query、`level_render.rs` 行为等价、门禁无假绿。**0 P0 / 3 P1 / 8 P2 → FAIL（证据状态）→ 全部 P1 当场修复复验 → PASS-with-fixes**；P1-1 near/far 残留、P1-2 `last_cue` 被逐帧冲 None + 首帧伪 cue、P1-3 评审读到运行中日志；P2-1/2/5/6/7 已修，P2-3/4/8 留档，逐条见 REVIEW_CHECKLIST「Task 56」评审处置条。
+
 ## Task 57: M4 收尾——台账/文档/门禁矩阵/总评审
-- **Status**: `pending`
+- **Status**: `completed`（2026-11-11 完成；收尾矩阵 `M4_MATRIX_VERDICT=PASS`、总评审闭环；证据见下方 Completion Evidence）
 - **Priority**: high
 - **Depends On**: Task 41–56
 - **Description**:
@@ -375,6 +387,15 @@
 - **Test Requirements**:
   - `rule` TR-57.1: 文档内命令全部实跑 exit 0；门禁日志落盘；总评审 P0/P1 闭环。
 - **Notes**: 沿用 Task 27/40 收尾流程。
+
+### Task 57 Completion Evidence（2026-11-11）
+- **台账/文档 ✅**：`rust/SYNC_LEDGER.md` 补「M4 基线核对」（`upstream/main` 仍等于基线 `3e9b550…`，沙箱网络不可达按脚本内置本地 refs 降级口径，如实登记而非伪称远端已核）+「M4 移植说明」（按模块/阶段登记 41–57，非按上游 commit）；`rust/PORT_MAP.md` 补「M4 完成核对」17 行模块映射 + 状态图例扩档（`M4 Tn done` / `placeholder` / `done∗` / `visual-review` / `wontport`）+ 质量档位章节改为四档三主题；`rust/README.md` 标题/操作键位/门禁速查改到 M4 口径并新增第 7 节（Boss 战运行、四档表现表、复核命令、九段门禁矩阵、双轨验收指向）；`REVIEW_CHECKLIST.md` 补「M4 汇总复核清单」（逐任务复核索引 + 7 条收尾复核清单，明确不构成「已通过」）。
+- **九段门禁全矩阵 ✅**：新增 `rust/tools/verify/gate-task57.sh`，落盘 **`rust/tools/verify/logs/task57-m4-matrix-20261111T073550Z.log` → `M4_MATRIX_VERDICT=PASS` / `MATRIX_DONE`**。FMT / CLIPPY / TEST / WASM / TREE / DETERM / 4 路 XCHK / RELEASE_BUILD / 4 组合 HEADLESS / HEADLESS_BOSS / JS_TREE_CLEAN / SIM_TREE_CLEAN 全部 `EXIT=0`；`run-all.sh` 前后比对 **59 个数据产物**（json/gz/svg + pinned fixture）`DETERM=BYTE_IDENTICAL`；`trunk build --release` 实跑一次 `signal: 9` → `TRUNK=DEGRADED`（D-T40-1，环境性非阻塞）。矩阵汇总 Task 41–56 共 16 行：41–53 `LEGACY_SEGMENTS_OK`、54/55/56 `PASS`，并逐行披露 `trunk_exit` 与 Task 49/50 的戳刷新先例；`legacy_ok()` 对历史日志的例外做显式证据要求（无 `signal: 9` 证据的 TRUNK 非零即 FAIL，无 `DETERM=BYTE_IDENTICAL (rerun)` 证据的 DETERM 非零即 FAIL），不做无差别吞错。
+- **TR-57.1 ✅**：README 第 7 节与「门禁速查」列出的命令全部在矩阵内实跑并留退出码：`bash tools/extract/run-all.sh`、`environment`/`lobbyset`/`props` 三个独立对账、`bash tools/verify/run-crosscheck.sh`、`cargo build --release -p inkwave`、4 个 `(theme,tier)` 600 帧组合、boss 600 帧、`trunk build --release`（DEGRADED）、`cargo fmt/clippy/test/wasm/tree`。日志已落盘并随本次提交入库（含此前遗漏的 `task51-gates-20261106T055625Z.log`、`task52-gates-20261106T120359Z.log` 及两份 Task 56 门禁日志）。
+- **M4 总评审 ✅**：独立只读评审员首轮 **FAIL（5 P0 / 3 P1 / 8 P2）** —— P0 为「57 矩阵未跑却预写已闭环」「未提交日志被当证据」「矩阵脚本不实跑 TRUNK」「LEGACY 判定假绿」「DETERM 漏 24 个 SVG/fixture」；P1 为 3 处历史证据文件名失实、README 隐瞒 54/55/56 TRUNK DEGRADED、`source.commit` 归因与实现矛盾。全部当场修复：矩阵脚本重写（实跑 TRUNK、59 产物哈希、`legacy_ok` 显式判据）、文档逐条更正、3 个文件名替换为真实文件、9 个 DEGRADED 如实披露、README 第 5 节澄清两种钉源口径（`char` 用 `rev-parse HEAD` 属①，只有 environment/lobbyset 用 `git log -1 -- <paths>` 属②）。复评 **FAIL（仅余 2 处文档口径）** → 修复 → **最终独立复评 PASS**。P2 建议（给 `ARTIFACT_COUNT` 设下限、`legacy_ok` 强制 DETERM/XCHK 段存在）按项目惯例留档：本轮已实证 41–56 判定无假绿无误杀，属防御性加固，顺延后续窗口。
+- **纪律 ✅**：上游 JS 树/`server/` 零改动、`inkwave_sim` 依赖面不变、`net/wire.rs` PROTO v1 与 net-fixtures 未动；21 个 `assets/*.json` 的改动经 diff 核实**仅 1 行 `source.commit` 戳**（`run-all.sh` 对齐到当前 HEAD，D-T37-3），无内容字段变化；`environment.json`/`lobbyset.json` 的戳为上游 JS 文件提交、未刷新。
+- **提交 + push ✅/登记**：本次提交包含 Task 56 全部代码/脚本/日志、Task 57 文档/矩阵脚本/日志与对齐后的数据产物。`git push origin main` 在本沙箱受与 `SYNC_LEDGER.md` M4 基线核对相同的网络限制；若推送失败则按 **DEGRADED 待用户机器执行** 如实登记，不作伪完成（执行结果以最终汇报与 `git status -sb` 为准）。
+- **双轨验收 ✅**：无头可测部分（提取确定性、独立对账、锚定单测、headless 600 帧、wasm check、九段门禁、总评审）全部闭环；GPU/听感项由 `REVIEW_CHECKLIST.md`「M4 汇总复核清单」统一登记待用户机器复核（NFR-M4-5），不作沙箱伪验收。
 
 ---
 

@@ -110,3 +110,44 @@ M2 脚手架扩展：`rust/tools/verify/net-smoke.mjs` 新增 scenario C/D（跨
 `rust/tools/net-harness` 新增 zones/新图/loadout/ladder e2e scenario；`gen.mjs` fixture
 捕获扩 `zone_seq`（Task 36）。未移植项（showcase 大厅、小地图、完整角色绑定、后处理链、
 boss、props/murals 装饰、flood 呈现层等）顺延 M4，状态见 PORT_MAP。
+
+### M4 基线核对（Task 57）
+
+`tools/sync-upstream.sh check` 于 2026-11-11 复核：沙箱网络不可达（`git fetch upstream`
+失败，脚本内置降级为本地 refs），本地 `upstream/main` 仍等于基线
+`3e9b5505ea900cb41851b4d75f16d488552b1794`，**基线之后本地已知零新提交**。
+M4 与 M2/M3 同属「对照上游**现存**源码的专项移植」，不是上游新提交驱动，因此上方
+「逐提交移植记录」表保持 `_基线之后暂无新提交_`；本节按**模块**而非按 commit 登记。
+网络可达环境建议复跑 `bash rust/tools/sync-upstream.sh check` 以确认远端无新提交。
+
+## M4 移植说明（Task 41–57，Boss 战 / 玩法收尾 / 表现完整度）
+
+M4 主线经用户确认为**玩法优先**：Phase A Boss 战（41–46，其中 46 为呈现占位档）→
+Phase B 玩法收尾（47–48）→ Phase C 表现完整度（49–56）→ 收尾（57）。
+`server/`、上游 JS 树、`net/wire.rs` PROTO v1、net-fixtures 全程零改动；所有 JS 数值经
+`rust/tools/extract/` 切片 eval + `assertContains` 钉源生成 stable-json（连跑逐字节一致），
+禁手抄；`inkwave_sim` 依赖面不变。逐任务证据/偏差见
+`.trae/specs/rust-bevy-port-m4/{tasks.md,spec.md}`，模块级对照见 [PORT_MAP.md](./PORT_MAP.md)「M4 完成核对」。
+
+| 阶段 | Task | 上游 JS 面 | Rust 落地 | 状态 |
+|---|---|---|---|---|
+| A Boss 数值/协议 | 41 | `config.js` BOSS/BOSS_MODE、`src/boss/*` 参数/时序/hitShapes | `assets/tuning.json` v3、`net/wire.rs` BossSnap 19 槽 + `B`/`['bm']`/`['bc']`/`'bhit'`/res 形态 fixture | done |
+| A Boss sim | 42–43 | `boss.js`/`bossNav.js`/`bossBrain.js`/`bossHazards.js` | `inkwave_sim::boss::{Boss,BossNav,brain,hazards}`（六招、victim-side 伤害、host-only 墨、threat 查询） | done∗（D-T42/43） |
+| A Boss 规则与联网 | 44–45 | `bossMode.js`/`match.js`/`bots.js` boss 段/`netmatch.js` | `boss/mode.rs`、`bot/boss.rs`、`match_.rs`、`net/replication.rs`（Hermite 播放、`'bhit'` 对账、host 迁移、scenario E） | done∗（D-T45-9） |
+| A' Boss 呈现 | 46 | `bossModel.js`/`hud-boss.js`/`bossAudio.js` | `boss_render.rs`、`ui/boss_hud.rs`、结算 boss 行、roar 震屏 | placeholder（GPU 复核） |
+| B 玩法收尾 | 47–48 | `bots.js` threat/盾/canopy、kits blade/mitts；`maps.js` 五图 + `config.js` MAPS | `bot/threat.rs`、`bot/blade_tactics.rs`、`sub.rs`；`assets/maps/*.json` 8 图、schema v7 | done∗（D-T47-11/11a 兼容超集；cargo onlineOnly/noBots/noBoss 旗标） |
+| C 提取管线 | 48/50/52/53/54/55/56 | tuning/texlib/layout/props/character/environment/lobbyset 各 JS 字面块 | `assets/{tuning,texlib,maps,props,char,environment,lobbyset}.*`（schema 逐版升级 v3→v7）+ 各 crosscheck 独立正则重解析 | done（DETERM 连跑逐字节一致） |
+| C 小地图/音频 | 49–50 | `minimap.js`、`audio.js`/`music.js`/`bossAudio.js` | `ui/minimap*.rs`（三档栅格）；`audio/*`（148 SFX、9 曲、过程化 PCM 烘焙） | done∗（DOM 点标效应/混响总线/42 名 kit SFX 顺延） |
+| C fx/材质 | 51–52 | `fx.js`/`screenfx.js`/`fxHooks`/`swimWake`/`zoneMarks`；`inkShading.js`/`levelMaterial`/`texlib.js` | `fx/*` 六池 + hooks；`texlib/*` 46 层 CPU 烘焙 + `level.wgsl` + `ink_ripple.rs`/`quality.rs` | done∗ + placeholder（composite pass 未接；CPU≠GPU 逐像素、wasm32 烘焙 inert） |
+| C 装饰/角色 | 53–54 | `props.js`/murals/dressing；`character.js` 4062 行弹簧姿态 | `props/*` IKP1 8 图 2069 placements；`char/*` IKC1 骨树 + 5640 帧 × 87 骨 pinned replay | done∗（atlas/ShaderMaterial、bow/brolly/bowl 几何顺延） |
+| C 环境/大厅 | 55–56 | `environment.js`/`renderer.js`/`config.js` QUALITY；`showcase.js`/`lobbySet*.js` | `environment.rs` + 四档三主题接线；`ui/showcase_state.rs`/`showcase_scene.rs` + `assets/lobbyset.json` | done∗ + placeholder（D-T55-⑦/D-T56-⑦；GTAO/grade/SMAA/PMREM/3D 名牌与角色 preview 属 GPU 或 M5） |
+
+**状态口径**：`done∗` = 含声明偏差（逐条见 `spec.md` D-T 表与 `REVIEW_CHECKLIST.md`）；
+`placeholder` = 行为/数据面已验、视觉面按 NFR-M4-5 登记用户 GPU 机器复核。
+`M4 wontport`：locker 更衣室、高保真 Boss 模型、Rust 设置屏（M5）、DOM 名牌叠层。
+
+**门禁与基线**：九段门禁（FMT/CLIPPY/TEST/WASM/TREE/DETERM/XCHK/TRUNK/HEADLESS +
+`JS_TREE_CLEAN`/`SIM_TREE_CLEAN`）逐任务落盘 `rust/tools/verify/logs/task*-gates-*.log`；
+Task 54 起脚本自动判定 `GATE_VERDICT`，41–53 用逐段 `*_EXIT=0` 口径。
+TRUNK 段在本沙箱因 wasm-bindgen OOM `signal: 9` 判 DEGRADED（D-T40-1 环境性、非阻塞）。
+workspace 测试基线逐任务单调递增（554 → 1017+；精确数字见各任务 Completion Evidence）。

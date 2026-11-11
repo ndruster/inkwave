@@ -648,7 +648,7 @@ AC-M4-4（boss 呈现部分）：可玩（弹丸掉血/胜负可达）+ 可读�
 
 - **交付**：批次 A 数据层（`extract-environment.mjs` → `environment.json` 7.7 KB；`environment.rs` 10 单测；`environment-crosscheck.mjs` 独立 93 checks）；批次 B 接线（`EnvParams`/`EnvState`/`env_params`，`world.rs` 七处硬编码常量→主题/档位数据、`environment_controls` K/L/T 运行时控制、相机内建 Bloom 按档位挂/关、`actors.rs` 角色 LOD 档位直切）；批次 C GPU 视觉项按 NFR-M4-5 登记；批次 D 门禁与台账。逐项证据见 `tasks.md`「Task 55 Completion Evidence」。
 - **跨任务闭环**：Task 54 评审 P1-3 / D-T54-5⑪「LOD 运行期档位切换并入 Task 55」已落地——`EnvParams.char_tier` 由 `QualityPreset` 推导（low=far / medium=game / high·ultra=hero），`spawn_actors` 与 `sync_actor_count` 均从 `EnvState` 读取；运行期 L 键切档后新建 rig 即按新档生成。
-- **九段门禁**：`rust/tools/verify/gate-task55.sh` 逐段记录 `*_EXIT` 并自动判定（TRUNK 仅允许 D-T40-1 OOM DEGRADED）。首轮 `task55-gates-20261110T205717Z.log`：FMT/CLIPPY/TEST(1007)/WASM/TREE/XCHK 四路/HEADLESS 4×600 帧 + boss 600 帧/JS_TREE_CLEAN/SIM_TREE_CLEAN 全 0，但 **DETERM=MISMATCH**（仅 `environment.json` 的 `source.commit` 戳刷新，diff 核实为单一字段；Task 48/49/50/52 同类先例）→ `GATE_VERDICT=FAIL`，不作完成依据；复跑 `task55-gates-20261111T050724Z.log`：**DETERM=BYTE_IDENTICAL**、全段 `*_EXIT=0`、TRUNK=DEGRADED（wasm-bindgen `signal: 9` ×2，D-T40-1 环境性）、`GATE_VERDICT=PASS` / `GATES_DONE`，为最终口径。两份日志均落盘留痕，不覆盖首轮 FAIL 记录。
+- **九段门禁**：`rust/tools/verify/gate-task55.sh` 逐段记录 `*_EXIT` 并自动判定（TRUNK 仅允许 D-T40-1 OOM DEGRADED）。首轮 `task55-gates-20261110T205717Z.log`：FMT/CLIPPY/TEST(1007)/WASM/TREE/XCHK 四路/HEADLESS 4×600 帧 + boss 600 帧/JS_TREE_CLEAN/SIM_TREE_CLEAN 全 0，但 **DETERM=MISMATCH**（仅 `environment.json` 哈希变化，diff 核实为单一字段：该存量产物由提取器早期版本生成，`source.commit` 与最终版「钉上游 JS 文件最后提交」口径不一致，重跑后刷新且此后恒定；**不是**随 Rust HEAD 漂移，Task 48/49/50/52 同类先例）→ `GATE_VERDICT=FAIL`，不作完成依据；复跑 `task55-gates-20261111T050724Z.log`：**DETERM=BYTE_IDENTICAL**、全段 `*_EXIT=0`、TRUNK=DEGRADED（wasm-bindgen `signal: 9` ×2，D-T40-1 环境性）、`GATE_VERDICT=PASS` / `GATES_DONE`，为最终口径。两份日志均落盘留痕，不覆盖首轮 FAIL 记录。
 - **基线**：workspace 997→**1007 passed** 单调递增（inkwave 368→378）；`inkwave_sim` 601 与依赖面不变；JS 树/`server/` 零改动；无新增 Cargo 依赖。
 - **双轨验收**：无头可测（数据锚定/独立对账/12 组合/档位循环/wasm check/headless 不 panic）全部闭环；黄昏档色彩、GTAO/grade/SMAA/tilt-shift/screenfx composite、天空云/PMREM/远景反射、海面 swell/marina/泡沫、逐档 Bloom 观感、低配全关可玩性共 10 项登记 `REVIEW_CHECKLIST.md`「Task 55」待用户 GPU 机器复核。
 - **定案**：Task 55 完成。`D-T55-⑦` 新增登记：运行时切档不重建天空渐变贴图与已生成 rig，GPU 观感项不做沙箱伪验收；PORT_MAP/SYNC_LEDGER 的 M4 章节按 Task 57 统一补齐。
@@ -673,4 +673,22 @@ AC-M4-4（boss 呈现部分）：可玩（弹丸掉血/胜负可达）+ 可读�
 **声明偏差（D-T56）**：①3D alley 的材质/shader/反射/PMREM 与名牌 DOM 叠层不移植（GPU 视觉复核）；②`showcase.js` L1107 与 L1680 双 `showHub` 定义按 JS 语义取 L1680；③`LobbySet.QUALITY` 三档与全局 `QUALITY` 四档并存（数据层保留，ultra 折 high）；④角色 preview 不与 `CharBridge` 共用（菜单态独立驱动）；⑤低配档直接用现有 Bevy UI 面板，无 3D 大厅；⑥房间码/ready 复用 `ui::online::project()`，不重实现事件层。
 
 **测试面**：TR-56.1 = 布局数据锚测（8 spots/CAM/QUALITY/PED/emotes）+ loadout→cue 联动 + OnlineView→成员/房间码/ready golden + 低配档门 + 切换序列 fuzz + wasm/headless 不 panic；TR-56.2 = REVIEW_CHECKLIST 逐项视觉登记。
+
+## §10 Task 56 收口注记（2026-11-11，实施 + 独立评审后）
+
+**交付**：
+- **批次 A 状态层**：`ui/showcase_state.rs` 已**接入编译**（此前在途但未声明到 `ui/mod.rs`，7 个单测从未运行）。接入后暴露并修正 1 个错误期望（`loadout_change_cues_follow_the_js_branches` 用默认空 style 做"无变化"起点，实际应落 `Pop` 分支）。新增 `CameraPose`/`camera_pose()`、`AlleyDims`/`alley_dims()`、`hub_spot()`、`Pedestal.slot_r/slot_top`、`sync_from_online_view()`（保留 emote、武器变更出 cue）与 2 个锚测。
+- **批次 B 数据层**：`extract-lobbyset.mjs` → `assets/lobbyset.json`；评审 P2-1 后 `hubSpot`/`hubCamera` 由**构造函数切片 eval**（`this` stub + 真 `CAM`）生成，不再手抄字面量（产物重跑逐字节不变）；`run-all.sh` 挂载提取器；`lobbyset-crosscheck.mjs` 独立正则路径 + bearing 公式独立重算 8 spots + SLOTS/PED/DRUM/SWIM 逐字段对账，**191 checks**。
+- **批次 C Bevy 接线**：`ui/mod.rs` 声明 `showcase_state`/`showcase_scene`；`world.rs` 注册 `ShowcaseState`/`ShowcaseScene` 并把 `showcase_sync`（跟在 group1 的 `ui_state_machine`/`online_ui_update` 之后）、`showcase_scene_update`、`showcase_camera_update`（跟在 `camera_rig` 之后）串进 `.chain()`；`level_render.rs` 的 `cams` 改 `(&GlobalTransform, &Camera)` 并按 `Camera::is_active` 选相机（单相机下行为等价），兑现 REVIEW_CHECKLIST L84 的多相机前提加固。占位 3D 集合（地板/墙/码头/8 站位标记/ink pedestal）由提取数据构建，`Visibility` 按 `full_frame` 门控，`low` 档不生成。
+- **批次 D**：视觉/听感项全部登记 `REVIEW_CHECKLIST.md`「Task 56」，双轨验收（NFR-M4-5）。
+
+**声明偏差补充（D-T56-⑦..⑩，对 §「声明偏差」①–⑥ 的增补）**：
+- **⑦ 复用主相机**（偏离批次 C 的"独立大厅相机"）：上游 `LobbySet` 持有第二相机；Rust 侧若新建会破坏 UI target 与 6 处单相机 `Query<&GlobalTransform, With<Camera>>` 消费者。改为在 `full_frame` 时覆盖唯一主相机的 Transform/FOV/near/far，退出时由 `camera_rig` 收回 Transform/FOV、`showcase_camera_update` 显式恢复 `near/far`（`world::CAM_NEAR/CAM_FAR`，评审 P1-1）。**后果**：关卡世界未做 RenderLayers 分层，hub/lobby 屏与占位 alley 叠加，属 GPU 视觉复核项；`level_render.rs` 的 `is_active` 加固已为将来分层/独立相机铺路。
+- **⑧ 角色 preview 与名牌锚定顺延 M5**：`spawn_char_rig` 预览角色、站姿/舞蹈驱动、`lobbyAnchor/lobbySlotAnchor` 3D→DOM 名牌、emote→dance、ready/host/you 名牌态**未接运行期消费者**。理由：菜单态 rig 需独立于 `CharBridge`（强耦合 `DemoSim`+`paused`），且分层需逐实体 RenderLayers。状态层 `ShowcaseMember`/`emote()`/`ShowcaseCue` 已交付并钉测；8 个站位标记为常显占位圆柱，不随 roster 增减。
+- **⑨ `SwapChar` 分支与 `preset` 参数**（评审 P2-3 留档）：JS `_showPedestal` L1146-1199 中 weapon 变化与 style 变化是**独立并行**分支，`_swapChar` 是动画中途换人语义；状态层把「两者同变 → SwapChar」、`preset → Dip` 作为 Rust 侧扩展语义。运行期 `showcase_sync` 只传 `(weapon, style, false)`，`preset` 恒 false、`SwapChar` 不可达，故不影响实际行为；五分支与 `replay_count` 仍逐值钉测。`rows_to_members` 用绝对 team→slot 映射（P2-4），未实现 JS `myTeam` 视角翻转；3D 侧不绘制角色，故无可见差异。
+- **⑩ `source.commit` 固有一次性漂移**（P2-8）：`git log -1 -- <JS files>` 钉的是这些 JS 文件的最后上游提交；一旦上游提交触及它们，产物戳会一次性刷新（首轮 DETERM MISMATCH→复跑 BYTE_IDENTICAL，Task 48/49/50/52/55 同类先例），已由 `gate-task56.sh` DETERM 段留痕。
+
+**独立评审（2026-11-11）**：独立只读评审员实证核查数据 8 spots bearing/faceCam 逐值、crosscheck 独立路径、系统链顺序与 Query 无冲突、`level_render.rs` 行为等价、门禁无管道假绿、JS/sim 零改动。**0 P0 / 3 P1 / 8 P2**；结论 **FAIL（证据状态）→ P1 全当场修复复验 → PASS-with-fixes**。P1-1（near/far 残留）、P1-2（逐帧冲掉 `last_cue` + 首帧伪 `HopTwirl`）、P1-3（评审读到运行中门禁日志）处置见 `REVIEW_CHECKLIST.md`「Task 56」独立评审处置条。
+
+**测试面实数**：showcase 11 测（状态层 9 + 场景层 2），其中 `wired_systems_build_gate_and_restore_the_camera` 为最小 Bevy App 无 GPU 运行期冒烟，行为断言覆盖 build/Visibility 门控/cue→pedestal 旋转/相机 fov·near·far 覆盖与退出恢复；`cargo test --workspace` 全绿、`clippy -D warnings` 全绿、`wasm32-unknown-unknown` check 通过。TR-56.2 的 GPU 项见 REVIEW_CHECKLIST，不作伪验收。
 

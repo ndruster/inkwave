@@ -1,4 +1,4 @@
-# INKWAVE — Rust/Bevy 移植（M1–M3）
+# INKWAVE — Rust/Bevy 移植（M1–M4）
 
 INKWAVE（Splatoon-like 涂地对战）从 three.js 移植到 Rust + Bevy 0.19 的工作区。
 本目录 `rust/` 与上游 JS 树（`../src`、`../server`、`../tools`）并存：
@@ -8,6 +8,7 @@ M1 垂直切片：Tidewater 地图 + Spritzer 武器 + 涂地计分 + 4v4 easy b
 M2 联网栈：PROTO v1 与上游 JS 客户端逐字节兼容，大厅 + Rust↔Rust / JS↔Rust 完整局（第 3 节）。
 M3 内容：12 主武器 / 15 副 / 19 特殊全量、Zone Control 模式、saltpan/crossmarket 新图、bot 三档、
 大厅 loadout 选择与跨端开黑（第 4 节）。
+M4 玩法优先收尾：Boss 战（六招/联网迁移/离线完整局）、bot 威胁 AI、8 图全量提取、小地图、过程化音频、fx、ink 着色与 46 层材质、props/角色弹簧绑定、环境主题/质量档位、3D showcase 大厅（第 7 节）。
 模块对照见 [PORT_MAP.md](./PORT_MAP.md)，上游同步流程见 [SYNC_LEDGER.md](./SYNC_LEDGER.md)。
 
 ## 1. 环境准备
@@ -111,10 +112,17 @@ node rust/tools/verify/wasm-smoke.mjs http://localhost:8002/index.html 60 9222
 | `Enter` | 菜单 → 对局；结算 → 再来一局 |
 | `Esc` / `P` | 暂停 / 恢复 |
 | `M` | 静音开关 |
-| `K` | **阴影开关**（M1 唯一质量档位：太阳光级联阴影 2048²，低配/软件渲染可关） |
+| `K` | **阴影开关**（太阳光级联阴影，尺寸随档位 1024/2048/4096） |
+| `L` | **质量档位循环** low → medium → high → ultra（M4 Task 55） |
+| `T` | **主题循环** day → sunset → golden（M4 Task 55） |
 
-M1 其余渲染为固定简化档（无 GTAO/bloom/SMAA/tilt-shift，材质为 pattern 最小子集）；
-后处理与画质档位属于 M2+，见 PORT_MAP。
+M4 Task 55 起，主题色/雾/太阳/环境光/阴影尺寸/角色 LOD/相机 Bloom 全部由
+`rust/assets/environment.json`（从只读 JS 树提取）驱动；启动时可用
+`INKWAVE_THEME=day|sunset|golden`、`INKWAVE_QUALITY=low|medium|high|ultra` 指定。
+`low` 档 `post_processing_enabled=false`，是 SwiftShader/无 GPU 的保底可玩路径。
+GTAO、GradeShader 12 uniform、SMAA、tilt-shift diorama、screenfx composite、
+云烘焙/PMREM/远景反射、海面 swell·marina·泡沫仍是 GPU 视觉复核项，见
+`.trae/specs/rust-bevy-port-m4/REVIEW_CHECKLIST.md`「Task 55」。
 
 ## 3. 联网运行（M2/M3）
 
@@ -275,9 +283,14 @@ node tools/extract/extract-layout.mjs saltpan      # 单图按 stage 提取（Ta
   schema v2）→ `assets/tuning.json`
 - `extract-layout.mjs [stage]`：`src/world/stages/<stage>/layout.js`（mapkit DSL 在 node 侧求值）
   → `assets/maps/<stage>.json`；stage 缺省 `tidewater`，zones 多边形（`zones-data.js`）合并进 `zones` 键
-- 产物确定性：同一 HEAD 连跑两次逐字节一致（TR-3.4/TR-28.1/TR-37.1 已验证）；唯一可变量是
-  `source.commit` provenance 戳行（随 HEAD 移动，D-T37-3 口径），内容字段稳定。改完跑
-  `cargo test -p inkwave_sim` 回归。
+- 产物确定性：同一 HEAD 连跑两次逐字节一致（TR-3.4/TR-28.1/TR-37.1 已验证）。`source.commit`
+  provenance 戳有**两种口径**：
+  ① **随 Rust HEAD 移动**（D-T37-3）：`extract-tuning.mjs`、layout/maps、texlib、props、
+  `extract-character.mjs`（char）仍用 `git rev-parse HEAD`，故每次 Rust 提交后存量产物重跑会
+  **一次性刷新戳**，门禁以 `DETERM=BYTE_IDENTICAL (rerun)` 留痕（Task 48/49/50/52/55 先例）；
+  ② **钉上游 JS 数据文件的最后提交**：M4 新增的 `extract-environment.mjs` 与
+  `extract-lobbyset.mjs` 用 `git log -1 -- <JS paths>`，Rust 侧提交不改变产物。
+  `char` 属①不属②；内容字段稳定；改完跑 `cargo test -p inkwave_sim` 回归。
 - 交叉验证：`bash tools/verify/run-crosscheck.sh`（JS 与 Rust 碰撞查询逐点对照）。
 
 ## 6. 上游同步
@@ -298,15 +311,20 @@ bash tools/sync-upstream.sh update-baseline   # 全部处理完才推进基线
 
 ## 门禁速查
 
-与 M3 门禁脚本九段一致（fmt → clippy → test → wasm32 check → tree → trunk build → headless → JS 树）：
+M4 沿用九段门禁（fmt → clippy → test → wasm32 check → tree → DETERM → XCHK → trunk → headless → 上游树守卫），
+每段退出码逐项落盘并自动判定 `GATE_VERDICT`；脚本为 `rust/tools/verify/gate-task47..56.sh`，
+收尾矩阵见第 7 节。TRUNK 段在本沙箱常被 wasm-bindgen OOM `signal: 9` 杀掉，按 D-T40-1
+判 DEGRADED（环境性、非阻塞），用户机器应一次通过。
 
 ```bash
 cd rust
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace               # M3 收尾：553 passed（> M2 基线 273）
-cargo check -p inkwave --target wasm32-unknown-unknown
-cargo tree -p inkwave_sim            # 应仅 serde/serde_json/glam（sim 零引擎依赖）
+cargo test --workspace               # M4 基线逐任务单调递增（数字见 tasks.md / 门禁日志）
+cargo check -p inkwave_sim -p inkwave --target wasm32-unknown-unknown
+cargo tree -p inkwave_sim            # 依赖面不变（sim 零引擎依赖）
+node tools/lobbyset-crosscheck.mjs   # 191 checks；其余独立对账见 gate 脚本 XCHK 段
+bash tools/verify/gate-task56.sh     # 九段全跑，日志落 tools/verify/logs/
 trunk build --release
 cargo run --release -p inkwave -- --headless --frames 600   # 无 GPU 冒烟
 cd .. && git status --short -- src server tools docs         # 上游树须为空
@@ -314,3 +332,85 @@ cd .. && git status --short -- src server tools docs         # 上游树须为�
 
 联网冒烟另在仓库根执行：`node rust/tools/verify/net-smoke.mjs --scenario all`
 （沙箱 DEGRADED 语义见第 3 节）。
+
+## 7. M4：Boss 战与表现完整度（Task 41–57，AC-M4-1..5）
+
+M4 主线 = **玩法优先**：Phase A Boss 战（41–46）→ Phase B 玩法收尾（47–48）→
+Phase C 表现完整度（49–56）→ 收尾（57）。完整设计、逐任务证据、偏差定案与复核清单见
+`.trae/specs/rust-bevy-port-m4/{spec.md,tasks.md,REVIEW_CHECKLIST.md}`；
+模块级对照见 [PORT_MAP.md](./PORT_MAP.md)「M4 完成核对」。
+
+### Boss 战运行
+
+```bash
+cd rust
+cargo run --release -p inkwave -- --headless --mode boss --frames 600  # 离线完整局
+# 窗口态：Play 菜单按 MODE 切到 boss；在线房由 host 选 mode=boss（relay + 8 人名册）
+# 仓库根另开终端：npm run relay
+```
+
+- 六招（slam / barrage / sweep / charge / crablets / frenzy）由
+  `inkwave_sim::boss::{BossBrain, BossHazards}` 求值，几何由 move record + 时间全端一致；
+  victim-side 伤害、host-only 涂墨、`['bm']`/`['bc']` 时间线、`'bhit'` 上行、host 迁移
+  `adopt/handoff` 与 PROTO v1 逐字节兼容（`net/wire.rs`）。
+- 呈现为**占位档**：体块剪影、telegraph 标记、HUD boss 条、结算 VICTORY/DEFEAT +
+  bossDmg/weakHits 行、bossAudio。高保真模型属 Non-Goal；视觉复核见 REVIEW_CHECKLIST「Task 46」。
+
+### 表现档位
+
+| 档位 | 阴影 | pixelRatio | MSAA | Bloom | 角色 LOD | 3D 大厅 |
+|---|---|---|---|---|---|---|
+| low | 1024 | 0.75 | 0 | 关 | far | 关（极简 UI） |
+| medium | 2048 | 1 | 2 | 开 | game | 开 |
+| high | 4096 | 1.5 | 4 | 开 | hero | 开 |
+| ultra | 4096 | 2 | 4 | 开 | hero | 开 |
+
+`L` 循环档位、`T` 循环主题（day / sunset / golden）、`K` 切阴影；启动可用
+`INKWAVE_QUALITY` / `INKWAVE_THEME`。运行期切档不重建天空渐变贴图与已生成角色 rig
+（D-T55-⑦），下次关卡/spawn 生效。`low` 档关闭全部后处理，是软件渲染保底路径。
+3D showcase 大厅在 `low` 档不生成；hub/lobby 屏复用主相机并覆盖为提取的
+`hubCamera`/`CAM` 位姿（D-T56-⑦），关卡世界未做 RenderLayers 分层，属 GPU 复核项。
+
+### 复核命令（用户 GPU 机器）
+
+```bash
+cd rust
+bash tools/extract/run-all.sh                 # 全部 json/gz 提取产物重生成（连跑逐字节一致）
+                                              # SVG 缩略图与 pinned fixture 是只读校验基准，收尾矩阵另核哈希
+node tools/environment-crosscheck.mjs        # 93 checks（主题/档位）
+node tools/lobbyset-crosscheck.mjs           # 191 checks（后巷/8 站位/pedestal/emotes）
+node tools/props-crosscheck.mjs              # 8 图 props 对账
+bash tools/verify/run-crosscheck.sh          # 碰撞几何独立 Python 对账（TR-4.1/4.2）
+cargo build --release -p inkwave
+for spec in day:low sunset:low golden:high day:ultra; do
+  INKWAVE_THEME=${spec%%:*} INKWAVE_QUALITY=${spec##*:} \
+    target/release/inkwave --headless --frames 600 || exit 1
+done
+target/release/inkwave --headless --mode boss --frames 600
+trunk build --release                        # 本沙箱常 OOM SIGKILL；用户机应一次通过
+```
+
+视觉/听感复核清单（黄昏主题、逐档后处理、ink 湿润/光泽、46 层材质、props、
+角色姿态、fx、小地图、音频、Boss 剪影、3D 大厅）：
+`.trae/specs/rust-bevy-port-m4/REVIEW_CHECKLIST.md`。按 NFR-M4-5 **双轨验收**——
+沙箱只验无头可测部分，GPU 项一律登记待复核，不做伪验收。
+
+### 九段门禁矩阵
+
+| 任务 | 最终日志 | 判定口径 |
+|---|---|---|
+| 41–53 | `logs/task41..53-gates-*.log` | 逐段 `*_EXIT=0`（脚本当时尚未引入自动 `GATE_VERDICT`）；TRUNK DEGRADED 的任务 41/42/43/44/45/49 按 D-T40-1 环境性 OOM 登记 |
+| 54 | `logs/task54-gates-20261110T202656Z.log` | `GATE_VERDICT=PASS`（P0 修复后复跑；**TRUNK=DEGRADED**） |
+| 55 | `logs/task55-gates-20261111T050724Z.log` | `GATE_VERDICT=PASS`（首轮 `source.commit` 戳刷新致 DETERM MISMATCH → FAIL，复跑 BYTE_IDENTICAL；**TRUNK=DEGRADED**） |
+| 56 | `logs/task56-gates-20261111T060902Z.log` | `GATE_VERDICT=PASS`（独立评审 P1 全处置后复跑；**TRUNK=DEGRADED**） |
+| 57 | `logs/task57-m4-matrix-*.log` | 收尾矩阵：文档命令实跑、41–56 日志汇总、上游树守卫；**以日志内 `M4_MATRIX_VERDICT` 为最终口径**，总评审 P0/P1 处置记录见 `tasks.md` Task 57 |
+
+矩阵口径如实披露：41–56 共 **9 个任务的 TRUNK 段 DEGRADED**（41/42/43/44/45/49/54/55/56，
+均为 wasm-bindgen `signal: 9` OOM，D-T40-1 环境性非阻塞），41–53 的
+「逐段 `*_EXIT=0`」判定还包含 Task 49/50 已登记的「存量产物 `source.commit`
+戳刷新 → `DETERM=BYTE_IDENTICAL (rerun)」先例；`gate-task57.sh` 的 `legacy_ok()`
+对这两类例外做**显式证据要求**，无证据即判 FAIL，不做无差别吞错。
+用户 GPU 机器应 `trunk build --release` 一次通过。
+
+九段 = FMT / CLIPPY / TEST / WASM / TREE / DETERM / XCHK / TRUNK / HEADLESS，
+外加 `JS_TREE_CLEAN` + `SIM_TREE_CLEAN` 守卫（NFR-M4-1/4：上游 JS 树与 sim 依赖面零改动）。
