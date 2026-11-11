@@ -419,3 +419,13 @@ Rust 侧提交不再刷新 provenance 戳（D-T37-3 消除，见 `SYNC_LEDGER.md
 
 九段 = FMT / CLIPPY / TEST / WASM / TREE / DETERM / XCHK / TRUNK / HEADLESS，
 外加 `JS_TREE_CLEAN` + `SIM_TREE_CLEAN` 守卫（NFR-M4-1/4：上游 JS 树与 sim 依赖面零改动）。
+
+## 8. M5 与后续（已立项）
+
+**M5 = 表现终稿与内容收尾（Task 58–70）**：kit 武器几何/姿态（bow/brolly/bowl +
+goldens）、Rust 设置屏与持久化、kit SFX 与音频消费者、RenderLayers 多相机分层与
+3D 大厅终稿、音频混响总线、fx composite 与 DOM 叠层、GTAO/grade/SMAA/tilt-shift、
+云/PMREM/海面、3D alley 材质终稿、Boss 高保真模型、locker 更衣室、收尾。
+范围与任务分解见 `.trae/specs/rust-bevy-port-m5/{spec.md,tasks.md}`；双轨验收口径
+（NFR-M4-5）延续，`low` 档保底可玩路径（NFR-M5-5）不破坏。M4 遗留的 GPU 复核项
+在其对应 M5 任务落地前仍按 `.trae/specs/rust-bevy-port-m4/REVIEW_CHECKLIST.md` 有效。

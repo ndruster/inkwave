@@ -7,7 +7,8 @@ M4 扩档图例（Task 57）：`M4 Tn done`（第 n 任务全量移植，含锚�
 `M4 Tn placeholder`（第 n 任务占位档，行为/数据面已验、GPU 视觉面登记复核）·
 `M4 Tn done∗`（含**声明偏差**，逐条见 `.trae/specs/rust-bevy-port-m4/spec.md` §8–§10 / D-T 表）·
 `M4 visual-review`（NFR-M4-5 双轨验收：沙箱无头可测部分已闭环，GPU 观感待用户机器复核）·
-`M4 wontport`（M4 Non-Goal，例如 locker 更衣室、高保真 Boss 模型、设置屏属 M5）。
+`M4 wontport`（M4 Non-Goal；其中 locker 更衣室、高保真 Boss 模型、Rust 设置屏、
+DOM 名牌叠层已转入 **M5** 立项范围，见 `.trae/specs/rust-bevy-port-m5/`）。
 
 ## 技术栈基线
 
@@ -63,7 +64,8 @@ Phase C 表现完整度 49–56 → 收尾 57。上表历史 `M2+` 行按本节�
 **双轨验收（NFR-M4-5）**：无头可测部分（提取确定性、独立 crosscheck、锚定单测、
 headless 600 帧、wasm check、九段门禁）全部闭环；GPU 观感/听感共 11 类清单统一登记
 `.trae/specs/rust-bevy-port-m4/REVIEW_CHECKLIST.md`「逐任务复核记录」与「M4 汇总复核清单」。
-`M4 wontport`：locker 更衣室、高保真 Boss 模型、Rust 设置屏（M5）、DOM 名牌叠层。
+`M4 wontport`：locker 更衣室、高保真 Boss 模型、Rust 设置屏、DOM 名牌叠层——
+均已转入 **M5** 立项（Task 59/62/68/69，见 `.trae/specs/rust-bevy-port-m5/tasks.md`）。
 
 ## 质量档位
 
