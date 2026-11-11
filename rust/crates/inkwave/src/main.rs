@@ -21,6 +21,9 @@ mod boss_render;
 // Task 54 batch B1: the character spring-pose runtime (≡ src/game/
 // character.js) — headless data core, pinned by char_pose_reference_pinned.
 mod char;
+// Task 55 batch A: the extracted THEMES / grade / QUALITY data layer
+// (≡ environment.js + renderer.js + config.js, no GPU dependencies).
+mod environment;
 // Task 51: the FX system (≡ src/fx/fx.js + fxHooks.js) — data core, batched
 // quad renderer and the gameplay → VFX hooks, wired by `WorldPlugin`.
 mod fx;
@@ -35,7 +38,9 @@ mod nettest;
 // Task 53 (D-T53-2): the props runtime — IKP1 archive decode + dressing/decor
 // spawn + spin/blink animation (≡ PropKit.build/update).
 mod props;
-#[allow(dead_code)] // Task 55 消费后移除
+// Task 55: environment.rs now owns the extracted QUALITY table; the legacy
+// QualityTier accessors stay as pinned test/compat anchors (dead_code allow).
+#[allow(dead_code)]
 mod quality;
 // Task 52: schema/materials/bake/res are all wired through
 // `level_render` + `world::build_level_world` (batch E2 bake + upload).

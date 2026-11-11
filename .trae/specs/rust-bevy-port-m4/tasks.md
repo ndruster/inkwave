@@ -335,7 +335,7 @@
 - **评审**：独立只读评审 **PASS-with-fixes（1 P0 / 4 P1 / 6 P2）**。P0 已修+复验；P1-1 bow/brolly/bowl 几何+`poseBow` 缺口登记为 D-T54-5⑩；P1-2 门禁完整复跑（评审读到的是运行中日志，实为完整 PASS）；P1-3 LOD 运行期档位切换并入 Task 55 质量档位系统（D-T54-5⑪）；P1-4 muzzle/head 查询 API 无运行期消费者登记 D-T54-5⑫；P2 清理过时注释（harness 头注/mod.rs/anim.rs/build.rs/bridge.rs 测试名）、其余留档。
 
 ## Task 55: 环境（黄昏/海况）+ 后处理链 + 质量档位
-- **Status**: `pending`
+- **Status**: `completed`（2026-11-11 完成；无头可测部分全绿，GPU 视觉项按 NFR-M4-5 登记复核；证据见下方 Completion Evidence 与 spec.md「§9 Task 55 收口注记」）
 - **Priority**: medium
 - **Depends On**: Task 54
 - **Description**: `environment.js`（3116：黄昏主题/海况/灯光烘焙档）；`renderer.js`（218：GTAO/bloom/grade/SMAA/tilt-shift diorama）；质量档位系统（低/中/高/ultra + K 键并入）。
@@ -344,6 +344,15 @@
   - `rule` TR-55.1: 主题参数提取锚定；档位开关组合冒烟（headless/wasm 不 panic）。
   - `rule` TR-55.2: REVIEW_CHECKLIST 视觉登记（黄昏档/后处理逐档）。
 - **Notes**: SwiftShader 环境后处理需可全关（保底可玩路径）。
+
+### Task 55 Completion Evidence（2026-11-11）
+- **批次 A（数据层）✅**：`rust/tools/extract/extract-environment.mjs` 真实模块切片 eval（`THEMES` 三档全字段 / `BLOOM` / `GradeShader.uniforms` / `QUALITY` 四档 / `DEFAULT_SETTINGS` / `TIMES` / `MAPS` + 真 `mapTheme()` 逐图求值）+ `assertContains` 钉源 → `rust/assets/environment.json`（7.7 KB，stable-json）；纳入 `run-all.sh`；`crates/inkwave/src/environment.rs` 纯数据层（JVal，无手抄数字）：`Theme`/`Grade::defaults()+主题 overlay`/`QualityPreset` 四档/`map_theme()`/`default_settings()`；10 个单测锚定三主题关键值、grade 覆盖链、档位真值表、mapTheme 回退、4 档×3 主题组合 finite。`rust/tools/environment-crosscheck.mjs` 用**独立正则重解析** JS 源对账 93 checks（4 档全字段 / 3 主题 sunIntensity·night·fog·bloom / 8 图 times / grade+bloom 默认值）。
+- **批次 B（接线）✅**：`EnvParams`/`EnvState`/`env_params(theme,tier)`（含 `horizon.lerp(skyMid,0.15)` 雾色、档位开关组合、`char_tier` 角色 LOD 直切）；`world.rs` 移除 SKY/FOG/SUN 等 7 个硬编码常量，灯光/环境光/清屏色/天空渐变/海面色/雾/阴影贴图尺寸全部改走主题与档位数据；相机按档位挂 Bevy 内建 `Bloom`（替代 JS UnrealBloomPass 的开关语义）；`environment_controls` 系统（K 阴影 / L 档位循环 / T 主题循环）运行时改 ClearColor、GlobalAmbientLight、DirectionalLight、DirectionalLightShadowMap、DistanceFog、相机 Bloom；`actors.rs` 角色 rig 档位由 `EnvState.params.char_tier` 决定（**闭环 Task 54 评审 P1-3 / D-T54-5⑪**）；`main.rs` 挂载 `mod environment`。
+- **TR-55.1 ✅**：12 组（4 档×3 主题）参数组合单测 + `env_state_cycles_tier_and_theme` + `environment-crosscheck` 93 checks + `cargo check --target wasm32-unknown-unknown` rc=0 + headless release 4 个 (theme,tier) 启动组合各 600 帧 + boss 600 帧零 panic；`Low` 档 `post_enabled=false` = SwiftShader 全关保底路径。
+- **TR-55.2 ✅**：REVIEW_CHECKLIST「Task 55」10 项逐档视觉/听感登记（黄昏主题、逐档后处理、低配全关可玩、天空/海面/云、角色 LOD 切档等）待用户 GPU 机器复核。
+- **九段门禁**：`rust/tools/verify/gate-task55.sh`（DETERM 扩 environment.json 且校验 Task 54 四个 char 产物哈希不变；XCHK 扩 environment-crosscheck + environment 单测 + 既有 props/pose 回归；HEADLESS 扩 4 组合；自动 PASS/FAIL 判定）。首轮 `task55-gates-20261110T205717Z.log` 仅 DETERM=MISMATCH（`source.commit` 戳刷新，Task 48/49/50/52 同类先例）→ FAIL；复跑 `task55-gates-20261111T050724Z.log` DETERM=BYTE_IDENTICAL、全段 0、TRUNK=DEGRADED（D-T40-1）、**GATE_VERDICT=PASS** 为最终口径（详见 spec.md §9）。
+- **基线**：workspace 997→**1007 passed**（inkwave 368→378，新增 10 测；sim 601 不变），单调递增；`inkwave_sim` 依赖面不变、无新增 Cargo 依赖；JS 树/`server/` 零改动。
+- **声明偏差（D-T55）**：①主题色按 sRGB hex 直读不做 linear 转换；②`dusk` 经 `mapTheme` 落 `sunset`；③tilt-shift 属 DOM/cameraRig 而非 renderer pass；④K 键是 Rust 自有；⑤ultra/high 仅 pixelRatio 不同（数据层保留四档，三档内部折叠）；⑥JS medium 实际 texlib bake=256 沿用 Task 52 登记；⑦运行时切档不重建天空渐变贴图与已生成角色 rig（下次关卡/spawn 生效），GTAO/grade/SMAA/screenfx composite/云烘焙/PMREM/远景反射/海面 swell·marina·泡沫均属 GPU 视觉复核项，按 NFR-M4-5 登记而非沙箱伪验收。
 
 ## Task 56: showcase 大厅
 - **Status**: `pending`

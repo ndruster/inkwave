@@ -644,3 +644,33 @@ AC-M4-4（boss 呈现部分）：可玩（弹丸掉血/胜负可达）+ 可读�
 
 **测试面**：TR-55.1=提取确定性 + 主题/grade/档位/mapTheme 锚定单测 + 4 档×3 主题组合 headless/wasm 不 panic；TR-55.2=黄昏档/GTAO/bloom/SMAA/逐档后处理/低配全关可玩路径登记 REVIEW_CHECKLIST 待用户 GPU 机器复核。
 
+## §9 Task 55 收口注记（2026-11-11）
+
+- **交付**：批次 A 数据层（`extract-environment.mjs` → `environment.json` 7.7 KB；`environment.rs` 10 单测；`environment-crosscheck.mjs` 独立 93 checks）；批次 B 接线（`EnvParams`/`EnvState`/`env_params`，`world.rs` 七处硬编码常量→主题/档位数据、`environment_controls` K/L/T 运行时控制、相机内建 Bloom 按档位挂/关、`actors.rs` 角色 LOD 档位直切）；批次 C GPU 视觉项按 NFR-M4-5 登记；批次 D 门禁与台账。逐项证据见 `tasks.md`「Task 55 Completion Evidence」。
+- **跨任务闭环**：Task 54 评审 P1-3 / D-T54-5⑪「LOD 运行期档位切换并入 Task 55」已落地——`EnvParams.char_tier` 由 `QualityPreset` 推导（low=far / medium=game / high·ultra=hero），`spawn_actors` 与 `sync_actor_count` 均从 `EnvState` 读取；运行期 L 键切档后新建 rig 即按新档生成。
+- **九段门禁**：`rust/tools/verify/gate-task55.sh` 逐段记录 `*_EXIT` 并自动判定（TRUNK 仅允许 D-T40-1 OOM DEGRADED）。首轮 `task55-gates-20261110T205717Z.log`：FMT/CLIPPY/TEST(1007)/WASM/TREE/XCHK 四路/HEADLESS 4×600 帧 + boss 600 帧/JS_TREE_CLEAN/SIM_TREE_CLEAN 全 0，但 **DETERM=MISMATCH**（仅 `environment.json` 的 `source.commit` 戳刷新，diff 核实为单一字段；Task 48/49/50/52 同类先例）→ `GATE_VERDICT=FAIL`，不作完成依据；复跑 `task55-gates-20261111T050724Z.log`：**DETERM=BYTE_IDENTICAL**、全段 `*_EXIT=0`、TRUNK=DEGRADED（wasm-bindgen `signal: 9` ×2，D-T40-1 环境性）、`GATE_VERDICT=PASS` / `GATES_DONE`，为最终口径。两份日志均落盘留痕，不覆盖首轮 FAIL 记录。
+- **基线**：workspace 997→**1007 passed** 单调递增（inkwave 368→378）；`inkwave_sim` 601 与依赖面不变；JS 树/`server/` 零改动；无新增 Cargo 依赖。
+- **双轨验收**：无头可测（数据锚定/独立对账/12 组合/档位循环/wasm check/headless 不 panic）全部闭环；黄昏档色彩、GTAO/grade/SMAA/tilt-shift/screenfx composite、天空云/PMREM/远景反射、海面 swell/marina/泡沫、逐档 Bloom 观感、低配全关可玩性共 10 项登记 `REVIEW_CHECKLIST.md`「Task 55」待用户 GPU 机器复核。
+- **定案**：Task 55 完成。`D-T55-⑦` 新增登记：运行时切档不重建天空渐变贴图与已生成 rig，GPU 观感项不做沙箱伪验收；PORT_MAP/SYNC_LEDGER 的 M4 章节按 Task 57 统一补齐。
+
+## Task 56 实施设计（2026-11-11，实读锚点后定稿）
+
+**范围**（tasks.md Task 56 / FR-M4-17 / TR-56.1-2）：`src/game/showcase.js`（3109，常驻单例：展示台/结算台/大厅调度）+ `lobbySet.js`（蓝调后巷 3D 场景）+ `lobbySet-geo/mats/tex.js` → Rust 状态层 + 布局数据 + Bevy 接线；低配档保留现有极简 Bevy UI 大厅（tasks.md Notes）。沙箱无 GPU，视觉项走 NFR-M4-5 双轨登记。
+
+**调研锚点（实核）**：
+- `showcase.js` 头注 L1-26 即契约；`export class Showcase` L923；`PED/DRUM/SLOTS/CHAR_H/LOAD_FOCUS_Y` L49-59、`PEDESTAL/OVERLAY/SET_MODES/SET_FADE/GLIDE/PLATE_H/SWIM` L60-71、`LOB_EMOTES` L73-77；API `showLoadout` L1104、`showResults` L1201、`hide` L1234、`update` L1254、`showHub` L1680（L1107 为残留定义）、`showLobby` L1716、`updateLobby` L1739、`lobbyAnchor/lobbySlotAnchor` L2056/2065、`fullFrame` L1570-1573。
+- loadout 联动：`_showPedestal` L1146-1155（weapon 变 → hop+twirl+武器半空生成+splash；style 变 → `setStyle` L1159-1170 的 pop/dip；`_swapChar` L1181-1199 预热 16 帧）；比较键 `styleKey/weaponKind` L3102-3103。
+- `lobbySet.js`：`ALLEY` L38-43、`CAM` L44、`bear()` L48、`FRONT/BACK` L49-50、`faceCam` L51、`QUALITY` L53-57（high/medium/low → refl .5/.34/0、shadow 2048/1536/1024、steam/extraLights）；8 个 `spots` 由 camera bearing + dock 高度计算 L67；`hubSpot`/camera/hubCamera L68-70；场景自带灯/天空/PMREM，低配退 env map（头注 L11-15）。
+- 房间码/ready：`menus.js` `CODE_ABC` L36-37、5 格输入 L2404-2612，`session.js` L169/L205/L224；`showcase.js` `lobbyAnchor` 投影 3D 站位为 DOM 名牌锚点（L2076 注），`menus.js` L3535-3582 每帧跟随；`updateLobby(players,colors)` L1739-1754。
+- Rust 现状：`ui/online.rs` 已有**纯映射层**（`OnlineFacts` L559、`RosterRow` L574、`LobbyView` L610、`OnlineView` L650、`project()` L658），`ui/mod.rs` `Screen::OnlineHub/OnlineLobby` L55-58 + 面板 L1046/L1132；`world.rs` 仅一个 `Camera3d`、`level_render.rs` L424 `cams.iter().next()` 依赖单相机（REVIEW_CHECKLIST L84 已登记多相机前提）；全树无 showcase/LobbySet/pedestal；`char/bridge.rs` 强耦合 `DemoSim`+`paused`，菜单态需独立 preview 驱动；`props/mod.rs` Low 跳 dressing 是低配档先例。
+
+**批次**：
+- **A 状态层（已落地）**：`ui/showcase_state.rs` 纯数据 + `Resource`：`ShowcaseMode`（Hidden/Loadout/Locker/Results/Hub/Lobby + overlay/pedestal/fullFrame 判定）、`ShowcaseCue`（None/HopTwirl/Pop/Dip/SwapChar，≡ L1146-1199）、`apply_loadout()`、`from_online_view(&OnlineView,tier)`（消费现有 `project()`）、`rows_to_members()`（team 0→0..3 / 1→4..7）、`emote()`、enter/hide/leave 幂等序列；7 个单测覆盖联动表、房间码/ready/weapon 映射、低配档门、切换序列。
+- **B 数据提取（已落地）**：`rust/tools/extract/extract-lobbyset.mjs` 真实切片 eval（ALLEY / CAM+bear+FRONT+BACK+faceCam / QUALITY / showcase 常量 / LOB_EMOTES）+ THREE.Vector3 stub + `assertContains` 钉源 → `rust/assets/lobbyset.json`（4.3 KB，8 spots 用真 bearing 求值、cam/hubCamera、pedestal、modes、emotes）；stable-json 连跑逐字节。
+- **C Bevy 接线**：`ui/mod.rs` 声明 `pub mod showcase_state` 并在 `WorldPlugin` 注册 `ShowcaseState`；online 屏更新处用 `project()` 结果同步状态；独立大厅相机需先修 `level_render.rs` 单相机前提（`is_active` 过滤）；preview 角色用 `char::rig::spawn_char_rig(tier:"hero")`（不挂 `char_pose_bridge`，避免 `DemoSim/paused` 耦合）；Low 档不生成 3D 场景（保留极简 UI）。
+- **D 视觉呈现（只登记）**：蓝调 alley/PMREM/湿地面 planar reflection/霓虹/蒸汽、ink pedestal/drips、hop·twirl·dip 泳入路径、名牌 3D 锚定遮挡、cross-dissolve、MSAA/HDR 合成与逐档后处理——全部 REVIEW_CHECKLIST「Task 56」待用户 GPU 机器复核。
+
+**声明偏差（D-T56）**：①3D alley 的材质/shader/反射/PMREM 与名牌 DOM 叠层不移植（GPU 视觉复核）；②`showcase.js` L1107 与 L1680 双 `showHub` 定义按 JS 语义取 L1680；③`LobbySet.QUALITY` 三档与全局 `QUALITY` 四档并存（数据层保留，ultra 折 high）；④角色 preview 不与 `CharBridge` 共用（菜单态独立驱动）；⑤低配档直接用现有 Bevy UI 面板，无 3D 大厅；⑥房间码/ready 复用 `ui::online::project()`，不重实现事件层。
+
+**测试面**：TR-56.1 = 布局数据锚测（8 spots/CAM/QUALITY/PED/emotes）+ loadout→cue 联动 + OnlineView→成员/房间码/ready golden + 低配档门 + 切换序列 fuzz + wasm/headless 不 panic；TR-56.2 = REVIEW_CHECKLIST 逐项视觉登记。
+

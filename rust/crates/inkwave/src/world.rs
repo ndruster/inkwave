@@ -24,22 +24,14 @@ use inkwave_sim::collision::CollisionWorld;
 use inkwave_sim::geometry::{Brush, StageLayout};
 use inkwave_sim::ink_atlas::InkAtlas;
 
+use crate::environment::{EnvState, srgb_color};
 use crate::ink_render::{InkAtlasRes, InkImage};
 use crate::level_render::{LevelExt, LevelMaterial, add_texlib_placeholders};
+use bevy::post_process::bloom::Bloom;
 
-/// Sky clear colour matching `renderer.js` setClearColor (0x9fd8f0).
-const SKY: Color = Color::srgb(0.624, 0.847, 0.941);
-/// Fog colour: `horizon.lerp(skyMid, 0.15)` (environment.js L3039; the raw
-/// horizon #d4ecfa itself only appears in the sky gradient, see `sky_image`).
-const FOG_COLOR: Color = Color::srgb(0.760, 0.886, 0.976);
-/// Day fog range (environment.js L52 `fog: [25, 900]`).
-const FOG_NEAR: f32 = 25.0;
-const FOG_FAR: f32 = 900.0;
-/// Sun colour (`environment.js` day `sunColor` #fff0dc).
-const SUN_COLOR: Color = Color::srgb(1.0, 0.941, 0.863);
-/// Sun azimuth / elevation (deg) for the day theme (`environment.js` L41).
-const SUN_AZ: f32 = 222.0;
-const SUN_EL: f32 = 39.0;
+// Task 55: sky / sun / fog / sea / shadow-size constants are no longer
+// hand-written here. `EnvParams` reads THEMES + QUALITY from the extracted
+// `rust/assets/environment.json` (see `crate::environment`).
 /// Horizontal field of view (settings.fov default, cameraRig.js L180).
 /// cameraRig.js L188 converts it with the FIXED 16/9 reference aspect,
 /// independent of the window size; [`REF_ASPECT`] is that constant.
@@ -443,18 +435,25 @@ fn to_mesh(batch: &Batch) -> Mesh {
     mesh
 }
 
-/// Vertical gradient for the sky dome (zenith #1d6fdc → mid #5aa8f2 → horizon
-/// #d4ecfa, `environment.js` day theme). The gradient is compressed into the
-/// upper hemisphere (v 0..0.5 → zenith→mid→horizon), so the horizon tint
-/// reaches eye level like the upstream shader; the lower half (hidden by the
+/// Vertical gradient for the sky dome (theme zenith → skyMid → horizon,
+/// `environment.js` THEMES). The gradient is compressed into the upper
+/// hemisphere (v 0..0.5 → zenith→mid→horizon), so the horizon tint reaches
+/// eye level like the upstream shader; the lower half (hidden by the
 /// sea/ground) stays horizon-coloured.
-fn sky_image() -> Image {
+fn sky_image(p: &crate::environment::EnvParams) -> Image {
     const W: u32 = 4;
     const H: u32 = 128;
     let mut px = vec![0u8; (W * H * 4) as usize];
-    let zenith = [29u8, 111, 220];
-    let mid = [90u8, 168, 242];
-    let hor = [212u8, 236, 250];
+    let to255 = |c: [f32; 3]| {
+        [
+            (c[0] * 255.0).round() as u8,
+            (c[1] * 255.0).round() as u8,
+            (c[2] * 255.0).round() as u8,
+        ]
+    };
+    let zenith = to255(p.zenith);
+    let mid = to255(p.sky_mid);
+    let hor = to255(p.horizon);
     for y in 0..H {
         let t = (y as f32 / (H - 1) as f32 * 2.0).min(1.0); // 0 = top of the texture
         let (a, b, k) = if t < 0.5 {
@@ -615,12 +614,17 @@ impl Plugin for WorldPlugin {
             paused: true,
             ..default()
         };
+        // Task 55: boot theme/tier from INKWAVE_THEME / INKWAVE_QUALITY; the
+        // extracted data drives clear colour, lights, fog and shadow size.
+        let boot = EnvState::default();
+        let boot_horizon = srgb_color(boot.params.horizon);
         app.add_plugins((
             crate::ink_render::InkPlugin,
             // Task 52 D2: the level uber-shader material.
             crate::level_render::LevelPlugin,
         ))
-        .insert_resource(ClearColor(SKY))
+        .insert_resource(boot)
+        .insert_resource(ClearColor(boot_horizon))
         .insert_resource(LayoutRes(layout))
         .insert_resource(SimWorld(world))
         .insert_resource(atlas)
@@ -731,7 +735,7 @@ impl Plugin for WorldPlugin {
                     crate::nettest::nettest_update,
                     crate::ui::ui_button_style,
                     crate::audio::sfx_gc,
-                    toggle_shadows,
+                    environment_controls,
                     camera_rig,
                     // Task 52 batch E2: ripple / wake / clock uniform wiring
                     // into every level material; runs right after `camera_rig`
@@ -777,12 +781,14 @@ fn build_level_world(
     layout: Res<LayoutRes>,
     sim: Res<SimWorld>,
     atlas_res: Res<InkAtlasRes>,
+    env: Res<EnvState>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut level_materials: ResMut<Assets<LevelMaterial>>,
     mut images: ResMut<Assets<Image>>,
 ) {
     let l = &layout.0;
+    let p = &env.params;
     let ink_tex = images.add(atlas_res.make_image());
     commands.insert_resource(InkImage(ink_tex.clone()));
 
@@ -850,27 +856,27 @@ fn build_level_world(
     let cx = (b.min_x + b.max_x) / 2.0;
     let cz = (b.min_z + b.max_z) / 2.0;
 
-    // Ambient sky fill (day hemiSky #b4d0ff). M1 uses a single ambient term;
-    // upstream also has a hemiGround #dcc3a0×2.2 bounce (environment.js L3036).
+    // Ambient sky fill: theme hemiSky (environment.js L3036 also has a
+    // hemiGround bounce × hemiGroundK; M1 keeps the single ambient term).
     commands.insert_resource(GlobalAmbientLight {
-        color: Color::srgb(0.706, 0.816, 1.0),
-        brightness: 1500.0,
+        color: srgb_color(p.hemi_sky),
+        brightness: 1500.0 * (p.hemi_intensity / 0.45).max(0.1),
         affects_lightmapped_meshes: false,
     });
 
-    // Sun: direction from (SUN_AZ, SUN_EL) — environment.js L2996:
-    // uSunDir = (cos(el)·cos(az), sin(el), cos(el)·sin(az)).
-    // A Bevy directional light shines along its transform's -Z, so -Z = the
-    // travel direction (away from the sun, i.e. -sun_dir).
-    let az = SUN_AZ.to_radians();
-    let el = SUN_EL.to_radians();
+    // Sun: direction from the theme's (sunAz, sunEl) — environment.js L2996:
+    // uSunDir = (cos(el)·cos(az), sin(el), cos(el)·sin(az)). A Bevy
+    // directional light shines along its transform's -Z, so -Z = the travel
+    // direction (away from the sun, i.e. -sun_dir).
+    let az = p.sun_az.to_radians();
+    let el = p.sun_el.to_radians();
     let sun_dir = Vec3::new(el.cos() * az.cos(), el.sin(), el.cos() * az.sin()).normalize();
     commands.spawn((
         SunLight,
         DirectionalLight {
-            color: SUN_COLOR,
-            illuminance: 12000.0,
-            shadow_maps_enabled: true,
+            color: srgb_color(p.sun_color),
+            illuminance: 12000.0 * (p.sun_intensity / 3.3).max(0.1),
+            shadow_maps_enabled: env.shadows,
             ..default()
         },
         CascadeShadowConfigBuilder {
@@ -882,10 +888,12 @@ fn build_level_world(
         .build(),
         Transform::from_rotation(Quat::from_rotation_arc(Vec3::NEG_Z, -sun_dir)),
     ));
-    commands.insert_resource(DirectionalLightShadowMap { size: 2048 });
+    commands.insert_resource(DirectionalLightShadowMap {
+        size: p.shadow_size as usize,
+    });
 
     // Sky dome: inside-out gradient sphere (unlit).
-    let sky_tex = images.add(sky_image());
+    let sky_tex = images.add(sky_image(p));
     let mut dome = Batch::default();
     emit_sphere(&mut dome, Vec3::new(cx, 0.0, cz), 1200.0, 24, 16);
     let dome_mesh = meshes.add(to_mesh(&dome));
@@ -910,7 +918,8 @@ fn build_level_world(
     );
     let sea_mesh = meshes.add(to_mesh(&sea));
     let sea_mat = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.039, 0.31, 0.541, 0.78), // day seaDeep #0a4f8a
+        // theme seaDeep (#0a4f8a for day, #1a2c5e at dusk).
+        base_color: Color::srgba(p.sea_deep[0], p.sea_deep[1], p.sea_deep[2], 0.78),
         perceptual_roughness: 0.12,
         alpha_mode: AlphaMode::Blend,
         fog_enabled: false, // upstream seaMat: fog false (environment.js L1774)
@@ -946,26 +955,38 @@ fn build_level_world(
     }
 
     // ---- camera ----
-    commands.spawn((
-        Camera3d::default(),
-        Projection::from(PerspectiveProjection {
-            // cameraRig.js L188: vertical FOV from the horizontal 82° at the
-            // fixed 16/9 reference; Bevy derives `aspect` from the window.
-            fov: vfov(BASE_FOV_H, REF_ASPECT).to_radians(),
-            near: 0.15,
-            far: 6500.0,
-            ..default()
-        }),
-        DistanceFog {
-            color: FOG_COLOR,
-            falloff: FogFalloff::Linear {
-                start: FOG_NEAR,
-                end: FOG_FAR,
+    // Fog: theme `fog near/far` + `horizon.lerp(skyMid, 0.15)`
+    // (environment.js L3039-3040). Bloom: Bevy's built-in post-process
+    // replaces the JS UnrealBloomPass for the tier's on/off gate; GTAO /
+    // grade / SMAA / tilt-shift remain GPU-review items (D-T55-③).
+    let cam = commands
+        .spawn((
+            Camera3d::default(),
+            Projection::from(PerspectiveProjection {
+                // cameraRig.js L188: vertical FOV from the horizontal 82° at
+                // the fixed 16/9 reference; Bevy derives `aspect` from the window.
+                fov: vfov(BASE_FOV_H, REF_ASPECT).to_radians(),
+                near: 0.15,
+                far: 6500.0,
+                ..default()
+            }),
+            DistanceFog {
+                color: srgb_color(p.fog_color),
+                falloff: FogFalloff::Linear {
+                    start: p.fog[0],
+                    end: p.fog[1],
+                },
+                ..default()
             },
+            Transform::from_translation(Vec3::new(0.0, 4.0, -50.0)),
+        ))
+        .id();
+    if p.bloom {
+        commands.entity(cam).insert(Bloom {
+            intensity: p.grade.bloom[0],
             ..default()
-        },
-        Transform::from_translation(Vec3::new(0.0, 4.0, -50.0)),
-    ));
+        });
+    }
 
     // TR-10.1 entity-count log (cross-check against layout meta).
     println!(
@@ -978,20 +999,70 @@ fn build_level_world(
     );
 }
 
-/// `K` toggles sun shadows (spec: 阴影可开关).
-fn toggle_shadows(
+/// Task 55 runtime environment controls: `K` shadows, `L` quality tier,
+/// `T` theme. Changes apply to the live render resources (clear colour,
+/// ambient, sun, shadow-map size, fog, camera bloom). The sky dome texture
+/// and already-spawned character rigs keep their boot values until the level
+/// is rebuilt — D-T55-⑦ (the JS settings UI itself is M5 scope).
+#[allow(clippy::too_many_arguments)]
+fn environment_controls(
     keys: Res<ButtonInput<KeyCode>>,
-    mut sun: Query<&mut DirectionalLight, With<SunLight>>,
+    mut state: ResMut<EnvState>,
+    mut clear: ResMut<ClearColor>,
+    mut ambient: ResMut<GlobalAmbientLight>,
+    mut shadow_map: ResMut<DirectionalLightShadowMap>,
+    mut sun: Query<&mut DirectionalLight>,
+    mut fog: Query<&mut DistanceFog>,
+    cameras: Query<Entity, With<Camera3d>>,
+    mut commands: Commands,
 ) {
+    let mut changed = false;
     if keys.just_pressed(KeyCode::KeyK) {
-        for mut l in sun.iter_mut() {
-            l.shadow_maps_enabled = !l.shadow_maps_enabled;
-            println!(
-                "[inkwave] shadows {}",
-                if l.shadow_maps_enabled { "ON" } else { "OFF" }
-            );
+        state.shadows = !state.shadows;
+        changed = true;
+    }
+    if keys.just_pressed(KeyCode::KeyL) {
+        state.cycle_tier();
+        changed = true;
+    }
+    if keys.just_pressed(KeyCode::KeyT) {
+        state.cycle_theme();
+        changed = true;
+    }
+    if !changed {
+        return;
+    }
+    let p = &state.params;
+    clear.0 = srgb_color(p.horizon);
+    ambient.color = srgb_color(p.hemi_sky);
+    ambient.brightness = 1500.0 * (p.hemi_intensity / 0.45).max(0.1);
+    shadow_map.size = p.shadow_size as usize;
+    for mut l in &mut sun {
+        l.color = srgb_color(p.sun_color);
+        l.illuminance = 12000.0 * (p.sun_intensity / 3.3).max(0.1);
+        l.shadow_maps_enabled = state.shadows;
+    }
+    for mut f in &mut fog {
+        f.color = srgb_color(p.fog_color);
+        f.falloff = FogFalloff::Linear {
+            start: p.fog[0],
+            end: p.fog[1],
+        };
+    }
+    for e in &cameras {
+        if p.bloom {
+            commands.entity(e).insert(Bloom {
+                intensity: p.grade.bloom[0],
+                ..default()
+            });
+        } else {
+            commands.entity(e).remove::<Bloom>();
         }
     }
+    println!(
+        "[inkwave] env: theme={} tier={} shadows={} bloom={} ao={} char_lod={} post={}",
+        p.theme, p.tier, state.shadows, p.bloom, p.ao, p.char_tier, p.post_enabled
+    );
 }
 
 /// Third-person follow of the local player (`demo.player_slot` — slot 0

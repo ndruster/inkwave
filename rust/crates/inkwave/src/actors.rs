@@ -84,6 +84,7 @@ pub fn spawn_actors(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     demo: Res<DemoSim>,
+    env: Res<crate::environment::EnvState>,
 ) {
     let (Some(archive), Some(manifest)) = (rig::load_archive(), rig::manifest()) else {
         return;
@@ -99,15 +100,17 @@ pub fn spawn_actors(
             slot,
             a,
             kind,
+            env.params.char_tier,
         );
     }
 }
 
 /// One slot's rig spawn + the legacy root markers the pinned `world.rs`
 /// queries key on.
-// All eight inputs are distinct borrows the Bevy resource split hands us
+// All inputs are distinct borrows the Bevy resource split hands us
 // (`Commands` + two asset collections + the two baked char assets + slot
-// index + sim actor + weapon kind); bundling them would only hide the split.
+// index + sim actor + weapon kind + quality tier); bundling them would only
+// hide the split.
 #[allow(clippy::too_many_arguments)]
 fn spawn_slot_rig(
     commands: &mut Commands,
@@ -118,9 +121,10 @@ fn spawn_slot_rig(
     slot: usize,
     a: &inkwave_sim::actor::Actor,
     kind: Option<&str>,
+    tier: &'static str,
 ) {
     let opts = RigSpawnOpts {
-        tier: "game",
+        tier,
         weapon: kind,
         bomb: a.sub == SubKind::Bomb,
     };
@@ -140,6 +144,7 @@ fn spawn_slot_rig(
 pub fn sync_actor_count(
     mut commands: Commands,
     demo: Res<DemoSim>,
+    env: Res<crate::environment::EnvState>,
     roots: Query<Entity, (With<ActorRoot>, Without<ActorPart>)>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -167,6 +172,7 @@ pub fn sync_actor_count(
             slot,
             a,
             kind,
+            env.params.char_tier,
         );
     }
 }
@@ -255,7 +261,8 @@ mod tests {
             .init_asset::<StandardMaterial>()
             .insert_resource(demo)
             .insert_resource(atlas)
-            .insert_resource(PlayerControls::default());
+            .insert_resource(PlayerControls::default())
+            .init_resource::<crate::environment::EnvState>();
         app.add_systems(Startup, spawn_actors);
         app.add_systems(Update, sync_actors);
         app.update(); // Startup: spawn_actors

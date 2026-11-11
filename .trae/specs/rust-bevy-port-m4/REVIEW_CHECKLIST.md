@@ -124,3 +124,15 @@
 - **9 角色性能预算**：headless 600 帧 turf + 600 帧 boss 零 panic、≤45 draw calls 静态+逐 slot 双测；真机留意 8 players + boss 满场 rig 树帧率。
 - **wasm 体积与构建**：内嵌 4.63 MB 使 wasm 增大；trunk release 在本沙箱持续 OOM SIGKILL（TRUNK=DEGRADED，D-T40-1 先例），用户机确认一次构建通过且首屏加载可接受。
 - **评审处置**：独立评审 PASS-with-fixes（1 P0 / 4 P1 / 6 P2）——P0 当场修复+九段门禁复跑，P1 全部登记偏差或跨任务接线，P2 过时注释已清理；详见 `spec.md` §8 与 `tasks.md` Completion Evidence。
+
+### Task 55 环境 / 后处理 / 质量档位（2026-11-11 登记；沙箱无 GPU，以下均需用户机器复核）
+- **主题色彩**：day/sunset(dusk)/golden 三档在真机对照 JS 浏览器版——清屏色、天空穹顶 zenith→skyMid→horizon 渐变、太阳方位/强度、hemi 环境光、海面 seaDeep、雾色 `horizon.lerp(skyMid,0.15)` 与 near/far（`?time=dusk` 或 `INKWAVE_THEME=sunset`，Rust 用 `T` 键循环）。
+- **档位观感**：`L` 键循环 low/medium/high/ultra——阴影贴图 1024/2048/4096、像素比 0.75/1/1.5/2、MSAA 0/2/4、粒子 0.4/0.7/1、角色 rig far/game/hero 直切、Bloom 开关；对照 `renderer.js` L128-149 与 `QUALITY` 表。
+- **低配全关保底**：`low` 档 `post_processing_enabled=false`（无 bloom/ao/msaa），headless/SwiftShader 路径不加载 WorldPlugin；确认低端机仍可玩、无 shader 崩溃。
+- **后处理链缺口**：Bevy 内建 `Bloom` 仅替代 UnrealBloomPass 的**开关**；GTAO（`q.ao`）、GradeShader 12 uniform（sat/vib/contrast/split-tone/vignette/hurt/flash）、SMAA、tilt-shift diorama（`diorama.js` DOM 叠层 + `cameraRig.js` 俯拍）、screenfx composite pass（Task 51 顺延项）均未移植，逐档对照 JS 观感。
+- **天空/海面 GPU 面**：云烘焙 2048×640、PMREM sky IBL、远景 cube reflection、海面 swell / marina 平面反射 / 泡沫湿带 / 灯塔夜间光束（`night`）均为占位或无，重点复核黄昏档天空与水面。
+- **运行时切档边界（D-T55-⑦）**：`K/L/T` 只更新 ClearColor / 环境光 / 太阳 / 阴影尺寸 / 雾 / 相机 Bloom；天空渐变贴图与已生成角色 rig 保留启动值，需重建关卡/名册才切档——确认观感上是否突兀。
+- **sRGB 口径（D-T55-①）**：主题 hex 直读 sRGB 0..1，未做 THREE.Color linear 转换；复核与 JS 明暗/饱和度的偏差。
+- **wasm 构建**：TRUNK 段在本沙箱持续 OOM SIGKILL（DEGRADED 先例）；用户机确认一次构建通过、Bloom/Hdr 相机组件在 WebGL2 下不报错。
+- **档位来源**：`INKWAVE_QUALITY`（low/medium/high/ultra）与 `INKWAVE_THEME`（day/dusk/golden）启动时读取；JS 侧由设置菜单持久化，Rust 设置屏属 M5。
+- **评审/门禁**：九段门禁 `gate-task55.sh`、独立 `environment-crosscheck.mjs` 93 checks、12 组参数单测全绿；见 `spec.md` §9 与 `tasks.md` Completion Evidence。

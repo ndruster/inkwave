@@ -1,0 +1,412 @@
+{
+  "bloomDefault": [
+    0.28,
+    0.45,
+    2.4
+  ],
+  "defaultSettings": {
+    "aimAssist": 1,
+    "aimAssistMouse": false,
+    "bloom": true,
+    "cameraShake": 1,
+    "colorblind": false,
+    "difficulty": "normal",
+    "fov": 82,
+    "fpsCap": 0,
+    "invertY": false,
+    "lastMode": "turf",
+    "master": 0.8,
+    "matchLength": 180,
+    "minimap": true,
+    "music": 0.6,
+    "padSensitivity": 1,
+    "quality": "high",
+    "rumble": 1,
+    "sensitivity": 1,
+    "sfx": 0.85,
+    "shadows": true,
+    "showFps": false
+  },
+  "gradeDefaults": {
+    "uAspect": 1.7,
+    "uContrast": 1.07,
+    "uExposure": 1,
+    "uFlash": 0,
+    "uHighTint": [
+      1.025,
+      1,
+      0.972
+    ],
+    "uHurt": 0,
+    "uHurtColor": [
+      1,
+      0.2,
+      0.3
+    ],
+    "uLift": 0,
+    "uSat": 1.08,
+    "uShadowTint": [
+      0.975,
+      0.99,
+      1.035
+    ],
+    "uVib": 0.12,
+    "uVignette": 0.22
+  },
+  "mapThemes": {
+    "cargo": {
+      "day": "day",
+      "dusk": "sunset",
+      "flags": {
+        "noBoss": true,
+        "noBots": true,
+        "onlineOnly": true
+      },
+      "theme": "day"
+    },
+    "crossmarket": {
+      "day": "golden",
+      "dusk": "sunset",
+      "flags": {},
+      "theme": "golden"
+    },
+    "halyard": {
+      "day": "golden",
+      "dusk": "sunset",
+      "flags": {},
+      "theme": "golden"
+    },
+    "kelpline": {
+      "day": "day",
+      "dusk": "sunset",
+      "flags": {},
+      "theme": "day"
+    },
+    "lockgate": {
+      "day": "day",
+      "dusk": "sunset",
+      "flags": {},
+      "theme": "day"
+    },
+    "saltpan": {
+      "day": "day",
+      "dusk": "sunset",
+      "flags": {},
+      "theme": "day"
+    },
+    "terraces": {
+      "day": "golden",
+      "dusk": "sunset",
+      "flags": {},
+      "theme": "golden"
+    },
+    "tidewater": {
+      "day": "day",
+      "dusk": "sunset",
+      "flags": {},
+      "theme": "day"
+    }
+  },
+  "quality": {
+    "high": {
+      "ao": true,
+      "bloom": true,
+      "msaa": 4,
+      "paintAtlas": 4096,
+      "particles": 1,
+      "pixelRatio": 1.5,
+      "shadowSize": 4096
+    },
+    "low": {
+      "ao": false,
+      "bloom": false,
+      "msaa": 0,
+      "paintAtlas": 2048,
+      "particles": 0.4,
+      "pixelRatio": 0.75,
+      "shadowSize": 1024
+    },
+    "medium": {
+      "ao": false,
+      "bloom": true,
+      "msaa": 2,
+      "paintAtlas": 2048,
+      "particles": 0.7,
+      "pixelRatio": 1,
+      "shadowSize": 2048
+    },
+    "ultra": {
+      "ao": true,
+      "bloom": true,
+      "msaa": 4,
+      "paintAtlas": 4096,
+      "particles": 1,
+      "pixelRatio": 2,
+      "shadowSize": 4096
+    }
+  },
+  "schema": 1,
+  "source": {
+    "commit": "0d7ab048e3ff3f44d07f999027e8e30e99130057",
+    "files": [
+      "src/world/environment.js",
+      "src/core/renderer.js",
+      "src/config.js"
+    ]
+  },
+  "themes": {
+    "day": {
+      "cloud": [
+        0.44,
+        1,
+        1,
+        0.5
+      ],
+      "cloudLit": "#ffffff",
+      "cloudLitK": 0.94,
+      "cloudShade": "#a9bfdc",
+      "envK": 0.45,
+      "foam": "#f7fcff",
+      "fog": [
+        25,
+        900
+      ],
+      "glow": [
+        900,
+        0.9,
+        7,
+        0.06
+      ],
+      "glowColor": "#fff0cc",
+      "grade": {
+        "uContrast": 1.09,
+        "uExposure": 0.9,
+        "uHighTint": [
+          1.035,
+          1,
+          0.955
+        ],
+        "uLift": 0,
+        "uSat": 1.1,
+        "uShadowTint": [
+          0.92,
+          0.97,
+          1.1
+        ],
+        "uVib": 0.12,
+        "uVignette": 0.2
+      },
+      "ground": "#6fa4bd",
+      "haze": [
+        0.0005405405405405405,
+        0.9,
+        260
+      ],
+      "hemiGround": "#dcc3a0",
+      "hemiGroundK": 2.2,
+      "hemiIntensity": 0.45,
+      "hemiSky": "#b4d0ff",
+      "horizon": "#d4ecfa",
+      "horizonGlow": "#fff4dc",
+      "horizonGlowK": 0.05,
+      "marina": {
+        "calm": 0.55,
+        "caustic": 2,
+        "channel": "#0b4552",
+        "lap": 1,
+        "shade": "#05121a",
+        "wet": 0.5
+      },
+      "night": 0,
+      "seaAmbientK": 0.62,
+      "seaCrest": "#48e2d6",
+      "seaDeep": "#0a4f8a",
+      "seaShallow": "#12a7b8",
+      "skyMid": "#5aa8f2",
+      "skySun": 2.75,
+      "sunAz": 222,
+      "sunColor": "#fff0dc",
+      "sunDisk": "#fff6e6",
+      "sunDiskK": 34,
+      "sunEl": 39,
+      "sunIntensity": 3.3,
+      "sunRadius": 1.25,
+      "sunSpec": 1,
+      "waveStrength": 1,
+      "zenith": "#1d6fdc"
+    },
+    "golden": {
+      "cloud": [
+        0.42,
+        1,
+        0.85,
+        0.46
+      ],
+      "cloudCov": 0.4,
+      "cloudLit": "#f4fbf4",
+      "cloudLitK": 0.95,
+      "cloudSeed": 7,
+      "cloudShade": "#909fbc",
+      "envK": 0.5,
+      "foam": "#fff6ea",
+      "fog": [
+        30,
+        1000
+      ],
+      "glow": [
+        480,
+        1.5,
+        6,
+        0.24
+      ],
+      "glowColor": "#ffd29a",
+      "grade": {
+        "uContrast": 1.1,
+        "uExposure": 0.95,
+        "uHighTint": [
+          1.06,
+          1,
+          0.925
+        ],
+        "uLift": 0,
+        "uSat": 1.05,
+        "uShadowTint": [
+          0.93,
+          0.98,
+          1.09
+        ],
+        "uVib": 0.12,
+        "uVignette": 0.22
+      },
+      "ground": "#5b7d90",
+      "haze": [
+        0.0006060606060606061,
+        0.9,
+        240
+      ],
+      "hemiGround": "#cfb08a",
+      "hemiGroundK": 1.8,
+      "hemiIntensity": 0.42,
+      "hemiSky": "#aecaf0",
+      "horizon": "#f0d8b8",
+      "horizonGlow": "#ffbf80",
+      "horizonGlowK": 0.3,
+      "marina": {
+        "calm": 0.55,
+        "caustic": 2.2,
+        "channel": "#0d3a37",
+        "lap": 1,
+        "shade": "#06110f",
+        "wet": 0.55
+      },
+      "night": 0,
+      "seaAmbientK": 0.6,
+      "seaCrest": "#5fc9b6",
+      "seaDeep": "#0a3f53",
+      "seaShallow": "#16707a",
+      "shafts": 1,
+      "skyMid": "#72a3d6",
+      "skySun": 3.35,
+      "sunAz": 194,
+      "sunColor": "#ffd9ae",
+      "sunDisk": "#fff1d8",
+      "sunDiskK": 26,
+      "sunEl": 28,
+      "sunIntensity": 3.6,
+      "sunRadius": 1.35,
+      "sunSpec": 1.2,
+      "waveStrength": 0.8,
+      "zenith": "#2a62b2"
+    },
+    "sunset": {
+      "cloud": [
+        0.4,
+        1,
+        1,
+        0.44
+      ],
+      "cloudLit": "#ffc39a",
+      "cloudLitK": 0.95,
+      "cloudShade": "#62598f",
+      "envK": 0.42,
+      "foam": "#ffe2cf",
+      "fog": [
+        25,
+        800
+      ],
+      "glow": [
+        260,
+        2.2,
+        5.5,
+        0.55
+      ],
+      "glowColor": "#ffb35c",
+      "grade": {
+        "bloom": [
+          0.4,
+          0.55,
+          1.7
+        ],
+        "uContrast": 1.07,
+        "uExposure": 1,
+        "uHighTint": [
+          1.07,
+          1,
+          0.88
+        ],
+        "uLift": 0,
+        "uSat": 1.05,
+        "uShadowTint": [
+          0.88,
+          0.96,
+          1.16
+        ],
+        "uVib": 0.1,
+        "uVignette": 0.28
+      },
+      "ground": "#4a4f7a",
+      "haze": [
+        0.0009090909090909091,
+        0.9,
+        260
+      ],
+      "hemiGround": "#c08a66",
+      "hemiGroundK": 1.6,
+      "hemiIntensity": 0.6,
+      "hemiSky": "#5e7fd6",
+      "horizon": "#ffa266",
+      "horizonGlow": "#ff8a4a",
+      "horizonGlowK": 0.55,
+      "marina": {
+        "calm": 0.55,
+        "caustic": 1.7,
+        "channel": "#132140",
+        "lap": 1,
+        "shade": "#04060d",
+        "wet": 0.55
+      },
+      "night": 1,
+      "seaAmbientK": 0.5,
+      "seaCrest": "#6a8fc4",
+      "seaDeep": "#1a2c5e",
+      "seaShallow": "#2f6f8f",
+      "skyMid": "#56509e",
+      "skySun": 3.7,
+      "sunAz": 206,
+      "sunColor": "#ffac4c",
+      "sunDisk": "#ffd9a0",
+      "sunDiskK": 22,
+      "sunEl": 15,
+      "sunIntensity": 4.6,
+      "sunRadius": 1.7,
+      "sunSpec": 1.35,
+      "waveStrength": 1,
+      "zenith": "#1b2768"
+    }
+  },
+  "times": [
+    "day",
+    "dusk"
+  ]
+}
+

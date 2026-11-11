@@ -1267,7 +1267,8 @@ mod tests {
                 std::time::Duration::from_secs_f64(1.0 / 60.0),
             ))
             .init_resource::<Script>()
-            .init_resource::<CharBridge>();
+            .init_resource::<CharBridge>()
+            .init_resource::<crate::environment::EnvState>();
         app.add_systems(Startup, spawn_actors);
         app.add_systems(
             Update,
