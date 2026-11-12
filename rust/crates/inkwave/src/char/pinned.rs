@@ -580,6 +580,34 @@ fn char_pose_reference_pinned() {
             }
         }
 
+        // Task 58: kit weapon animation state ≡ harness `wpKit` (bow: the
+        // poseBow draw + the string spring; brolly: the trigger follow
+        // spring — the transform-bearing surfaces these kits own).
+        if let Some(kit) = out.field("wpKit") {
+            match kit.field("kind").and_then(JVal::as_str) {
+                Some("bow") => {
+                    let num = |v: &JVal, k: &str| v.field(k).and_then(JVal::as_f64).unwrap();
+                    rep.note(t, "bowDraw", c.bow.draw, num(kit, "draw"));
+                    let b = kit.field("bw").expect("f{t}: bow bw");
+                    let bw = wref
+                        .bw
+                        .as_ref()
+                        .unwrap_or_else(|| panic!("f{t}: rust has no bow state"));
+                    rep.note(t, "bw.str", bw.str, num(b, "str"));
+                    rep.note(t, "bw.strV", bw.str_v, num(b, "strV"));
+                    rep.note(t, "bw.lastRel", bw.last_rel, num(b, "lastRel"));
+                    rep.note(t, "bw.glow", bw.glow, num(b, "glow"));
+                    let want_loose = b.field("loose").and_then(JVal::as_bool).unwrap();
+                    assert_eq!(bw.loose, want_loose, "f{t}: bw.loose");
+                }
+                Some("brolly") => {
+                    let want = kit.field("trig").and_then(JVal::as_f64).unwrap();
+                    rep.note(t, "brolly.trig", wref.trig, want);
+                }
+                _ => {}
+            }
+        }
+
         // dual left-hand instance ≡ harness `wpLeft` (pivot/off/parts)
         match out.field("wpLeft") {
             Some(v @ JVal::Obj(_)) => {

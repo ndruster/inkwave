@@ -1,18 +1,18 @@
 {
   "meta": {
     "bin": "char.bin.gz",
-    "binBytes": 4631836,
-    "binSha256": "2fa181cf6f28abd11d8e6262f79ea2a40a2760c2e846e73e7fe112f6e5ec75fd",
+    "binBytes": 4890238,
+    "binSha256": "ecb03faffc248bf1d922897ea41988ce1892e6a42a55876a45b16bfc1debeba9",
     "counts": {
       "bones": 89,
       "hairStyles": 8,
-      "instances": 196,
-      "parts": 196,
-      "templates": 152,
+      "instances": 229,
+      "parts": 229,
+      "templates": 184,
       "tiers": 3,
-      "tris": 609334,
-      "verts": 313697,
-      "weaponKinds": 17
+      "tris": 646233,
+      "verts": 334701,
+      "weaponKinds": 19
     },
     "quant": {
       "color": "u8",
@@ -21,7 +21,7 @@
       "pos": "i32 mm",
       "weld": "1e-3 grid + content-hash dedup (≡ extract-props)"
     },
-    "rawBytes": 13912853,
+    "rawBytes": 14799023,
     "source": {
       "commit": "159ba72b7f12566e8189e1c233d145bdd432a2fd",
       "files": [
@@ -1486,7 +1486,7 @@
         0
       ],
       "shadow": true,
-      "template": 131,
+      "template": 147,
       "tier": "near",
       "tris": 4166,
       "verts": 2178
@@ -1512,7 +1512,7 @@
         0
       ],
       "shadow": true,
-      "template": 131,
+      "template": 147,
       "tier": "far",
       "tris": 4166,
       "verts": 2178
@@ -1538,7 +1538,7 @@
         0
       ],
       "shadow": true,
-      "template": 133,
+      "template": 149,
       "tier": "far",
       "tris": 746,
       "verts": 341
@@ -1564,7 +1564,7 @@
         0
       ],
       "shadow": true,
-      "template": 134,
+      "template": 150,
       "tier": "far",
       "tris": 122,
       "verts": 117
@@ -1590,7 +1590,7 @@
         0
       ],
       "shadow": true,
-      "template": 132,
+      "template": 148,
       "tier": "far",
       "tris": 840,
       "verts": 490
@@ -1616,7 +1616,7 @@
         0
       ],
       "shadow": true,
-      "template": 132,
+      "template": 148,
       "tier": "near",
       "tris": 840,
       "verts": 490
@@ -1885,6 +1885,864 @@
       "bone": "handR",
       "extra": null,
       "id": 66,
+      "key": "weapon:bow:body",
+      "matClass": "plastic",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.11914522061843036,
+        -0.9928768384869221,
+        -0.05249999999999999,
+        0,
+        0.9928768384869221,
+        0.11914522061843036,
+        1.734723475976807e-18
+      ],
+      "shadow": true,
+      "template": 131,
+      "tier": "near",
+      "tris": 2674,
+      "verts": 1313
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 67,
+      "key": "weapon:bow:farBody",
+      "matClass": "plastic",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.11914522061843036,
+        -0.9928768384869221,
+        -0.05249999999999999,
+        0,
+        0.9928768384869221,
+        0.11914522061843036,
+        1.734723475976807e-18
+      ],
+      "shadow": true,
+      "template": 133,
+      "tier": "far",
+      "tris": 5290,
+      "verts": 2650
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 68,
+      "key": "weapon:bow:farDecim:body",
+      "matClass": "plastic",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.11914522061843036,
+        -0.9928768384869221,
+        -0.05249999999999999,
+        0,
+        0.9928768384869221,
+        0.11914522061843036,
+        1.734723475976807e-18
+      ],
+      "shadow": true,
+      "template": 145,
+      "tier": "far",
+      "tris": 775,
+      "verts": 334
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 69,
+      "key": "weapon:bow:farDecim:ink",
+      "matClass": "plastic",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.11914522061843036,
+        -0.9928768384869221,
+        -0.05249999999999999,
+        0,
+        0.9928768384869221,
+        0.11914522061843036,
+        1.734723475976807e-18
+      ],
+      "shadow": true,
+      "template": 146,
+      "tier": "far",
+      "tris": 308,
+      "verts": 159
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 70,
+      "key": "weapon:bow:farInk",
+      "matClass": "ink",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.11914522061843036,
+        -0.9928768384869221,
+        -0.05249999999999999,
+        0,
+        0.9928768384869221,
+        0.11914522061843036,
+        1.734723475976807e-18
+      ],
+      "shadow": true,
+      "template": 134,
+      "tier": "far",
+      "tris": 1732,
+      "verts": 844
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 71,
+      "key": "weapon:bow:glow",
+      "matClass": "glow",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.11914522061843036,
+        -0.9928768384869221,
+        -0.05249999999999999,
+        0,
+        0.9928768384869221,
+        0.11914522061843036,
+        1.734723475976807e-18
+      ],
+      "shadow": true,
+      "template": 144,
+      "tier": "near",
+      "tris": 120,
+      "verts": 64
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 72,
+      "key": "weapon:bow:ink",
+      "matClass": "ink",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.11914522061843036,
+        -0.9928768384869221,
+        -0.05249999999999999,
+        0,
+        0.9928768384869221,
+        0.11914522061843036,
+        1.734723475976807e-18
+      ],
+      "shadow": true,
+      "template": 132,
+      "tier": "near",
+      "tris": 292,
+      "verts": 138
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 73,
+      "key": "weapon:bow:part:arrows",
+      "matClass": "ink",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.11914522061843036,
+        -0.9928768384869221,
+        -0.05249999999999999,
+        0,
+        0.9928768384869221,
+        0.11914522061843036,
+        1.734723475976807e-18
+      ],
+      "shadow": true,
+      "template": 141,
+      "tier": "near",
+      "tris": 144,
+      "verts": 54
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 74,
+      "key": "weapon:bow:part:fletch",
+      "matClass": "plastic",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.11914522061843036,
+        -0.9928768384869221,
+        -0.05249999999999999,
+        0,
+        0.9928768384869221,
+        0.11914522061843036,
+        1.734723475976807e-18
+      ],
+      "shadow": true,
+      "template": 142,
+      "tier": "near",
+      "tris": 504,
+      "verts": 252
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 75,
+      "key": "weapon:bow:part:heads",
+      "matClass": "lamp",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.11914522061843036,
+        -0.9928768384869221,
+        -0.05249999999999999,
+        0,
+        0.9928768384869221,
+        0.11914522061843036,
+        1.734723475976807e-18
+      ],
+      "shadow": true,
+      "template": 143,
+      "tier": "near",
+      "tris": 1008,
+      "verts": 474
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 76,
+      "key": "weapon:bow:part:limbL",
+      "matClass": "plastic",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.11914522061843036,
+        -0.9928768384869221,
+        -0.19229705885895854,
+        0,
+        0.9928768384869221,
+        0.11914522061843036,
+        -0.17458746327954042
+      ],
+      "shadow": true,
+      "template": 137,
+      "tier": "near",
+      "tris": 440,
+      "verts": 226
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 77,
+      "key": "weapon:bow:part:limbLInk",
+      "matClass": "ink",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.11914522061843036,
+        -0.9928768384869221,
+        -0.19229705885895854,
+        0,
+        0.9928768384869221,
+        0.11914522061843036,
+        -0.17458746327954042
+      ],
+      "shadow": true,
+      "template": 138,
+      "tier": "near",
+      "tris": 648,
+      "verts": 326
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 78,
+      "key": "weapon:bow:part:limbU",
+      "matClass": "plastic",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.11914522061843036,
+        -0.9928768384869221,
+        -0.1500005055394158,
+        0,
+        0.9928768384869221,
+        0.11914522061843036,
+        0.17788381438331693
+      ],
+      "shadow": true,
+      "template": 135,
+      "tier": "near",
+      "tris": 440,
+      "verts": 226
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 79,
+      "key": "weapon:bow:part:limbUInk",
+      "matClass": "ink",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.11914522061843036,
+        -0.9928768384869221,
+        -0.1500005055394158,
+        0,
+        0.9928768384869221,
+        0.11914522061843036,
+        0.17788381438331693
+      ],
+      "shadow": true,
+      "template": 136,
+      "tier": "near",
+      "tris": 648,
+      "verts": 326
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 80,
+      "key": "weapon:bow:part:stringL",
+      "matClass": "plastic",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.11914522061843036,
+        -0.9928768384869221,
+        -0.05249999999999999,
+        0,
+        0.9928768384869221,
+        0.11914522061843036,
+        1.734723475976807e-18
+      ],
+      "shadow": true,
+      "template": 140,
+      "tier": "near",
+      "tris": 112,
+      "verts": 86
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 81,
+      "key": "weapon:bow:part:stringU",
+      "matClass": "plastic",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.11914522061843036,
+        -0.9928768384869221,
+        -0.05249999999999999,
+        0,
+        0.9928768384869221,
+        0.11914522061843036,
+        1.734723475976807e-18
+      ],
+      "shadow": true,
+      "template": 139,
+      "tier": "near",
+      "tris": 112,
+      "verts": 86
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 82,
+      "key": "weapon:brolly:body",
+      "matClass": "plastic",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.24253562503633308,
+        -0.9701425001453319,
+        -0.05249999999999999,
+        0,
+        0.9701425001453319,
+        0.24253562503633308,
+        6.938893903907228e-18
+      ],
+      "shadow": true,
+      "template": 151,
+      "tier": "near",
+      "tris": 3498,
+      "verts": 1695
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 83,
+      "key": "weapon:brolly:farBody",
+      "matClass": "plastic",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.24253562503633308,
+        -0.9701425001453319,
+        -0.05249999999999999,
+        0,
+        0.9701425001453319,
+        0.24253562503633308,
+        6.938893903907228e-18
+      ],
+      "shadow": true,
+      "template": 153,
+      "tier": "far",
+      "tris": 6922,
+      "verts": 4131
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 84,
+      "key": "weapon:brolly:farDecim:body",
+      "matClass": "plastic",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.24253562503633308,
+        -0.9701425001453319,
+        -0.05249999999999999,
+        0,
+        0.9701425001453319,
+        0.24253562503633308,
+        6.938893903907228e-18
+      ],
+      "shadow": true,
+      "template": 165,
+      "tier": "far",
+      "tris": 688,
+      "verts": 214
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 85,
+      "key": "weapon:brolly:farDecim:ink",
+      "matClass": "plastic",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.24253562503633308,
+        -0.9701425001453319,
+        -0.05249999999999999,
+        0,
+        0.9701425001453319,
+        0.24253562503633308,
+        6.938893903907228e-18
+      ],
+      "shadow": true,
+      "template": 166,
+      "tier": "far",
+      "tris": 276,
+      "verts": 98
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 86,
+      "key": "weapon:brolly:farInk",
+      "matClass": "ink",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.24253562503633308,
+        -0.9701425001453319,
+        -0.05249999999999999,
+        0,
+        0.9701425001453319,
+        0.24253562503633308,
+        6.938893903907228e-18
+      ],
+      "shadow": true,
+      "template": 154,
+      "tier": "far",
+      "tris": 3452,
+      "verts": 2452
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 87,
+      "key": "weapon:brolly:ink",
+      "matClass": "ink",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.24253562503633308,
+        -0.9701425001453319,
+        -0.05249999999999999,
+        0,
+        0.9701425001453319,
+        0.24253562503633308,
+        6.938893903907228e-18
+      ],
+      "shadow": true,
+      "template": 152,
+      "tier": "near",
+      "tris": 716,
+      "verts": 348
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 88,
+      "key": "weapon:brolly:part:g0",
+      "matClass": "plastic",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.24253562503633308,
+        -0.9701425001453319,
+        -0.5797724488289879,
+        0,
+        0.9701425001453319,
+        0.24253562503633308,
+        0.19984935502993845
+      ],
+      "shadow": true,
+      "template": 157,
+      "tier": "near",
+      "tris": 860,
+      "verts": 612
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 89,
+      "key": "weapon:brolly:part:g1",
+      "matClass": "ink",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.24253562503633308,
+        -0.9701425001453319,
+        -0.5797724488289879,
+        0,
+        0.9701425001453319,
+        0.24253562503633308,
+        0.19984935502993845
+      ],
+      "shadow": true,
+      "template": 158,
+      "tier": "near",
+      "tris": 684,
+      "verts": 526
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 90,
+      "key": "weapon:brolly:part:g2",
+      "matClass": "plastic",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.24253562503633308,
+        -0.9701425001453319,
+        -0.5797724488289879,
+        0,
+        0.9701425001453319,
+        0.24253562503633308,
+        0.19984935502993845
+      ],
+      "shadow": true,
+      "template": 159,
+      "tier": "near",
+      "tris": 684,
+      "verts": 526
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 91,
+      "key": "weapon:brolly:part:g3",
+      "matClass": "ink",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.24253562503633308,
+        -0.9701425001453319,
+        -0.5797724488289879,
+        0,
+        0.9701425001453319,
+        0.24253562503633308,
+        0.19984935502993845
+      ],
+      "shadow": true,
+      "template": 160,
+      "tier": "near",
+      "tris": 684,
+      "verts": 526
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 92,
+      "key": "weapon:brolly:part:g4",
+      "matClass": "plastic",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.24253562503633308,
+        -0.9701425001453319,
+        -0.5797724488289879,
+        0,
+        0.9701425001453319,
+        0.24253562503633308,
+        0.19984935502993845
+      ],
+      "shadow": true,
+      "template": 161,
+      "tier": "near",
+      "tris": 684,
+      "verts": 526
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 93,
+      "key": "weapon:brolly:part:g5",
+      "matClass": "ink",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.24253562503633308,
+        -0.9701425001453319,
+        -0.5797724488289879,
+        0,
+        0.9701425001453319,
+        0.24253562503633308,
+        0.19984935502993845
+      ],
+      "shadow": true,
+      "template": 162,
+      "tier": "near",
+      "tris": 684,
+      "verts": 526
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 94,
+      "key": "weapon:brolly:part:g6",
+      "matClass": "plastic",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.24253562503633308,
+        -0.9701425001453319,
+        -0.5797724488289879,
+        0,
+        0.9701425001453319,
+        0.24253562503633308,
+        0.19984935502993845
+      ],
+      "shadow": true,
+      "template": 163,
+      "tier": "near",
+      "tris": 684,
+      "verts": 526
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 95,
+      "key": "weapon:brolly:part:g7",
+      "matClass": "ink",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.24253562503633308,
+        -0.9701425001453319,
+        -0.5797724488289879,
+        0,
+        0.9701425001453319,
+        0.24253562503633308,
+        0.19984935502993845
+      ],
+      "shadow": true,
+      "template": 164,
+      "tier": "near",
+      "tris": 684,
+      "verts": 526
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 96,
+      "key": "weapon:brolly:part:lamp",
+      "matClass": "lamp",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.24253562503633308,
+        -0.9701425001453319,
+        -0.5991752988318946,
+        0,
+        0.9701425001453319,
+        0.24253562503633308,
+        0.2047000675306651
+      ],
+      "shadow": true,
+      "template": 156,
+      "tier": "near",
+      "tris": 144,
+      "verts": 72
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 97,
+      "key": "weapon:brolly:part:runner",
+      "matClass": "plastic",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.24253562503633308,
+        -0.9701425001453319,
+        -0.3323861112919282,
+        0,
+        0.9701425001453319,
+        0.24253562503633308,
+        0.1380027706456735
+      ],
+      "shadow": true,
+      "template": 155,
+      "tier": "near",
+      "tris": 308,
+      "verts": 142
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 98,
+      "key": "weapon:brolly:part:trigger",
+      "matClass": "plastic",
+      "matrix": [
+        1,
+        0,
+        0,
+        0.025499999999999995,
+        0,
+        0.24253562503633308,
+        -0.9701425001453319,
+        -0.07221814631545387,
+        0,
+        0.9701425001453319,
+        0.24253562503633308,
+        0.037398993380602555
+      ],
+      "shadow": true,
+      "template": 52,
+      "tier": "near",
+      "tris": 60,
+      "verts": 32
+    },
+    {
+      "bone": "handR",
+      "extra": null,
+      "id": 99,
       "key": "weapon:brush:body",
       "matClass": "plastic",
       "matrix": [
@@ -1910,7 +2768,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 67,
+      "id": 100,
       "key": "weapon:brush:farBody",
       "matClass": "plastic",
       "matrix": [
@@ -1936,7 +2794,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 68,
+      "id": 101,
       "key": "weapon:brush:farDecim:body",
       "matClass": "plastic",
       "matrix": [
@@ -1962,7 +2820,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 69,
+      "id": 102,
       "key": "weapon:brush:farDecim:ink",
       "matClass": "plastic",
       "matrix": [
@@ -1988,7 +2846,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 70,
+      "id": 103,
       "key": "weapon:brush:farInk",
       "matClass": "ink",
       "matrix": [
@@ -2014,7 +2872,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 71,
+      "id": 104,
       "key": "weapon:brush:ink",
       "matClass": "ink",
       "matrix": [
@@ -2040,7 +2898,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 72,
+      "id": 105,
       "key": "weapon:bucket:body",
       "matClass": "plastic",
       "matrix": [
@@ -2066,7 +2924,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 73,
+      "id": 106,
       "key": "weapon:bucket:farBody",
       "matClass": "plastic",
       "matrix": [
@@ -2092,7 +2950,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 74,
+      "id": 107,
       "key": "weapon:bucket:farDecim:body",
       "matClass": "plastic",
       "matrix": [
@@ -2118,7 +2976,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 75,
+      "id": 108,
       "key": "weapon:bucket:farDecim:ink",
       "matClass": "plastic",
       "matrix": [
@@ -2144,7 +3002,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 76,
+      "id": 109,
       "key": "weapon:bucket:farInk",
       "matClass": "ink",
       "matrix": [
@@ -2170,7 +3028,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 77,
+      "id": 110,
       "key": "weapon:bucket:ink",
       "matClass": "ink",
       "matrix": [
@@ -2196,7 +3054,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 78,
+      "id": 111,
       "key": "weapon:charger:body",
       "matClass": "plastic",
       "matrix": [
@@ -2222,7 +3080,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 79,
+      "id": 112,
       "key": "weapon:charger:farBody",
       "matClass": "plastic",
       "matrix": [
@@ -2248,7 +3106,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 80,
+      "id": 113,
       "key": "weapon:charger:farDecim:body",
       "matClass": "plastic",
       "matrix": [
@@ -2274,7 +3132,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 81,
+      "id": 114,
       "key": "weapon:charger:farDecim:ink",
       "matClass": "ink",
       "matrix": [
@@ -2300,7 +3158,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 82,
+      "id": 115,
       "key": "weapon:charger:farInk",
       "matClass": "ink",
       "matrix": [
@@ -2326,7 +3184,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 83,
+      "id": 116,
       "key": "weapon:charger:glow",
       "matClass": "glow",
       "matrix": [
@@ -2352,7 +3210,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 84,
+      "id": 117,
       "key": "weapon:charger:ink",
       "matClass": "ink",
       "matrix": [
@@ -2378,7 +3236,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 85,
+      "id": 118,
       "key": "weapon:charger:part:bolt",
       "matClass": "plastic",
       "matrix": [
@@ -2404,7 +3262,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 86,
+      "id": 119,
       "key": "weapon:charger:part:eyepiece",
       "matClass": "lamp",
       "matrix": [
@@ -2430,7 +3288,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 87,
+      "id": 120,
       "key": "weapon:charger:part:lens",
       "matClass": "lamp",
       "matrix": [
@@ -2456,7 +3314,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 88,
+      "id": 121,
       "key": "weapon:charger:part:ports",
       "matClass": "lamp",
       "matrix": [
@@ -2482,7 +3340,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 89,
+      "id": 122,
       "key": "weapon:charger:part:trigger",
       "matClass": "plastic",
       "matrix": [
@@ -2508,7 +3366,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 90,
+      "id": 123,
       "key": "weapon:dualies:body",
       "matClass": "plastic",
       "matrix": [
@@ -2534,7 +3392,7 @@
     {
       "bone": "handL",
       "extra": null,
-      "id": 91,
+      "id": 124,
       "key": "weapon:dualies:body@L",
       "matClass": "plastic",
       "matrix": [
@@ -2560,7 +3418,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 92,
+      "id": 125,
       "key": "weapon:dualies:farBody",
       "matClass": "plastic",
       "matrix": [
@@ -2586,7 +3444,7 @@
     {
       "bone": "handL",
       "extra": null,
-      "id": 93,
+      "id": 126,
       "key": "weapon:dualies:farBody@L",
       "matClass": "plastic",
       "matrix": [
@@ -2612,7 +3470,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 94,
+      "id": 127,
       "key": "weapon:dualies:farDecim:body",
       "matClass": "plastic",
       "matrix": [
@@ -2638,7 +3496,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 95,
+      "id": 128,
       "key": "weapon:dualies:farDecim:ink",
       "matClass": "plastic",
       "matrix": [
@@ -2664,7 +3522,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 96,
+      "id": 129,
       "key": "weapon:dualies:farInk",
       "matClass": "ink",
       "matrix": [
@@ -2690,7 +3548,7 @@
     {
       "bone": "handL",
       "extra": null,
-      "id": 97,
+      "id": 130,
       "key": "weapon:dualies:farInk@L",
       "matClass": "ink",
       "matrix": [
@@ -2716,7 +3574,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 98,
+      "id": 131,
       "key": "weapon:dualies:ink",
       "matClass": "ink",
       "matrix": [
@@ -2742,7 +3600,7 @@
     {
       "bone": "handL",
       "extra": null,
-      "id": 99,
+      "id": 132,
       "key": "weapon:dualies:ink@L",
       "matClass": "ink",
       "matrix": [
@@ -2768,7 +3626,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 100,
+      "id": 133,
       "key": "weapon:dualies:part:led",
       "matClass": "lamp",
       "matrix": [
@@ -2794,7 +3652,7 @@
     {
       "bone": "handL",
       "extra": null,
-      "id": 101,
+      "id": 134,
       "key": "weapon:dualies:part:led@L",
       "matClass": "lamp",
       "matrix": [
@@ -2820,7 +3678,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 102,
+      "id": 135,
       "key": "weapon:dualies:part:slide",
       "matClass": "plastic",
       "matrix": [
@@ -2846,7 +3704,7 @@
     {
       "bone": "handL",
       "extra": null,
-      "id": 103,
+      "id": 136,
       "key": "weapon:dualies:part:slide@L",
       "matClass": "plastic",
       "matrix": [
@@ -2872,7 +3730,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 104,
+      "id": 137,
       "key": "weapon:dualies:part:slideInk",
       "matClass": "ink",
       "matrix": [
@@ -2898,7 +3756,7 @@
     {
       "bone": "handL",
       "extra": null,
-      "id": 105,
+      "id": 138,
       "key": "weapon:dualies:part:slideInk@L",
       "matClass": "ink",
       "matrix": [
@@ -2924,7 +3782,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 106,
+      "id": 139,
       "key": "weapon:dualies:part:trigger",
       "matClass": "plastic",
       "matrix": [
@@ -2950,7 +3808,7 @@
     {
       "bone": "handL",
       "extra": null,
-      "id": 107,
+      "id": 140,
       "key": "weapon:dualies:part:trigger@L",
       "matClass": "plastic",
       "matrix": [
@@ -2976,7 +3834,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 108,
+      "id": 141,
       "key": "weapon:mitts:body",
       "matClass": "plastic",
       "matrix": [
@@ -3002,7 +3860,7 @@
     {
       "bone": "handL",
       "extra": null,
-      "id": 109,
+      "id": 142,
       "key": "weapon:mitts:body@L",
       "matClass": "plastic",
       "matrix": [
@@ -3028,7 +3886,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 110,
+      "id": 143,
       "key": "weapon:mitts:farBody",
       "matClass": "plastic",
       "matrix": [
@@ -3054,7 +3912,7 @@
     {
       "bone": "handL",
       "extra": null,
-      "id": 111,
+      "id": 144,
       "key": "weapon:mitts:farBody@L",
       "matClass": "plastic",
       "matrix": [
@@ -3080,7 +3938,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 112,
+      "id": 145,
       "key": "weapon:mitts:farDecim:body",
       "matClass": "plastic",
       "matrix": [
@@ -3106,7 +3964,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 113,
+      "id": 146,
       "key": "weapon:mitts:farDecim:ink",
       "matClass": "plastic",
       "matrix": [
@@ -3132,7 +3990,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 114,
+      "id": 147,
       "key": "weapon:mitts:farInk",
       "matClass": "ink",
       "matrix": [
@@ -3158,7 +4016,7 @@
     {
       "bone": "handL",
       "extra": null,
-      "id": 115,
+      "id": 148,
       "key": "weapon:mitts:farInk@L",
       "matClass": "ink",
       "matrix": [
@@ -3184,7 +4042,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 116,
+      "id": 149,
       "key": "weapon:mitts:ink",
       "matClass": "ink",
       "matrix": [
@@ -3210,7 +4068,7 @@
     {
       "bone": "handL",
       "extra": null,
-      "id": 117,
+      "id": 150,
       "key": "weapon:mitts:ink@L",
       "matClass": "ink",
       "matrix": [
@@ -3236,7 +4094,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 118,
+      "id": 151,
       "key": "weapon:mitts:part:pad",
       "matClass": "ink",
       "matrix": [
@@ -3262,7 +4120,7 @@
     {
       "bone": "handL",
       "extra": null,
-      "id": 119,
+      "id": 152,
       "key": "weapon:mitts:part:pad@L",
       "matClass": "ink",
       "matrix": [
@@ -3288,7 +4146,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 120,
+      "id": 153,
       "key": "weapon:roller:body",
       "matClass": "plastic",
       "matrix": [
@@ -3314,7 +4172,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 121,
+      "id": 154,
       "key": "weapon:roller:drum",
       "matClass": "ink",
       "matrix": [
@@ -3340,7 +4198,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 122,
+      "id": 155,
       "key": "weapon:roller:drumCaps",
       "matClass": "plastic",
       "matrix": [
@@ -3366,7 +4224,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 123,
+      "id": 156,
       "key": "weapon:roller:farBody",
       "matClass": "plastic",
       "matrix": [
@@ -3392,7 +4250,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 124,
+      "id": 157,
       "key": "weapon:roller:farDecim:body",
       "matClass": "plastic",
       "matrix": [
@@ -3418,7 +4276,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 125,
+      "id": 158,
       "key": "weapon:roller:farDecim:ink",
       "matClass": "plastic",
       "matrix": [
@@ -3444,7 +4302,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 126,
+      "id": 159,
       "key": "weapon:roller:farInk",
       "matClass": "ink",
       "matrix": [
@@ -3470,7 +4328,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 127,
+      "id": 160,
       "key": "weapon:roller:ink",
       "matClass": "ink",
       "matrix": [
@@ -3496,7 +4354,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 128,
+      "id": 161,
       "key": "weapon:roller:part:led",
       "matClass": "lamp",
       "matrix": [
@@ -3522,7 +4380,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 129,
+      "id": 162,
       "key": "weapon:shooter:body",
       "matClass": "plastic",
       "matrix": [
@@ -3548,7 +4406,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 130,
+      "id": 163,
       "key": "weapon:shooter:farBody",
       "matClass": "plastic",
       "matrix": [
@@ -3574,7 +4432,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 131,
+      "id": 164,
       "key": "weapon:shooter:farDecim:body",
       "matClass": "plastic",
       "matrix": [
@@ -3600,7 +4458,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 132,
+      "id": 165,
       "key": "weapon:shooter:farDecim:ink",
       "matClass": "plastic",
       "matrix": [
@@ -3626,7 +4484,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 133,
+      "id": 166,
       "key": "weapon:shooter:farInk",
       "matClass": "ink",
       "matrix": [
@@ -3652,7 +4510,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 134,
+      "id": 167,
       "key": "weapon:shooter:ink",
       "matClass": "ink",
       "matrix": [
@@ -3678,7 +4536,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 135,
+      "id": 168,
       "key": "weapon:shooter:part:bolt",
       "matClass": "plastic",
       "matrix": [
@@ -3704,7 +4562,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 136,
+      "id": 169,
       "key": "weapon:shooter:part:can",
       "matClass": "ink",
       "matrix": [
@@ -3730,7 +4588,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 137,
+      "id": 170,
       "key": "weapon:shooter:part:led",
       "matClass": "lamp",
       "matrix": [
@@ -3756,7 +4614,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 138,
+      "id": 171,
       "key": "weapon:shooter:part:trigger",
       "matClass": "plastic",
       "matrix": [
@@ -3782,7 +4640,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 139,
+      "id": 172,
       "key": "weapon:slosher:body",
       "matClass": "plastic",
       "matrix": [
@@ -3808,7 +4666,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 140,
+      "id": 173,
       "key": "weapon:slosher:farBody",
       "matClass": "plastic",
       "matrix": [
@@ -3834,7 +4692,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 141,
+      "id": 174,
       "key": "weapon:slosher:farDecim:body",
       "matClass": "plastic",
       "matrix": [
@@ -3860,7 +4718,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 142,
+      "id": 175,
       "key": "weapon:slosher:farDecim:ink",
       "matClass": "plastic",
       "matrix": [
@@ -3886,7 +4744,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 143,
+      "id": 176,
       "key": "weapon:slosher:farInk",
       "matClass": "ink",
       "matrix": [
@@ -3912,7 +4770,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 144,
+      "id": 177,
       "key": "weapon:slosher:ink",
       "matClass": "ink",
       "matrix": [
@@ -3938,7 +4796,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 145,
+      "id": 178,
       "key": "weapon:slosher:part:lever",
       "matClass": "plastic",
       "matrix": [
@@ -3964,7 +4822,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 146,
+      "id": 179,
       "key": "weapon:slosher:part:surface",
       "matClass": "ink",
       "matrix": [
@@ -3990,7 +4848,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 147,
+      "id": 180,
       "key": "weapon:sp_blower:body",
       "matClass": "plastic",
       "matrix": [
@@ -4008,7 +4866,7 @@
         6.938893903907228e-18
       ],
       "shadow": true,
-      "template": 140,
+      "template": 172,
       "tier": "near",
       "tris": 4950,
       "verts": 2387
@@ -4016,7 +4874,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 148,
+      "id": 181,
       "key": "weapon:sp_blower:farBody",
       "matClass": "plastic",
       "matrix": [
@@ -4034,7 +4892,7 @@
         6.938893903907228e-18
       ],
       "shadow": true,
-      "template": 140,
+      "template": 172,
       "tier": "far",
       "tris": 4950,
       "verts": 2387
@@ -4042,7 +4900,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 149,
+      "id": 182,
       "key": "weapon:sp_blower:farDecim:body",
       "matClass": "plastic",
       "matrix": [
@@ -4060,7 +4918,7 @@
         6.938893903907228e-18
       ],
       "shadow": true,
-      "template": 142,
+      "template": 174,
       "tier": "far",
       "tris": 650,
       "verts": 245
@@ -4068,7 +4926,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 150,
+      "id": 183,
       "key": "weapon:sp_blower:farDecim:ink",
       "matClass": "plastic",
       "matrix": [
@@ -4086,7 +4944,7 @@
         6.938893903907228e-18
       ],
       "shadow": true,
-      "template": 143,
+      "template": 175,
       "tier": "far",
       "tris": 286,
       "verts": 149
@@ -4094,7 +4952,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 151,
+      "id": 184,
       "key": "weapon:sp_blower:farInk",
       "matClass": "ink",
       "matrix": [
@@ -4112,7 +4970,7 @@
         6.938893903907228e-18
       ],
       "shadow": true,
-      "template": 141,
+      "template": 173,
       "tier": "far",
       "tris": 2032,
       "verts": 1009
@@ -4120,7 +4978,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 152,
+      "id": 185,
       "key": "weapon:sp_blower:ink",
       "matClass": "ink",
       "matrix": [
@@ -4138,7 +4996,7 @@
         6.938893903907228e-18
       ],
       "shadow": true,
-      "template": 141,
+      "template": 173,
       "tier": "near",
       "tris": 2032,
       "verts": 1009
@@ -4146,7 +5004,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 153,
+      "id": 186,
       "key": "weapon:sp_jetgun:body",
       "matClass": "plastic",
       "matrix": [
@@ -4164,7 +5022,7 @@
         6.938893903907228e-18
       ],
       "shadow": true,
-      "template": 144,
+      "template": 176,
       "tier": "near",
       "tris": 7080,
       "verts": 3439
@@ -4172,7 +5030,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 154,
+      "id": 187,
       "key": "weapon:sp_jetgun:farBody",
       "matClass": "plastic",
       "matrix": [
@@ -4190,7 +5048,7 @@
         6.938893903907228e-18
       ],
       "shadow": true,
-      "template": 144,
+      "template": 176,
       "tier": "far",
       "tris": 7080,
       "verts": 3439
@@ -4198,7 +5056,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 155,
+      "id": 188,
       "key": "weapon:sp_jetgun:farDecim:body",
       "matClass": "plastic",
       "matrix": [
@@ -4216,7 +5074,7 @@
         6.938893903907228e-18
       ],
       "shadow": true,
-      "template": 146,
+      "template": 178,
       "tier": "far",
       "tris": 696,
       "verts": 190
@@ -4224,7 +5082,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 156,
+      "id": 189,
       "key": "weapon:sp_jetgun:farDecim:ink",
       "matClass": "plastic",
       "matrix": [
@@ -4242,7 +5100,7 @@
         6.938893903907228e-18
       ],
       "shadow": true,
-      "template": 147,
+      "template": 179,
       "tier": "far",
       "tris": 262,
       "verts": 127
@@ -4250,7 +5108,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 157,
+      "id": 190,
       "key": "weapon:sp_jetgun:farInk",
       "matClass": "ink",
       "matrix": [
@@ -4268,7 +5126,7 @@
         6.938893903907228e-18
       ],
       "shadow": true,
-      "template": 145,
+      "template": 177,
       "tier": "far",
       "tris": 760,
       "verts": 384
@@ -4276,7 +5134,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 158,
+      "id": 191,
       "key": "weapon:sp_jetgun:ink",
       "matClass": "ink",
       "matrix": [
@@ -4294,7 +5152,7 @@
         6.938893903907228e-18
       ],
       "shadow": true,
-      "template": 145,
+      "template": 177,
       "tier": "near",
       "tris": 760,
       "verts": 384
@@ -4302,7 +5160,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 159,
+      "id": 192,
       "key": "weapon:sp_stamp:body",
       "matClass": "plastic",
       "matrix": [
@@ -4320,7 +5178,7 @@
         0.022
       ],
       "shadow": true,
-      "template": 148,
+      "template": 180,
       "tier": "near",
       "tris": 4820,
       "verts": 2515
@@ -4328,7 +5186,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 160,
+      "id": 193,
       "key": "weapon:sp_stamp:farBody",
       "matClass": "plastic",
       "matrix": [
@@ -4346,7 +5204,7 @@
         0.022
       ],
       "shadow": true,
-      "template": 148,
+      "template": 180,
       "tier": "far",
       "tris": 4820,
       "verts": 2515
@@ -4354,7 +5212,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 161,
+      "id": 194,
       "key": "weapon:sp_stamp:farDecim:body",
       "matClass": "plastic",
       "matrix": [
@@ -4372,7 +5230,7 @@
         0.022
       ],
       "shadow": true,
-      "template": 150,
+      "template": 182,
       "tier": "far",
       "tris": 842,
       "verts": 344
@@ -4380,7 +5238,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 162,
+      "id": 195,
       "key": "weapon:sp_stamp:farDecim:ink",
       "matClass": "plastic",
       "matrix": [
@@ -4398,7 +5256,7 @@
         0.022
       ],
       "shadow": true,
-      "template": 151,
+      "template": 183,
       "tier": "far",
       "tris": 354,
       "verts": 150
@@ -4406,7 +5264,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 163,
+      "id": 196,
       "key": "weapon:sp_stamp:farInk",
       "matClass": "ink",
       "matrix": [
@@ -4424,7 +5282,7 @@
         0.022
       ],
       "shadow": true,
-      "template": 149,
+      "template": 181,
       "tier": "far",
       "tris": 1804,
       "verts": 904
@@ -4432,7 +5290,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 164,
+      "id": 197,
       "key": "weapon:sp_stamp:ink",
       "matClass": "ink",
       "matrix": [
@@ -4450,7 +5308,7 @@
         0.022
       ],
       "shadow": true,
-      "template": 149,
+      "template": 181,
       "tier": "near",
       "tris": 1804,
       "verts": 904
@@ -4458,7 +5316,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 165,
+      "id": 198,
       "key": "weapon:sp_zooka:body",
       "matClass": "plastic",
       "matrix": [
@@ -4476,7 +5334,7 @@
         6.938893903907228e-18
       ],
       "shadow": true,
-      "template": 135,
+      "template": 167,
       "tier": "near",
       "tris": 7734,
       "verts": 3936
@@ -4484,7 +5342,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 166,
+      "id": 199,
       "key": "weapon:sp_zooka:farBody",
       "matClass": "plastic",
       "matrix": [
@@ -4502,7 +5360,7 @@
         6.938893903907228e-18
       ],
       "shadow": true,
-      "template": 135,
+      "template": 167,
       "tier": "far",
       "tris": 7734,
       "verts": 3936
@@ -4510,7 +5368,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 167,
+      "id": 200,
       "key": "weapon:sp_zooka:farDecim:body",
       "matClass": "plastic",
       "matrix": [
@@ -4528,7 +5386,7 @@
         6.938893903907228e-18
       ],
       "shadow": true,
-      "template": 138,
+      "template": 170,
       "tier": "far",
       "tris": 702,
       "verts": 223
@@ -4536,7 +5394,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 168,
+      "id": 201,
       "key": "weapon:sp_zooka:farDecim:ink",
       "matClass": "plastic",
       "matrix": [
@@ -4554,7 +5412,7 @@
         6.938893903907228e-18
       ],
       "shadow": true,
-      "template": 139,
+      "template": 171,
       "tier": "far",
       "tris": 336,
       "verts": 184
@@ -4562,7 +5420,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 169,
+      "id": 202,
       "key": "weapon:sp_zooka:farInk",
       "matClass": "ink",
       "matrix": [
@@ -4580,7 +5438,7 @@
         6.938893903907228e-18
       ],
       "shadow": true,
-      "template": 136,
+      "template": 168,
       "tier": "far",
       "tris": 1780,
       "verts": 898
@@ -4588,7 +5446,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 170,
+      "id": 203,
       "key": "weapon:sp_zooka:ink",
       "matClass": "ink",
       "matrix": [
@@ -4606,7 +5464,7 @@
         6.938893903907228e-18
       ],
       "shadow": true,
-      "template": 136,
+      "template": 168,
       "tier": "near",
       "tris": 1780,
       "verts": 898
@@ -4614,7 +5472,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 171,
+      "id": 204,
       "key": "weapon:sp_zooka:spin",
       "matClass": "plastic",
       "matrix": [
@@ -4632,7 +5490,7 @@
         -6.938893903907228e-18
       ],
       "shadow": true,
-      "template": 137,
+      "template": 169,
       "tier": "near",
       "tris": 508,
       "verts": 246
@@ -4640,7 +5498,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 172,
+      "id": 205,
       "key": "weapon:spinner:body",
       "matClass": "plastic",
       "matrix": [
@@ -4666,7 +5524,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 173,
+      "id": 206,
       "key": "weapon:spinner:farBody",
       "matClass": "plastic",
       "matrix": [
@@ -4692,7 +5550,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 174,
+      "id": 207,
       "key": "weapon:spinner:farDecim:body",
       "matClass": "plastic",
       "matrix": [
@@ -4718,7 +5576,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 175,
+      "id": 208,
       "key": "weapon:spinner:farDecim:ink",
       "matClass": "plastic",
       "matrix": [
@@ -4744,7 +5602,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 176,
+      "id": 209,
       "key": "weapon:spinner:farInk",
       "matClass": "ink",
       "matrix": [
@@ -4770,7 +5628,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 177,
+      "id": 210,
       "key": "weapon:spinner:ink",
       "matClass": "ink",
       "matrix": [
@@ -4796,7 +5654,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 178,
+      "id": 211,
       "key": "weapon:spinner:spin",
       "matClass": "plastic",
       "matrix": [
@@ -4822,7 +5680,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 179,
+      "id": 212,
       "key": "weapon:splatling:body",
       "matClass": "plastic",
       "matrix": [
@@ -4848,7 +5706,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 180,
+      "id": 213,
       "key": "weapon:splatling:farBody",
       "matClass": "plastic",
       "matrix": [
@@ -4874,7 +5732,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 181,
+      "id": 214,
       "key": "weapon:splatling:farDecim:body",
       "matClass": "plastic",
       "matrix": [
@@ -4900,7 +5758,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 182,
+      "id": 215,
       "key": "weapon:splatling:farDecim:ink",
       "matClass": "plastic",
       "matrix": [
@@ -4926,7 +5784,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 183,
+      "id": 216,
       "key": "weapon:splatling:farInk",
       "matClass": "ink",
       "matrix": [
@@ -4952,7 +5810,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 184,
+      "id": 217,
       "key": "weapon:splatling:glow",
       "matClass": "glow",
       "matrix": [
@@ -4978,7 +5836,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 185,
+      "id": 218,
       "key": "weapon:splatling:ink",
       "matClass": "ink",
       "matrix": [
@@ -5004,7 +5862,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 186,
+      "id": 219,
       "key": "weapon:splatling:part:barrels",
       "matClass": "plastic",
       "matrix": [
@@ -5030,7 +5888,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 187,
+      "id": 220,
       "key": "weapon:splatling:part:trigger",
       "matClass": "plastic",
       "matrix": [
@@ -5056,7 +5914,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 188,
+      "id": 221,
       "key": "weapon:twins:body",
       "matClass": "plastic",
       "matrix": [
@@ -5082,7 +5940,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 189,
+      "id": 222,
       "key": "weapon:twins:farBody",
       "matClass": "plastic",
       "matrix": [
@@ -5108,7 +5966,7 @@
     {
       "bone": "handL",
       "extra": null,
-      "id": 190,
+      "id": 223,
       "key": "weapon:twins:farBody@L",
       "matClass": "plastic",
       "matrix": [
@@ -5134,7 +5992,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 191,
+      "id": 224,
       "key": "weapon:twins:farDecim:body",
       "matClass": "plastic",
       "matrix": [
@@ -5160,7 +6018,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 192,
+      "id": 225,
       "key": "weapon:twins:farDecim:ink",
       "matClass": "plastic",
       "matrix": [
@@ -5186,7 +6044,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 193,
+      "id": 226,
       "key": "weapon:twins:farInk",
       "matClass": "ink",
       "matrix": [
@@ -5212,7 +6070,7 @@
     {
       "bone": "handL",
       "extra": null,
-      "id": 194,
+      "id": 227,
       "key": "weapon:twins:farInk@L",
       "matClass": "ink",
       "matrix": [
@@ -5238,7 +6096,7 @@
     {
       "bone": "handR",
       "extra": null,
-      "id": 195,
+      "id": 228,
       "key": "weapon:twins:ink",
       "matClass": "ink",
       "matrix": [
@@ -9396,10 +10254,9 @@
     }
   },
   "specialRefs": {
-    "kitNote": "kit models register via src/game/kits/*.js (not imported by character.js); HOLD entries still emitted in char-poses.json.",
+    "kitNote": "kit models register via src/game/kits/*.js (not imported by character.js); HOLD entries still emitted in char-poses.json. Upstream has no \"bowl\" weapon (no config entry / kit file / HOLD) — the name only survives in a blade-model.js comment and char.schema.md batch-C note.",
     "kitWeapons": [
       "blade",
-      "bowl",
       "brolly",
       "mitts",
       "bow"
@@ -9440,7 +10297,9 @@
       "twins",
       "brush",
       "mitts",
-      "blade"
+      "bow",
+      "blade",
+      "brolly"
     ],
     "specialWeaponKinds": [
       "sp_zooka",
@@ -9710,6 +10569,446 @@
             0,
             0.012,
             0.152
+          ]
+        },
+        "trigger": {
+          "lamp": null,
+          "mat": "body",
+          "pivot": [
+            0,
+            0.0315,
+            0.0282
+          ]
+        }
+      }
+    },
+    "bow": {
+      "frames": {
+        "drawLen": 0.22,
+        "dual": false,
+        "gripL": {
+          "handY": [
+            0,
+            -0.12,
+            -1
+          ],
+          "handZ": [
+            0,
+            1,
+            0
+          ],
+          "pos": [
+            0,
+            -0.047,
+            0.099
+          ]
+        },
+        "gripR": {
+          "handY": [
+            0,
+            0.12,
+            -1
+          ],
+          "handZ": [
+            0,
+            1,
+            0
+          ],
+          "pos": [
+            0,
+            0,
+            0
+          ]
+        },
+        "handL": {
+          "pos": [
+            0.0255,
+            -0.0532551240824676,
+            0.046873965979436605
+          ],
+          "quat": [
+            -0.7480458611002505,
+            0,
+            0,
+            0.6636470369788331
+          ]
+        },
+        "handR": {
+          "pos": [
+            -0.0255,
+            0.00625512408246761,
+            -0.05212603402056341
+          ],
+          "quat": [
+            -0.6636470369788331,
+            0,
+            0,
+            0.7480458611002505
+          ]
+        },
+        "inHand": {
+          "pos": [
+            0.025500000000000002,
+            -0.05250000000000001,
+            1.7347234759768075e-18
+          ],
+          "quat": [
+            0.6636470369788332,
+            0,
+            0,
+            0.7480458611002505
+          ]
+        },
+        "mirrorDual": false,
+        "muzzle": [
+          0,
+          0,
+          0.18
+        ],
+        "off": {
+          "pos": [
+            3.469446951953614e-18,
+            -1.3877787807814457e-17,
+            1.7347234759768075e-18
+          ],
+          "quat": [
+            0.6636470369788332,
+            0,
+            0,
+            0.7480458611002505
+          ]
+        },
+        "pivot": [
+          0.0255,
+          -0.0525,
+          0
+        ]
+      },
+      "instances": [
+        "weapon:bow:body",
+        "weapon:bow:ink",
+        "weapon:bow:farBody",
+        "weapon:bow:farInk",
+        "weapon:bow:part:limbU",
+        "weapon:bow:part:limbUInk",
+        "weapon:bow:part:limbL",
+        "weapon:bow:part:limbLInk",
+        "weapon:bow:part:stringU",
+        "weapon:bow:part:stringL",
+        "weapon:bow:part:arrows",
+        "weapon:bow:part:fletch",
+        "weapon:bow:part:heads",
+        "weapon:bow:glow",
+        "weapon:bow:farDecim:body",
+        "weapon:bow:farDecim:ink"
+      ],
+      "parts": {
+        "arrows": {
+          "lamp": null,
+          "mat": "ink",
+          "pivot": [
+            0,
+            0,
+            0
+          ]
+        },
+        "fletch": {
+          "lamp": null,
+          "mat": "body",
+          "pivot": [
+            0,
+            0,
+            0
+          ]
+        },
+        "heads": {
+          "lamp": {
+            "color": "#1b1e25",
+            "emissive": "#ffffff",
+            "intensity": 0.4,
+            "roughness": 0.2
+          },
+          "mat": "lamp",
+          "pivot": [
+            0,
+            0,
+            0
+          ]
+        },
+        "limbL": {
+          "lamp": null,
+          "mat": "body",
+          "pivot": [
+            0,
+            -0.19,
+            0.118
+          ]
+        },
+        "limbLInk": {
+          "lamp": null,
+          "mat": "ink",
+          "pivot": [
+            0,
+            -0.19,
+            0.118
+          ]
+        },
+        "limbU": {
+          "lamp": null,
+          "mat": "body",
+          "pivot": [
+            0,
+            0.165,
+            0.118
+          ]
+        },
+        "limbUInk": {
+          "lamp": null,
+          "mat": "ink",
+          "pivot": [
+            0,
+            0.165,
+            0.118
+          ]
+        },
+        "stringL": {
+          "lamp": null,
+          "mat": "body",
+          "pivot": [
+            0,
+            0,
+            0
+          ]
+        },
+        "stringU": {
+          "lamp": null,
+          "mat": "body",
+          "pivot": [
+            0,
+            0,
+            0
+          ]
+        }
+      }
+    },
+    "brolly": {
+      "frames": {
+        "dual": false,
+        "gripL": {
+          "handY": [
+            0.45,
+            -0.05,
+            -1
+          ],
+          "handZ": [
+            0,
+            1,
+            -0.12
+          ],
+          "pos": [
+            0,
+            0.022,
+            0.17
+          ]
+        },
+        "gripR": {
+          "handY": [
+            0,
+            0.25,
+            -1
+          ],
+          "handZ": [
+            0,
+            0.9701425001453319,
+            0.24253562503633297
+          ],
+          "pos": [
+            0,
+            0,
+            0
+          ]
+        },
+        "handL": {
+          "pos": [
+            0.04477121137854305,
+            0.020856671650761174,
+            0.13257365323754344
+          ],
+          "quat": [
+            -0.7104368821445259,
+            -0.1614778225087251,
+            -0.13436447604362742,
+            0.6716774053845543
+          ]
+        },
+        "handR": {
+          "pos": [
+            -0.0255,
+            0.01273312031440748,
+            -0.050932481257629926
+          ],
+          "quat": [
+            -0.6154122094026356,
+            0,
+            0,
+            0.7882054380161092
+          ]
+        },
+        "inHand": {
+          "pos": [
+            0.0255,
+            -0.052500000000000005,
+            6.938893903907228e-18
+          ],
+          "quat": [
+            0.6154122094026356,
+            0,
+            0,
+            0.7882054380161092
+          ]
+        },
+        "mirrorDual": false,
+        "muzzle": [
+          0,
+          0.066,
+          0.678
+        ],
+        "off": {
+          "pos": [
+            0,
+            -6.938893903907228e-18,
+            6.938893903907228e-18
+          ],
+          "quat": [
+            0.6154122094026356,
+            0,
+            0,
+            0.7882054380161092
+          ]
+        },
+        "pivot": [
+          0.0255,
+          -0.0525,
+          0
+        ],
+        "twirl": [
+          0,
+          0.03,
+          0.12
+        ]
+      },
+      "instances": [
+        "weapon:brolly:body",
+        "weapon:brolly:ink",
+        "weapon:brolly:farBody",
+        "weapon:brolly:farInk",
+        "weapon:brolly:part:trigger",
+        "weapon:brolly:part:runner",
+        "weapon:brolly:part:lamp",
+        "weapon:brolly:part:g0",
+        "weapon:brolly:part:g1",
+        "weapon:brolly:part:g2",
+        "weapon:brolly:part:g3",
+        "weapon:brolly:part:g4",
+        "weapon:brolly:part:g5",
+        "weapon:brolly:part:g6",
+        "weapon:brolly:part:g7",
+        "weapon:brolly:farDecim:body",
+        "weapon:brolly:farDecim:ink"
+      ],
+      "parts": {
+        "g0": {
+          "lamp": null,
+          "mat": "body",
+          "pivot": [
+            0,
+            0.066,
+            0.56
+          ]
+        },
+        "g1": {
+          "lamp": null,
+          "mat": "ink",
+          "pivot": [
+            0,
+            0.066,
+            0.56
+          ]
+        },
+        "g2": {
+          "lamp": null,
+          "mat": "body",
+          "pivot": [
+            0,
+            0.066,
+            0.56
+          ]
+        },
+        "g3": {
+          "lamp": null,
+          "mat": "ink",
+          "pivot": [
+            0,
+            0.066,
+            0.56
+          ]
+        },
+        "g4": {
+          "lamp": null,
+          "mat": "body",
+          "pivot": [
+            0,
+            0.066,
+            0.56
+          ]
+        },
+        "g5": {
+          "lamp": null,
+          "mat": "ink",
+          "pivot": [
+            0,
+            0.066,
+            0.56
+          ]
+        },
+        "g6": {
+          "lamp": null,
+          "mat": "body",
+          "pivot": [
+            0,
+            0.066,
+            0.56
+          ]
+        },
+        "g7": {
+          "lamp": null,
+          "mat": "ink",
+          "pivot": [
+            0,
+            0.066,
+            0.56
+          ]
+        },
+        "lamp": {
+          "lamp": {
+            "color": "#0f2a18",
+            "emissive": "#3dff7a",
+            "intensity": 1.4
+          },
+          "mat": "lamp",
+          "pivot": [
+            0,
+            0.066,
+            0.5800000000000001
+          ]
+        },
+        "runner": {
+          "lamp": null,
+          "mat": "body",
+          "pivot": [
+            0,
+            0.066,
+            0.305
           ]
         },
         "trigger": {

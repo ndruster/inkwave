@@ -342,11 +342,15 @@ for (const mesh of ch.bomb.group.children) {
 }
 
 // ---- 5) weapons, per kind: geometry + static frame hierarchy (pivot/off/part pivots/drum/spin/muzzle/hands) ----
-// kit weapons (B2 scenario): mitts self-registers on import; blade registers
-// manually (kits/blade.js itself pulls in bots/ui/physics — too heavy here).
+// kit weapons (B2 scenario): mitts and bow self-register on import; blade and
+// brolly register manually (kits/blade.js / kits/brolly.js themselves pull in
+// bots/ui/physics — too heavy here; the -model.js modules are standalone).
 await import(resolve(repoRoot, 'src/game/kits/mitts-model.js'));
+await import(resolve(repoRoot, 'src/game/kits/bow-model.js'));
 const bladeModel = await import(resolve(repoRoot, 'src/game/kits/blade-model.js'));
 W.registerWeaponModel('blade', bladeModel.buildBlade, bladeModel.animateBlade);
+const brollyModel = await import(resolve(repoRoot, 'src/game/kits/brolly-model.js'));
+W.registerWeaponModel('brolly', brollyModel.brollyDef, brollyModel.animateBrolly);
 const KINDS = [...W.WEAPON_KINDS, ...W.SPECIAL_WEAPON_KINDS];
 const weapons = {};
 for (const kind of KINDS) {
@@ -461,6 +465,8 @@ const commit = upstreamCommit(repoRoot, [
   'src/game/character-outfit.js',
   'src/game/kits/mitts-model.js',
   'src/game/kits/blade-model.js',
+  'src/game/kits/bow-model.js',
+  'src/game/kits/brolly-model.js',
 ]);
 mkdirSync(OUT_DIR, { recursive: true });
 writeFileSync(resolve(OUT_DIR, 'char.bin.gz'), binGz);
@@ -495,8 +501,8 @@ const manifest = {
     specialBinNote: 'rust/assets/props/special.bin.gz holds these held props — NOT re-extracted here (name refs only).',
     subKinds: W.SUB_KINDS,
     subNote: 'only the idle "bomb" sub prop is extracted; other SUB_KINDS props are batch-C scope.',
-    kitWeapons: ['blade', 'bowl', 'brolly', 'mitts', 'bow'],
-    kitNote: 'kit models register via src/game/kits/*.js (not imported by character.js); HOLD entries still emitted in char-poses.json.',
+    kitWeapons: ['blade', 'brolly', 'mitts', 'bow'],
+    kitNote: 'kit models register via src/game/kits/*.js (not imported by character.js); HOLD entries still emitted in char-poses.json. Upstream has no "bowl" weapon (no config entry / kit file / HOLD) — the name only survives in a blade-model.js comment and char.schema.md batch-C note.',
   },
 };
 writeFileSync(resolve(OUT_DIR, 'char.json'), stableStringify(manifest) + '\n');

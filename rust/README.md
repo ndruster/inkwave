@@ -429,3 +429,8 @@ goldens）、Rust 设置屏与持久化、kit SFX 与音频消费者、RenderLay
 范围与任务分解见 `.trae/specs/rust-bevy-port-m5/{spec.md,tasks.md}`；双轨验收口径
 （NFR-M4-5）延续，`low` 档保底可玩路径（NFR-M5-5）不破坏。M4 遗留的 GPU 复核项
 在其对应 M5 任务落地前仍按 `.trae/specs/rust-bevy-port-m4/REVIEW_CHECKLIST.md` 有效。
+
+**M5 进度**：Task 58（kit 武器几何与姿态）已完成——bow/brolly 几何与姿态全量锚定、
+`char-pose-ref.json` 扩到 6097 帧（K2: bow 蓄力/松弦/空中 cant + brolly 触发面）；
+上游 JS 无 bowl 武器（config/kits/HOLD 零入口，仅注释残留），作为事实登记不做移植。
+复核项见 `.trae/specs/rust-bevy-port-m5/REVIEW_CHECKLIST.md`「Task 58 复核登记」。

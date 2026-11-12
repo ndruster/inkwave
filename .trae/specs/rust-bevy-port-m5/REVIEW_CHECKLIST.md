@@ -38,3 +38,23 @@ M5 TaskNN 取代」或「M4 项与 M5 无关、维持原状」。
 
 > 本清单不构成「已通过」；收尾结论以 `tasks.md` Task 70 的 Completion Evidence
 > 与 M5 总评审为准。
+
+## Task 58 复核登记（2026-11-12）
+
+无头可测部分已全部锚定（6097 帧 pinned replay 逐帧全绿 + wpKit 状态比对 +
+九段门禁）。以下为**待用户 GPU 机器复核**的视觉项：
+
+- [ ] **bow 持握/开镜姿态**：`HOLD.bow` 持握/瞄准/举高/大厅姿态（character.js
+  L467-477 全表已入 char-poses.json），瞄准时侧身（hip/chest 负值）、满蓄拉弓
+  到颊侧、松弦跟随；地面侧倾 BOW_CANT=-0.85（扇面平飞）、空中回正（扇面直立）。
+- [ ] **bow 弓体动画**：弦两半随拉弓/松弦回弹（欠阻尼 ring）、limb 屈曲、三箭
+  hide/nock 窗口（release 后 0.3s 隐没、0.12s 内补箭）；蓄能环发光与箭头发光
+  （`BOW_RING1`/满蓄双档）为材质侧，需 GPU 复核。
+- [ ] **brolly 伞面**：变换面（collar/trigger）已锚定；伞面 gores/struts/tears/
+  lamp 由 runner kit 状态机驱动、Rust 无对应状态——**登记为明确偏差**：Rust 侧
+  brolly 恒呈收拢（furled）形态 + trigger 收弹面，开伞/破损/重生/发射的伞面
+  表现待总评审裁决口径。
+- [ ] **bowl**：上游 JS 无 bowl 武器（config/kits/HOLD 均无入口，仅注释残留），
+  无可复核形态——此登记即结论，非待办。
+- [ ] **kit 姿态手感**：bow 拉弓走位（moveSpeedDrawing=2.6）与 charging 呼吸/颤动
+  层（charger 家族姿态）在实机手感。

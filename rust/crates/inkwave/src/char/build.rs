@@ -6,7 +6,7 @@
 #![allow(dead_code)] // Task 54 batch B/C consumers land progressively
 use std::f64::consts::PI;
 
-use super::anim::{AnimState, CharAnim, pose_neutral};
+use super::anim::{AnimState, BowAnim, CharAnim, pose_neutral};
 use super::math::*;
 use super::tables::{Channels, HoldDef, HoldFrame, Tables};
 
@@ -720,9 +720,31 @@ fn pose_weapon(c: &mut CharAnim, dt: f64, s: &AnimState) {
             add_e(p, ch.CLAVR + 1, 0.08 * lk);
         }
     }
-    // ≡ L2028: bow (not exercised by the pinned scenario; B2-adjacent layer)
+    // ≡ L2028: bow — poseBow pulls the string fist back along the arrow and
+    // cants the whole weapon (Task 58: exercised by the char-bow fixture).
     if weapon_kind == "bow" {
-        pose_bow(dt);
+        // ≡ `w.def.drawLen || 0.2` (character.js L480): JS `||` falls back on
+        // 0 too, so filter rather than just unwrap.
+        let len = c
+            .tab
+            .weapons
+            .get("bow")
+            .and_then(|f| f.draw_len)
+            .filter(|v| *v != 0.0)
+            .unwrap_or(0.2);
+        let (charge, last_release, grounded, w_aim) = (c.charge, c.lastRelease, c.grounded, c.wAim);
+        pose_bow(
+            p,
+            ch.ANC,
+            ch.ANCR,
+            &mut c.bow,
+            charge,
+            last_release,
+            grounded,
+            w_aim,
+            len,
+            dt,
+        );
     }
     // ≡ L2031-2058: splatling spin / stream
     if h.fire.as_deref() == Some("spin") {
@@ -1877,8 +1899,53 @@ fn add_expr(p: &mut [f32], xch: &[usize; 8], x: &[f64; 8], w: f64) {
     }
 }
 
-/// ≡ `_poseBow` — no-op (bow never held in the pinned scenario).
-fn pose_bow(_dt: f64) {}
+/// ≡ `poseBow(ch, P, dt)` (character.js L479-496). Pulls the string fist
+/// (the weapon anchor, `ANC`) back along the arrow by `drawLen × draw` and
+/// cants the whole weapon about the arrow (roll on `ANCR.z`): on its side on
+/// the ground (the fan flies flat), upright in the air.
+const BOW_CANT: f64 = -0.85; // ≡ BOW_CANT (character.js L478; pinned in char-poses.json)
+#[allow(clippy::too_many_arguments)]
+fn pose_bow(
+    p: &mut [f32],
+    anc: usize,
+    ancr: usize,
+    bow: &mut BowAnim,
+    charge: f64,
+    last_release: f64,
+    grounded: bool,
+    w_aim: f64,
+    len: f64,
+    dt: f64,
+) {
+    // ≡ L483-487: draw 0..1 — a quick first pull, heavier toward full; after
+    // a release the fist holds at the cheek a beat (`_bowHold`), then eases
+    // forward to the string again.
+    let c = clamp(charge, 0.0, 1.0);
+    if last_release < bow.lr.unwrap_or(99.0) {
+        bow.hold = bow.draw;
+    }
+    bow.lr = Some(last_release);
+    let mut draw = 1.0 - (1.0 - c) * (1.0 - c);
+    if last_release < 0.5 && c < 0.05 {
+        draw = draw.max(bow.hold * (1.0 - ease((last_release - 0.1) / 0.3)));
+    }
+    bow.draw = draw;
+    // ≡ L489-492: the fist back along the arrow (the weapon's +Z, kid space) —
+    // `_e1.set(P[ANCR..], 'YXZ'); _v1.set(0,0,-len·draw).applyEuler(_e1)`.
+    let e = euler_yxz(p[ancr] as f64, p[ancr + 1] as f64, p[ancr + 2] as f64);
+    let v = e * glam::DVec3::new(0.0, 0.0, -len * draw);
+    p[anc] = (p[anc] as f64 + v.x) as f32;
+    p[anc + 1] = (p[anc + 1] as f64 + v.y) as f32;
+    p[anc + 2] = (p[anc + 2] as f64 + v.z) as f32;
+    // ≡ L494-495: cant (eased, so a jump visibly swings the bow upright).
+    bow.cant = Some(damp(
+        bow.cant.unwrap_or(BOW_CANT),
+        if grounded { BOW_CANT } else { 0.0 },
+        12.0,
+        dt,
+    ));
+    p[ancr + 2] = (p[ancr + 2] as f64 + bow.cant.unwrap_or(BOW_CANT) * w_aim) as f32;
+}
 /// ≡ `_poseLook(dt, s)` (character.js L2737-2796). The harness never has
 /// `G.actors`, so `lookActor` is always `None` and `_pickLook` is unreachable;
 /// `inWorld` is always true, so `_attendMenu` is unreachable too.

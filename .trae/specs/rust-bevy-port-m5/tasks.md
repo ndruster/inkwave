@@ -8,7 +8,7 @@
 > 所有条目当前为**计划**，行号/体量以开工时实读为准。
 
 ## Task 58: kit 武器几何与姿态收尾（bow/brolly/bowl）
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: M4 Task 54
 - **Description**: `extract-character.mjs` 目前只注册 mitts/blade 两个 kit 模型（M4 D-T54-5⑩）；
@@ -20,6 +20,19 @@
     既有锚测不回退；wasm32 check 通过（内嵌 archive 逐字节钉测同步更新）。
   - `rule` TR-58.2: REVIEW_CHECKLIST 视觉登记（bow 持握/开镜姿态、brolly 伞面、bowl）。
 - **Notes**: bow 是正式可选武器但 fixture 场景无 bow 段，需补 fixture 或逐值锚测；视觉复核项登记。
+- **Completion Evidence（2026-11-12）**：
+  - 范围修正：上游 JS **无 bowl**（config/kits/HOLD 零入口，仅注释残留）；实际交付 bow + brolly，bowl 作为事实登记不移植。
+  - 提取器：`extract-character.mjs` 注册 bow/brolly kit 模型并钉两文件上游提交；`char-pose-reference.mjs` 镜像注册 + K2 场景 + `wpKit` dump。
+  - 四件套：`char.json` templates 152→184 / weapons 17→19 / weaponKinds 15；`char.bin.gz` 4.89 MB；`char-pose-ref.json` 5640→**6097 帧**（bow 336 + brolly 3014 帧）。
+  - 移植：`pose_bow` ≡ character.js L479-496；`anim_bow` ≡ bow-model.js L148-199；`anim_brolly` ≡ L353-359 变换面（伞面 kit 状态机偏差登记）；`WeaponFrames.draw_len` 走提取管线；`BOW_RING1` 由 tuning.json 互钉锚测防漂移。
+  - 测试：`cargo test --workspace` 全绿（393 项，含新增 `bow_ring1_matches_extracted_tuning`）；6097 帧 pinned replay 逐帧比对 bones/wpOff/wpParts/wpKit（bowDraw/弦弹簧/loose/trig）全绿；`wasm32 check` 通过。
+  - 独立评审：首轮 PASS（P0=0/P1=1/P2=7），P1/P2 已修，复验 REVIEW_VERDICT: PASS。
+  - 门禁：`rust/tools/verify/logs/task58-gates-20261112T002725Z.log` → `GATE_VERDICT=PASS`
+    （FMT/CLIPPY/TEST/WASM/TREE/DETERM/XCHK/HEADLESS/HEADLESS_BOSS/RELEASE_BUILD 全 0，
+    `DETERM=BYTE_IDENTICAL`，JS_TREE_CLEAN/SIM_TREE_CLEAN；TRUNK 一次尝试被
+    wasm-bindgen SIGKILL → `TRUNK=DEGRADED` 按 D-T40-1 环境性非阻断登记）。
+  - 复核登记：`.trae/specs/rust-bevy-port-m5/REVIEW_CHECKLIST.md`「Task 58 复核登记」
+    （bow 持握/开镜、弓体发光、brolly 伞面偏差、bowl 不存在、手感）。
 
 ## Task 59: Rust 设置屏与持久化
 - **Status**: `pending`

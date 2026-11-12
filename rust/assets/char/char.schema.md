@@ -93,7 +93,9 @@ lamp|glow` — the Rust side buckets these into StandardMaterial variants.
   `drawLen`, `dual`, `mirrorDual`, `left` = {pivot,off} for dualies),
   `parts.<name>` = `{pivot,mat,lamp{color,emissive,intensity,roughness}}`,
   `instances` = part keys. Dynamic pump/trig/spin motion is NOT baked — it
-  stays in `animateWeapon` (batch B/C ports the formulas).
+  stays in `animateWeapon` (batch B/C ports the formulas). Optional members
+  are omitted per kind (Task 58): the bow def has no `twirl` (bow-model.js
+  L119-130); only the bow carries `drawLen` (0.22).
 - `weaponKindList` / `specialRefs` — kind name references only: the five held
   special props (kraken/speaker/missile/jetpack/crab) live in
   `../props/special.bin.gz` and are deliberately NOT re-extracted; other

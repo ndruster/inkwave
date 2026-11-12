@@ -53,7 +53,7 @@ Phase C 表现完整度 49–56 → 收尾 57。上表历史 `M2+` 行按本节�
 | `fx.js`、`screenfx.js`、`fxHooks`、`swimWake`、`zoneMarks` | `fx/{particles,api,render,hooks,zone_marks,swim_wake,screen_fx}.rs` | `M4 T51 placeholder` + `visual-review`（composite pass 未接） |
 | `inkShading.js`、`levelMaterial`、`texlib.js` | `texlib/*`、`materials*.rs`（46 层）、`level.wgsl`、`ink_ripple.rs`、`quality.rs` | `M4 T52 done∗`（CPU≠GPU 逐像素、wasm32 烘焙 inert） |
 | `props.js`、murals、dressing、`special-props.js` | `props/*`、`assets/props/*`（IKP1 8 图 2069 placements） | `M4 T53 done∗`（atlas/ShaderMaterial 未移植） |
-| `character.js` 4062 行弹簧姿态 + geo/hair/face/weapons | `char/*` 12 模块、IKC1 `char.bin.gz`、5640 帧 pinned replay | `M4 T54 done∗`（bow/brolly/bowl 几何与 poseBow 顺延） |
+| `character.js` 4062 行弹簧姿态 + geo/hair/face/weapons | `char/*` 12 模块、IKC1 `char.bin.gz`、5640→**6097** 帧 pinned replay | `M4 T54 done∗` + **M5 Task 58 done**：bow/brolly kit 几何注册（bowl 上游不存在，实读 config/kits/HOLD 无入口）、`poseBow` ≡ L479-496、`animateBow` ≡ bow-model.js L148-199、`animateBrolly` 变换面 ≡ L353-359（伞面 kit 状态机无 Rust 对应，偏差登记）、四件套重生成 + `wpKit` 逐帧锚测、九段门禁 |
 | `environment.js`、`renderer.js`、`config.js` QUALITY | `environment.rs`、`assets/environment.json`、`world.rs` 灯光/雾/档位接线 | `M4 T55 done∗`（GTAO/grade/SMAA/tilt-shift/composite 属 GPU 项） |
 | `showcase.js`、`lobbySet*.js` | `ui/showcase_state.rs`、`ui/showcase_scene.rs`、`assets/lobbyset.json` | `M4 T56 placeholder` + `visual-review`（D-T56-⑦ 复用主相机、角色 preview 顺延 M5） |
 

@@ -101,6 +101,36 @@ pub struct WeaponInstance {
     pub ms_init: bool,
     /// ≡ `w.lastPunch` (punch-edge detector, L165-166).
     pub last_punch: f64,
+    /// ≡ `w.bw` (bow-model.js L150-154): bow kinematics, built on the first
+    /// `animateBow` call. `rest` = the off node's built position, `ax` =
+    /// +Z pushed through the off quaternion (the arrow axis), `str`/`str_v` =
+    /// the string spring, `last_rel` = the last `sinceRelease` seen (release
+    /// edge detector), `glow` = the arrowhead glow envelope (state only — the
+    /// material writes it feeds are render-side B2 no-ops).
+    pub bw: Option<BowKin>,
+}
+
+/// Bow per-instance spring state ≡ `w.bw` (bow-model.js L152).
+#[derive(Debug, Clone)]
+pub struct BowKin {
+    pub rest: DVec3,
+    pub ax: DVec3,
+    pub str: f64,
+    pub str_v: f64,
+    pub loose: bool,
+    pub last_rel: f64,
+    pub glow: f64,
+}
+
+/// Bow pose-layer state ≡ the `_bow*` fields `poseBow` keeps on the character
+/// (character.js L484-495). `Option` mirrors JS `??` semantics exactly:
+/// `_bowLR ?? 99` (unset = never released) and `_bowCant ?? BOW_CANT`.
+#[derive(Debug, Clone, Default)]
+pub struct BowAnim {
+    pub lr: Option<f64>,
+    pub hold: f64,
+    pub draw: f64,
+    pub cant: Option<f64>,
 }
 
 /// IK limb ≡ `this.limbs.<name>` (`_buildRig` L684-695): `a`/`b` are segment
@@ -570,6 +600,10 @@ pub struct CharAnim<'t> {
     pub blSide: f64,
     pub blHeavy: bool,
 
+    // ---- bow pose state (≡ character.js `_bowLR/_bowHold/_bowDraw/_bowCant`,
+    // L484-495; per-character because poseBow runs on the pose layer) ----
+    pub bow: BowAnim,
+
     // ---- dance clocks (≡ L598-599; the pose layer itself is B2) ----
     pub dance: Option<String>,
     pub danceT: f64,
@@ -1017,6 +1051,9 @@ impl<'t> CharAnim<'t> {
             blT: 99.0,
             blSide: 0.0,
             blHeavy: false,
+            // ≡ `_bowLR/_bowHold/_bowDraw/_bowCant` unset on a fresh kid
+            // (poseBow L484-495 initialises them on first draw).
+            bow: BowAnim::default(),
             // ≡ L598-599
             dance: None,
             danceT: 0.0,
@@ -1663,6 +1700,7 @@ impl<'t> CharAnim<'t> {
                 ms: [0.0; 8],
                 ms_init: false,
                 last_punch: 99.0,
+                bw: None,
             };
         };
         let fist = DVec3::from_array(self.tab.rig.fist_offset);
@@ -1719,6 +1757,7 @@ impl<'t> CharAnim<'t> {
                     ms: [0.0; 8],
                     ms_init: false,
                     last_punch: 99.0,
+                    bw: None,
                 })
             })
         } else {
@@ -1764,6 +1803,7 @@ impl<'t> CharAnim<'t> {
             ms: [0.0; 8],
             ms_init: false,
             last_punch: 99.0,
+            bw: None,
         }
     }
 

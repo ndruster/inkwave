@@ -352,7 +352,10 @@ pub struct WeaponFrames {
     pub grip_r: GripSpec,
     pub grip_l: GripSpec,
     pub muzzle: [f64; 3],
-    pub twirl: [f64; 3],
+    /// ≡ `def.twirl` (the twirl-fidget pivot). Optional: the bow def has no
+    /// `twirl` (bow-model.js L119-130) and no Rust consumer reads it — the only
+    /// "twirl" in anim.rs is the unrelated fidget name.
+    pub twirl: Option<[f64; 3]>,
     pub drum_at: Option<[f64; 3]>,
     pub spin_at: Option<[f64; 3]>,
     pub drum_r: Option<f64>,
@@ -488,7 +491,7 @@ fn weapon_frames(fr: &JVal) -> Option<WeaponFrames> {
         grip_r: grip(fr.field("gripR")?)?,
         grip_l: grip(fr.field("gripL")?)?,
         muzzle: arr3(fr.field("muzzle")?)?,
-        twirl: arr3(fr.field("twirl")?)?,
+        twirl: fr.field("twirl").and_then(arr3),
         drum_at: fr.field("drumAt").and_then(arr3),
         spin_at: fr.field("spinAt").and_then(arr3),
         drum_r: num(fr.field("drumR")),
@@ -1157,9 +1160,9 @@ mod tests {
         }
         assert_eq!(verts, m.meta.counts.verts, "vertex total");
         assert_eq!(tris, m.meta.counts.tris, "triangle total");
-        // Manifest-level counts (task anchor): parts=196, rig 87+2=89,
-        // weapons=17, kind list=13 (+4 special).
-        assert_eq!(m.parts.len(), 196, "parts rows");
+        // Manifest-level counts (task anchor, M5 Task 58: bow/brolly kits join
+        // → parts=229, rig 87+2=89, weapons=19, kind list=15 (+4 special).
+        assert_eq!(m.parts.len(), 229, "parts rows");
         assert_eq!(m.rig.bone_names.len(), 87, "real bones");
         assert_eq!(
             m.rig.pseudo_bones,
@@ -1170,8 +1173,8 @@ mod tests {
             m.meta.counts.bones as usize,
             "rig entries = bones meta count"
         );
-        assert_eq!(m.weapons.len(), 17, "weapon kinds in manifest");
-        assert_eq!(m.weapon_kinds.len(), 13, "weaponKindList.kinds");
+        assert_eq!(m.weapons.len(), 19, "weapon kinds in manifest");
+        assert_eq!(m.weapon_kinds.len(), 15, "weaponKindList.kinds");
         assert_eq!(m.special_weapon_kinds.len(), 4, "specialWeaponKinds");
         assert_eq!(m.meta.bin, "char.bin.gz");
         assert_eq!(m.meta.bin_sha256.len(), 64, "sha256 hex");

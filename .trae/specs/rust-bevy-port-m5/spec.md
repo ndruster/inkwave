@@ -128,3 +128,62 @@ GTAO/grade/SMAA/tilt-shift、云/PMREM/海面、alley 材质逐档落地且逐�
 ### AC-M5-5: 门禁与纪律延续
 收尾矩阵（模板 `gate-task57.sh`）全绿；上游树/sim 依赖面守卫通过；
 独立只读总评审 P0/P1 闭环；提交 + push origin/main。
+
+---
+
+## Task58 实施设计（2026-11-12，开工时实读定稿）
+
+### §0 范围修正（开工实读结论）
+- **上游 JS 没有 bowl 武器**：`src/config.js` 无 `WEAPONS.bowl`，`src/game/kits/` 无
+  bowl kit 文件，`HOLD` 无 bowl 入口——"bowl"只存在于 blade-model.js 注释与
+  char.schema.md batch-C 备注。Task 58 实际范围 = **bow + brolly**（与
+  extract-character.mjs `kitWeapons` 一致），bowl 作为「上游不存在」事实登记，不移植。
+- JS 锚点实读：`character.js` L466-496（`ANIM_OF.bow='charger'`、`HOLD.bow` 全表、
+  `BOW_CANT=-0.85`、`poseBow`）、`kits/bow-model.js`（230 行：`buildBow`/`animateBow`、
+  BRACE=0.1/DRAW=0.22/FLEX=0.3、弦欠阻尼弹簧 ωm=2π·15/z=0.3）、
+  `kits/brolly-model.js`（383 行：`brollyDef`/`animateBrolly`）。
+- `animateBrolly` 的伞面机构由 `st.runner.kit.brolly`（kits/brolly.js 状态机）驱动，
+  Rust 无对应 runner kit 状态；变换面 = runner collar z（L354）+ trigger follow 弹簧
+  （L355-359），其余（gores/struts/tears/lamp/fabric）登记偏差。
+
+### §1 数据面（提取管线，NFR-M5-6）
+- `extract-character.mjs`：注册 `kits/bow-model.js`（自注册）与 brolly（手动
+  `registerWeaponModel`）；`upstreamCommit` 路径追加两 kit 文件钉源；
+  `kitWeapons=['blade','brolly','mitts','bow']` + bowl 不存在备注。
+- `char-pose-reference.mjs` 镜像注册；场景追加 K2 段（bow 满蓄→release→regen、
+  tap shot、空中 cant 往返；brolly shoot 相）+ `wpKit` dump（bowDraw/bw 五字段/trig）。
+- 四件套重生成：templates 152→184、weapons 17→19、weaponKinds 15、fixture
+  5640→6097 帧；`char.schema.md` 补 twirl 可选 / drawLen 仅 bow 的口径。
+
+### §2 Rust 数据结构
+- `tables.rs`：`WeaponFrames.draw_len: Option<f64>`（消费点镜像 JS `|| 0.2` 语义
+  → `.filter(|v| *v != 0.0).unwrap_or(0.2)`）。
+- `anim.rs`：`WeaponInstance.bw: Option<BowKin>`（rest/ax/str/str_v/loose/last_rel/glow）；
+  `CharAnim.bow: BowAnim{lr:Option,hold,draw,cant:Option}`（`Option` 镜像 JS `??`）。
+- `weapon.rs`：`Wst.bow_draw/bow_len`（pose 层 → weapon 层路由，≡ JS `w.bowDraw`）。
+
+### §3 姿态层 `pose_bow`（build.rs ≡ character.js L479-496）
+- 满签名纯函数（p/anc/ancr/bow/charge/last_release/grounded/w_aim/len/dt），
+  调用点保留在 `pose_weapon` L2028 位置；Euler-YXZ 用 `math.rs::euler_yxz`。
+
+### §4 武器层 `anim_bow` / `anim_brolly`（weapon.rs）
+- `anim_bow` ≡ bow-model.js L148-199（harness 路径无 runner）：每实例 init、释放沿、
+  欠阻尼弹簧、limb 屈曲、`tipAt`/`aimString`（弦两半 aim+stretch）、箭矢 show 窗口、
+  glow 包络状态（材质写 = B2 no-op）。
+- `anim_brolly` ≡ L353-359 变换面；`BOW_RING1` 常量以锚测钉在
+  `assets/tuning.json`（`weapons.bow.ring1`）上，禁止静默漂移。
+
+### §5 锚测（TR-58.1）
+- 既有 pinned replay 扩展：`wpParts`（全部 part pos/quat/scale）+ `wpOff` +
+  `wpKit`（bowDraw、弦弹簧状态、loose 布尔、brolly trig）逐帧比对；6097 帧全绿。
+- 新增 `bow_ring1_matches_extracted_tuning`；`cargo fmt/clippy/test/wasm` 全过。
+
+### §6 评审结论（独立只读评审，2026-11-12）
+- P0：0；P1：1（BOW_RING1 手抄 → 已修：tuning.json 互钉锚测）；P2：7（注释级/
+  不可达路径，已修 6 处注释与 `||` 语义镜像、struts 偏差措辞、死常量清除）。
+- 复验：REVIEW_VERDICT: PASS。
+
+### §7 门禁
+- `gate-task58.sh`（模板 gate-task56.sh，DETERM 增补 char-pose-ref.json 双跑）；
+  TRUNK 段按 D-T40-1 登记；REVIEW_CHECKLIST 登记 bow 持握/开镜、brolly 伞面、
+  （bowl 不存在）视觉复核项。

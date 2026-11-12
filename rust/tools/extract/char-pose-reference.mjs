@@ -47,10 +47,15 @@ const THREE = await import(resolve(repoRoot, 'node_modules/three/build/three.mod
 const ctxMod = await import(resolve(repoRoot, 'src/core/ctx.js'));
 const C = await import(resolve(repoRoot, 'src/game/character.js'));
 const W = await import(resolve(repoRoot, 'src/game/character-weapons.js'));
-// kit weapons for the J/K scenario (same registration as extract-character.mjs)
+// kit weapons for the J/K scenario (same registration as extract-character.mjs:
+// mitts/bow self-register; blade/brolly register manually from the standalone
+// -model.js modules)
 await import(resolve(repoRoot, 'src/game/kits/mitts-model.js'));
+await import(resolve(repoRoot, 'src/game/kits/bow-model.js'));
 const bladeModel = await import(resolve(repoRoot, 'src/game/kits/blade-model.js'));
 W.registerWeaponModel('blade', bladeModel.buildBlade, bladeModel.animateBlade);
+const brollyModel = await import(resolve(repoRoot, 'src/game/kits/brolly-model.js'));
+W.registerWeaponModel('brolly', brollyModel.brollyDef, brollyModel.animateBrolly);
 const { G } = ctxMod;
 
 // ---- minimal world context: inWorld = G.scene && root.parent === G.scene && G.physics ----
@@ -176,6 +181,13 @@ function dump() {
       off: WPS(w.left.off),
       parts: Object.entries(w.left.parts).map(([n, p]) => [n, P(p), Q(p), [r9(p.scale.x), r9(p.scale.y), r9(p.scale.z)]]),
     } : null,
+    // Task 58: kit weapon animation state (transform-side springs the wpParts
+    // dump can't carry: bow draw / string spring, brolly trigger follow).
+    wpKit: w.def.kind === 'bow' ? {
+      kind: 'bow',
+      draw: r9(w.bowDraw ?? 0),
+      bw: w.bw ? { str: r9(w.bw.str), strV: r9(w.bw.strV), loose: !!w.bw.loose, lastRel: r9(w.bw.lastRel), glow: r9(w.bw.glow) } : null,
+    } : w.def.kind === 'brolly' ? { kind: 'brolly', trig: r9(w.trig || 0) } : null,
   };
 }
 
@@ -335,6 +347,48 @@ run(120, (i) => (i > 60 ? 2.5 : 0), { form: 'kid' });
   idle(40);
   emit([['blade_heavy']], mkState({ charge: 0.6 }));
   for (let i = 0; i < 70; i++) emit([], mkState({ charge: Math.max(0, 0.6 - i * 0.02) }));
+  idle(40);
+}
+// K2: Task 58 — bow (poseBow draw/hold/cant + animateBow string spring, limb
+// flex, nocked-arrow show window) and brolly (collar/trigger transformation
+// surface; the canopy kit state machine has no Rust counterpart, so this
+// pins the furled/shot surfaces). Note: poseBow's _bowCant begins at the
+// ground value, swings upright in the air draw, back on landing.
+{
+  emit([], mkState(), 'bow');
+  idle(30);
+  // full draw → release → regen: pins the draw easing, the _bowHold
+  // follow-through, the loose-string ring and the arrow hide/nock window
+  for (let i = 0; i < 60; i++) emit([], mkState({ charge: Math.min(1, i * 0.03), aimPitch: 0.3 * Math.sin(i * 0.05) }));
+  emit([['charge_release', 0]], mkState({ charge: 1 }));
+  for (let i = 0; i < 45; i++) emit([], mkState({}));
+  // tap shot: sub-ring1 draw, release straight after
+  for (let i = 0; i < 20; i++) emit([], mkState({ charge: 0.2 }));
+  emit([['charge_release', 0]], mkState({ charge: 0.2 }));
+  for (let i = 0; i < 30; i++) emit([], mkState({}));
+  for (let i = 0; i < 40; i++) emit([], mkState({ charge: Math.min(1, 0.1 + i * 0.05) }));
+  emit([['charge_release', 0]], mkState({ charge: 1 }));
+  idle(30);
+  // cant: airborne while drawn (the bow swings upright), land (swings back)
+  {
+    let vy = 4.6;
+    emit([['jump', 5]], mkState({ grounded: false, vy, charge: 1, speed: 5, localMove: { x: 0, z: 1 } }));
+    root.y += vy * DT; vy -= 15.5 * DT;
+    while (root.y > 0) {
+      root.y += vy * DT; vy -= 15.5 * DT;
+      root.z += 5 * DT * Math.cos(root.ry); root.x += 5 * DT * Math.sin(root.ry);
+      if (root.y <= 0) { root.y = 0; emit([['land', Math.min(6, -vy)]], mkState({ charge: 1, speed: 5, localMove: { x: 0, z: 1 } })); }
+      else emit([], mkState({ grounded: false, vy, charge: 1, speed: 5, localMove: { x: 0, z: 1 } }));
+    }
+  }
+  idle(40);
+}
+{
+  emit([], mkState(), 'brolly');
+  idle(20);
+  // trigger follow spring ≡ brolly-model.js L355-359; the collar sits at its
+  // furled rest (no runner kit state in the harness)
+  for (let i = 0; i < 60; i++) emit(i % 10 === 0 ? [['shoot', 0]] : [], mkState({}));
   idle(40);
 }
 // I: tail idle

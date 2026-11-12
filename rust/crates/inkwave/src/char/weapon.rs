@@ -7,7 +7,7 @@
 #![allow(dead_code)] // Task 54 batch B/C consumers land progressively
 use glam::DQuat;
 
-use super::anim::{AnimState, CharAnim, RunnerState, WeaponInstance};
+use super::anim::{AnimState, BowKin, CharAnim, RunnerState, WeaponInstance};
 use super::math::*;
 
 /// The single reused `animateWeapon` state object ≡ `this._wst`
@@ -32,6 +32,14 @@ pub struct Wst {
     pub grounded: bool,
     pub ground_speed: f64,
     pub world_quat: Option<DQuat>,
+    /// ≡ `w.bowDraw` (character.js poseBow L488 writes it, bow-model.js L156
+    /// reads it). The pose layer owns `CharAnim::bow.draw`; the weapon layer
+    /// reads it through here (JS routes the same value over the weapon
+    /// instance).
+    pub bow_draw: f64,
+    /// ≡ `d.drawLen || 0.2` for `animateBow` (L160, L178) — from the weapon
+    /// frames table (only the bow def carries it).
+    pub bow_len: f64,
 }
 
 /// ≡ `_animWeapon(dt, s, w)` (L2127-2149).
@@ -60,6 +68,18 @@ pub fn anim_weapon(c: &mut CharAnim, dt: f64, s: &AnimState) {
     st.rolling = c.wRoll;
     st.grounded = c.grounded;
     st.ground_speed = c.gv;
+    // ≡ poseBow L488: `w.bowDraw = draw` — the pose layer ran before
+    // _animWeapon in the same update, so animateBow sees this frame's draw.
+    st.bow_draw = c.bow.draw.max(0.0);
+    // ≡ `d.drawLen || 0.2` (bow-model.js L160/L178 via def.drawLen): JS's
+    // `||` falls back on 0 too, so the Option is filtered, not just unwrapped.
+    st.bow_len = c
+        .tab
+        .weapons
+        .get("bow")
+        .and_then(|f| f.draw_len)
+        .filter(|v| *v != 0.0)
+        .unwrap_or(0.2);
     // ≡ L2143: worldQuat only for the slosher (off.getWorldQuaternion) — the
     // B2 scenario holds a slosher for the aim sweep, so compose the off
     // node's world rotation from the current locals (same call point).
@@ -97,6 +117,14 @@ fn animate_weapon(w: &mut WeaponInstance, st: &Wst) {
     }
     if kind == "mitts" {
         anim_mitts(w, st, dt);
+        return;
+    }
+    if kind == "bow" {
+        anim_bow(w, st, dt);
+        return;
+    }
+    if kind == "brolly" {
+        anim_brolly(w, st, dt);
         return;
     }
     let t = st.t;
@@ -360,4 +388,238 @@ fn part<'a>(w: &'a WeaponInstance, name: &str) -> Option<&'a super::anim::PartXf
 
 fn part_mut<'a>(w: &'a mut WeaponInstance, name: &str) -> Option<&'a mut super::anim::PartXform> {
     w.parts.iter_mut().find(|p| p.name == name)
+}
+
+/// bow-model.js geometry constants (L24-30): string ends on the limb tips and
+/// the limb roots in the riser pockets, weapon space (nock at the origin).
+const TIP_U: glam::DVec3 = glam::DVec3::new(0.0, 0.382, 0.0);
+const TIP_L: glam::DVec3 = glam::DVec3::new(0.0, -0.407, 0.0);
+const ROOT_U: glam::DVec3 = glam::DVec3::new(0.0, 0.165, 0.118);
+const ROOT_L: glam::DVec3 = glam::DVec3::new(0.0, -0.19, 0.118);
+/// L26: limb bend at full draw (rad, about each limb's root).
+const FLEX: f64 = 0.3;
+/// config.js WEAPONS.bow.ring1 (L204); `WEAPONS.bow?.ring1 ?? 0.45`. Not
+/// hand-copied blindly: the test below pins it to the extracted tuning table
+/// (NFR-M5-6, data over literals).
+const BOW_RING1: f64 = 0.45;
+
+/// ≡ `tipAt(tip, root, th, out)` (bow-model.js L140-143): the limb tip swung
+/// about the limb root by `th` around X, in riser space.
+fn bow_tip_at(tip: glam::DVec3, root: glam::DVec3, th: f64) -> glam::DVec3 {
+    let dy = tip.y - root.y;
+    let dz = tip.z - root.z;
+    let (c, s) = (th.cos(), th.sin());
+    glam::DVec3::new(tip.x, root.y + dy * c - dz * s, root.z + dy * s + dz * c)
+}
+
+/// ≡ `aimString(g, nock, tip, dirRest, L)` (bow-model.js L144-147): aim the
+/// string half from the nock to the (flexed) tip and stretch it along Y.
+fn bow_aim_string(
+    p: &mut super::anim::PartXform,
+    nock: glam::DVec3,
+    tip: glam::DVec3,
+    dir_rest: glam::DVec3,
+    l_rest: f64,
+) {
+    let d = tip - nock;
+    // ≡ L145 `_v2.length() || 1e-4`: JS keeps a true (0, 1e-4) length, Rust
+    // lifts it to 1e-4 — unreachable here (len ≳ 0.35 over the str domain).
+    let len = d.length().max(1e-4);
+    p.pos = nock;
+    p.quat = DQuat::from_rotation_arc(dir_rest, d / len);
+    p.scale = glam::DVec3::new(1.0, len / l_rest, 1.0);
+}
+
+/// ≡ `animateBow(w, st)` (bow-model.js L148-199), harness path: no runner
+/// (`drawing = (st.charge||0) > 0.01`, `c = st.charge`); the glow envelope
+/// state is tracked but its material writes (heads emissive / coil uniforms)
+/// are render-side B2 no-ops, as is the `visible` render cull.
+fn anim_bow(w: &mut WeaponInstance, st: &Wst, dt: f64) {
+    // ≡ L156-158: the pose layer's draw; no runner in the harness.
+    let hand = st.bow_draw.max(0.0);
+    let drawing = st.charge > 0.01;
+    let c = st.charge;
+    let rel = st.since_release;
+    // ≡ L150-154 + L160-176: per-instance init and the string spring, all on
+    // the scoped `bw` borrow (part writes below need `w` again afterwards).
+    // Statement order vs JS (glow after limbs here) carries no data
+    // dependency between the blocks — the borrow split forces it.
+    let (new_off, str_now) = {
+        let s = w.bw.get_or_insert_with(|| BowKin {
+            // ≡ L152: rest = the off node's built position, ax = +Z pushed
+            // through the off quaternion (the arrow axis; `.normalize()` is a
+            // defensive extra — off.quat is unit so JS's `applyQuaternion`
+            // keeps length; no-op on real data).
+            rest: w.off.pos,
+            ax: (w.off.quat * glam::DVec3::new(0.0, 0.0, 1.0)).normalize(),
+            str: 0.0,
+            str_v: 0.0,
+            loose: false,
+            last_rel: 99.0,
+            glow: 0.4,
+        });
+        if !w.ms_init {
+            // ≡ L153: `w.pump = 0; w.trig = 0;` — already the built-in
+            // defaults. Gated by the shared first-call flag (JS's gate is
+            // `if (!s)`, L151): equivalent because set_weapon rebuilds the
+            // instance per kind, so one instance never runs both paths.
+            w.pump = 0.0;
+            w.trig = 0.0;
+            w.ms_init = true;
+        }
+        // ≡ L160: the bow rides forward by the fist's draw (stays put in the
+        // world).
+        let new_off = s.rest + s.ax * (st.bow_len * hand);
+        // ≡ L162-165: release edge detector → the string goes loose.
+        if rel < s.last_rel - 1e-4 {
+            s.loose = true;
+            s.str_v = 0.0;
+        }
+        s.last_rel = rel;
+        if drawing {
+            s.loose = false;
+        }
+        // ≡ L166-173: loose string rings (exact underdamped spring toward 0),
+        // otherwise it rides the fist.
+        if s.loose {
+            let om = std::f64::consts::TAU * 15.0;
+            let z: f64 = 0.3;
+            let wd = om * (1.0 - z * z).sqrt();
+            let e = (-z * om * dt).exp();
+            let co = (wd * dt).cos();
+            let sn = (wd * dt).sin();
+            let (x0, v0) = (s.str, s.str_v);
+            let bq = (v0 + z * om * x0) / wd;
+            s.str = e * (x0 * co + bq * sn);
+            s.str_v = e * ((-z * om * x0 + wd * bq) * co + (-z * om * bq - wd * x0) * sn);
+            s.str = s.str.max(-0.16);
+            if rel > 0.3 && hand < 0.03 && s.str.abs() < 0.02 {
+                s.loose = false;
+            }
+        } else {
+            s.str = hand;
+            s.str_v = 0.0;
+        }
+        (new_off, s.str)
+    };
+    w.off.pos = new_off;
+    // ≡ L189-194: glow envelope — state kept (s.glow), material writes
+    // (heads.color/emissive/emissiveIntensity) are render-side B2 no-ops.
+    let ring = if c >= 0.999 {
+        2
+    } else if c >= BOW_RING1 {
+        1
+    } else {
+        0
+    };
+    let want = if drawing {
+        0.35 + 1.4 * c
+            + if ring >= 1 { 1.4 } else { 0.0 }
+            + if ring == 2 {
+                2.2 + 0.9 * (st.t * 30.0).sin()
+            } else {
+                0.0
+            }
+    } else {
+        0.35
+    };
+    if let Some(s) = w.bw.as_mut() {
+        s.glow += (want - s.glow) * (1.0 - (-dt * 18.0).exp());
+    }
+    // ≡ L175-176: limbs flex with the string.
+    let phi = FLEX * str_now.clamp(-0.2, 1.05);
+    for (name, rot) in [
+        ("limbU", -phi),
+        ("limbUInk", -phi),
+        ("limbL", phi),
+        ("limbLInk", phi),
+    ] {
+        if let Some(p) = part_mut(w, name) {
+            p.quat = DQuat::from_rotation_x(rot);
+        }
+    }
+    // ≡ L178-182: string halves from the nock to the flexed tips.
+    let nock = glam::DVec3::new(0.0, 0.0, -st.bow_len * str_now);
+    let tu = bow_tip_at(TIP_U, ROOT_U, -phi);
+    let tl = bow_tip_at(TIP_L, ROOT_L, phi);
+    if let Some(p) = part_mut(w, "stringU") {
+        bow_aim_string(p, nock, tu, glam::DVec3::Y, TIP_U.y.abs());
+    }
+    if let Some(p) = part_mut(w, "stringL") {
+        bow_aim_string(p, nock, tl, glam::DVec3::NEG_Y, TIP_L.y.abs());
+    }
+    // ≡ L184-187: nocked arrows — gone on the release, a fresh trio nocks a
+    // beat later (`visible = show > 0.01` is render-side culling; the 0.001
+    // scale floor already matches).
+    let show = if drawing {
+        1.0
+    } else if rel < 0.3 {
+        0.0
+    } else {
+        ((rel - 0.3) / 0.12).min(1.0)
+    };
+    let sc = show.max(0.001);
+    for name in ["arrows", "heads", "fletch"] {
+        if let Some(p) = part_mut(w, name) {
+            p.pos = nock;
+            p.scale = glam::DVec3::splat(sc);
+        }
+    }
+    // ≡ L195-198: `w.coil` uniforms — render-side (no coil in the port).
+}
+
+/// ≡ `animateBrolly(w, st)` (brolly-model.js L304-381), **transformation
+/// surface only**. The canopy gores / tears / lamp / fabric are driven by
+/// `st.runner.kit.brolly` (kits/brolly.js runner state machine), which has no
+/// Rust counterpart — with `k = null` every gore term reduces to its furled
+/// authored pose (`eo = 0`, `kick = 0`, `flutter = 0`, `gs = 1`). The struts
+/// (L288, L336-348) are extra meshes JS adds under `w.off` (not in
+/// `w.parts`), rebuilt from the gore matrices each frame — no extracted part
+/// surface exists for them, so they are out of the port's data model (they
+/// stay registered as a visual-review item). What remains transform-side and
+/// is ported in full: the runner collar ride (L354) and the trigger follow
+/// spring (L355-359). Registered as a deviation in REVIEW_CHECKLIST.
+fn anim_brolly(w: &mut WeaponInstance, st: &Wst, dt: f64) {
+    // ≡ L354: `P.runner.position.z = rest.z + (Z1−Z0)·clamp(eo)` — eo ≡ 0
+    // with no kit state (Z0 = 0.305, brolly-model.js L34), so the collar sits
+    // at its authored rest position.
+    if let Some(p) = part_mut(w, "runner") {
+        p.pos.z = p.base_pos.z;
+    }
+    // ≡ L355-359: the trigger follows shots (no kit → `open > 0.1` never).
+    if part(w, "trigger").is_some() {
+        let want = if st.since_shoot < 0.12 { 1.0 } else { 0.0 };
+        w.trig += (want - w.trig) * (1.0 - (-(if want != 0.0 { 40.0 } else { 20.0 }) * dt).exp());
+        let trig_q = DQuat::from_rotation_x(0.42 * w.trig);
+        if let Some(p) = part_mut(w, "trigger") {
+            p.quat = trig_q;
+        }
+    }
+    // L361-380: lamp / fabric / opacity — material-side B2 no-ops.
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BOW_RING1;
+
+    /// `BOW_RING1` must track the extracted tuning table, not drift as a
+    /// hand-typed literal (NFR-M5-6): ≡ bow-model.js L139
+    /// `WEAPONS.bow?.ring1 ?? 0.45` with the config value from
+    /// `src/config.js` L204 flowing through `run-all.sh` into
+    /// `assets/tuning.json`.
+    #[test]
+    fn bow_ring1_matches_extracted_tuning() {
+        const TUNING: &str = include_str!("../../../../assets/tuning.json");
+        let root = inkwave_sim::net::wire::parse_json(TUNING).expect("tuning.json parses");
+        let bow = root
+            .field("weapons")
+            .and_then(|w| w.field("bow"))
+            .expect("weapons.bow");
+        let ring1 = bow
+            .field("ring1")
+            .and_then(|v| v.as_f64())
+            // ≡ the `?? 0.45` fallback when the config entry is absent.
+            .unwrap_or(0.45);
+        assert_eq!(BOW_RING1, ring1);
+    }
 }

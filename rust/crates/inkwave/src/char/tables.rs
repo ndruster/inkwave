@@ -334,6 +334,10 @@ pub struct WeaponFrames {
     /// `w.spin` ≡ `char.json:frames.spinAt` (spinner / zooka barrel cluster,
     /// `_applyPose` L3532-3538).
     pub has_spin: bool,
+    /// `d.drawLen || 0.2` (bow-model.js L120 `drawLen: DRAW`; only the bow def
+    /// carries it) — consumed by `_poseBow` (character.js L480) and
+    /// `animateBow` (bow-model.js L160, L178).
+    pub draw_len: Option<f64>,
 }
 
 /// Hair strand meta ≡ `char.json:rig.hairRest[style].meta` entries.
@@ -491,6 +495,7 @@ fn weapon_frames(w: &JVal) -> Option<WeaponFrames> {
         hand_r: (arr3(hr.field("pos")?)?, arr4(hr.field("quat")?)?),
         hand_l: (arr3(hl.field("pos")?)?, arr4(hl.field("quat")?)?),
         has_spin: fr.field("spinAt").is_some(),
+        draw_len: fr.field("drawLen").and_then(JVal::as_f64),
     })
 }
 
