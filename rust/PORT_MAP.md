@@ -67,6 +67,12 @@ headless 600 帧、wasm check、九段门禁）全部闭环；GPU 观感/听感�
 `M4 wontport`：locker 更衣室、高保真 Boss 模型、Rust 设置屏、DOM 名牌叠层——
 均已转入 **M5** 立项（Task 59/62/68/69，见 `.trae/specs/rust-bevy-port-m5/tasks.md`）。
 
+**M5 进度**：Task 58（bow/brolly kit 几何与姿态，6097 帧 goldens）完成；
+Task 59（设置屏与持久化）完成——`settings.rs` 复用 `environment.json:defaultSettings`、
+native/wasm 双载体、BEVY 设置屏与音量/画质/主题/灵敏度接线、13 项锚测与独立
+21 键 crosscheck。偏差 D-T59-1..4（native 文件载体、theme 扩展、fov 存而不应用、
+wasm 独立键避免覆写 JS 字段）及 GPU/载体复核项见 M5 REVIEW_CHECKLIST。
+
 ## 质量档位
 
 M1 曾是固定简化档；**M4 Task 55 起**改为四档质量 + 三档主题，全部读

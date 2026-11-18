@@ -36,6 +36,9 @@ web-sys = { version = "0.3", features = [
     "WebSocket",
     "MessageEvent",
     "CloseEvent",
+    # Task 59 (D-T59-1): wasm settings persistence mirrors the JS
+    # localStorage['inkwave.settings'] carrier.
+    "Storage",
     # Task 26: the test-only net smoke seam logs evidence lines to the
     # browser console (`println!` is a no-op on wasm32-unknown-unknown).
     "console",

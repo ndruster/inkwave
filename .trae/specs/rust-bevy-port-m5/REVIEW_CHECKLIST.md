@@ -58,3 +58,27 @@ M5 TaskNN 取代」或「M4 项与 M5 无关、维持原状」。
   无可复核形态——此登记即结论，非待办。
 - [ ] **kit 姿态手感**：bow 拉弓走位（moveSpeedDrawing=2.6）与 charging 呼吸/颤动
   层（charger 家族姿态）在实机手感。
+
+## Task 59 复核登记（2026-11-13）
+
+无头可测部分：13 项锚测（默认值/词表/合并/clamp/启动覆盖/往返/真实点击系统/low 保底）
+与独立 crosscheck（21 键双向）全绿；九段门禁结论见 `tasks.md` Task 59 Completion
+Evidence。以下为**待用户 GPU/浏览器机器复核**的视觉与载体项：
+
+- [ ] **设置屏 UI 布局/焦点**：8 行 + RESET/BACK 在 16:9/超宽/低分辨率下的排版、
+  鼠标 hover/焦点态、键盘导航（Esc/B/Back、Enter=BACK）；与 online hub/lobby 屏
+  叠加时的层级与返回路径（`settings_return`）。
+- [ ] **持久化双载体生效**：native 配置文件与 wasm localStorage 在真实重启后生效；
+  wasm 用独立键 `inkwave.rust.settings`（D-T59-4，避免覆写 JS 版 9 个未移植字段），
+  需复核浏览器端不会与 JS 版设置互相覆盖。
+- [ ] **运行期切档观感**：画质/主题/阴影/泛光切换后灯光/雾/Bloom 的即时刷新
+  （`EnvRefresh` 一帧内生效）；天空贴图与已生成 rig 不重建（D-T55-⑦）是否符合预期；
+  low 档保底可玩。
+- [ ] **音量手感**：三轨 0.05 步进、`taper^1.5` 响度曲线与 τ=0.04 平滑在实机听感。
+- [ ] **RESET 缺二次确认 / Saved! 脉冲**：JS menus.js L2145-2163 有确认与提示，
+  Rust 版 RESET 立即生效且只有静态「Changes save automatically」——登记为
+  行为偏差（P2），待总评审裁决是否补齐。
+- [ ] **未接线字段**（保守范围，非待办除非总评审要求）：`padSensitivity`、
+  `colorblind`、`minimap`、`matchLength`、`lastMode`、`difficulty`、`rumble`、
+  `aimAssistMouse`、`fpsCap`；`fov` 存但不应用（D-T59-3）；
+  `invertY/aimAssist/showFps/cameraShake` 存而暂无运行期消费者。

@@ -37,9 +37,19 @@ pub struct LookSettings {
 }
 
 impl Default for LookSettings {
+    /// Task 59: the saved `sensitivity` slider is applied at boot. `fov_h`
+    /// stays at the Rust camera's fixed reference (D-T59-3; the stored FOV
+    /// is persisted but not applied).
     fn default() -> Self {
+        // Deterministic: the real app overrides with the persisted document
+        // in WorldPlugin::build (Task 59). Tests must not read the user's HOME.
+        let saved = crate::settings::Settings::defaults().sensitivity as f32;
         Self {
-            sensitivity: DEFAULT_SENSITIVITY,
+            sensitivity: if saved.is_finite() && saved > 0.0 {
+                saved
+            } else {
+                DEFAULT_SENSITIVITY
+            },
             fov_h: crate::world::BASE_FOV_H,
         }
     }

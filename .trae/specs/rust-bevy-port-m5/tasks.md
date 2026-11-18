@@ -35,7 +35,7 @@
     （bow 持握/开镜、弓体发光、brolly 伞面偏差、bowl 不存在、手感）。
 
 ## Task 59: Rust 设置屏与持久化
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: 无（可与 Task 58 并行）
 - **Description**: 音量三轨（`set_volumes` ≡ audio.js L165-172 已实现、无 UI 调用点）+
@@ -48,6 +48,33 @@
     low 档全关语义回归；headless 600 帧不 panic。
   - `rule` TR-59.2: REVIEW_CHECKLIST 登记（UI 布局/焦点/与 online 屏共存）。
 - **Notes**: JS 侧设置菜单是 DOM 屏，Rust 侧复用既有 egui/自绘 UI 体系，实施设计时定稿。
+- **Completion Evidence（2026-11-13）**：
+  - 数据面：`environment.json:defaultSettings`（21 键，来自 `config.js` L561-591，
+    `source.commit` 已钉）由 `settings.rs` 以 `include_str!` + `JVal` 读取，
+    缺键即 panic（无手抄回退）；新增 `settings-crosscheck.mjs` 独立正则解析器
+    双向核对 21 键 → `SETTINGS_CROSSCHECK=PASS keys=21`。
+  - 实现：新增 `settings.rs`（native 配置文件 / wasm `inkwave.rust.settings`
+    localStorage 双载体、宽容逐键解码、0.05 网格、启动覆盖不落盘）、BEVY
+    设置屏（8 行 + RESET/BACK + 实时值标签 + Esc/Enter 返回）、三音量轨
+    `set_volumes` τ=0.04 接线、画质/主题/阴影/泛光经 `EnvRefresh` 一帧刷新、
+    `LookSettings` 灵敏度启动应用。
+  - 偏差登记：D-T59-1 native 文件载体、D-T59-2 Rust 扩展 theme、D-T59-3
+    fov 存而不应用、D-T59-4 wasm 独立键（避免覆写 JS 版 9 个未移植字段）；
+    未接线的 9 个 JS 键与 5 个只存不用字段、RESET 无确认等登记于
+    `REVIEW_CHECKLIST.md`「Task 59 复核登记」。
+  - 测试：`cargo test --workspace` 全绿；13 项 Task 59 锚测含真实
+    `Pointer<Click> → settings_clicks → save() → reload` 链路、真实 `save()`/
+    `load()` 往返、启动覆盖不落盘、low 档全关、`taper^1.5` 初值；
+    `wasm32 check` 通过、`cargo tree -p inkwave_sim` 依赖面不变。
+  - 独立评审：首轮 FAIL（3×P0 + 6×P1）→ 全部修复（wasm 分键、宽容解码、
+    boot 覆盖隔离、真实点击锚测、无 HOME 依赖、Esc 返回、设计落档）；
+    复验 `REVIEW_VERDICT: PASS`。
+  - 门禁：`rust/tools/verify/logs/task59-gates-20261113T145044Z.log` →
+    `GATE_VERDICT=PASS`（FMT/CLIPPY/TEST/WASM/TREE/DETERM/XCHK/HEADLESS/
+    HEADLESS_BOSS/RELEASE_BUILD 全 0，`DETERM=BYTE_IDENTICAL`，
+    JS_TREE_CLEAN/SIM_TREE_CLEAN；TRUNK 一次尝试 wasm-bindgen SIGKILL
+    → `TRUNK=DEGRADED` 按 D-T40-1 环境性非阻断登记）。前两轮日志
+    （首轮评审前 / wasm `write_at` 编译错误）保留作为完整证据链。
 
 ## Task 60: kit SFX 与生产消费者接线
 - **Status**: `pending`

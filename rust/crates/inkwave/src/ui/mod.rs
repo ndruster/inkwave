@@ -59,6 +59,8 @@ pub enum Screen {
     OnlineHub,
     /// Lobby (Task 24; menus.js `lobby` / `_scr_lobby` L2774).
     OnlineLobby,
+    /// Task 59: settings (menus.js `_scr_settings` L2042-2204).
+    Settings,
 }
 
 /// Upstream default match length (config.js `MATCH.defaultDuration`).
@@ -89,6 +91,9 @@ pub struct UiState {
     /// L164-171); this is the Rust-side placeholder cycle (turf → boss —
     /// offline zones is not wired into `DemoSim`, Task 38 batch 3).
     pub play_mode: PlayMode,
+    /// Task 59: the screen to return to when BACK closes the settings panel
+    /// (≡ JS `_go(prevScreen)` from the main/pause settings button).
+    pub settings_return: Screen,
 }
 
 /// Offline Play-menu match mode (Task 46 batch B).
@@ -118,6 +123,7 @@ impl Default for UiState {
             net_back_pressed: false,
             auto_join: 0.0,
             play_mode: PlayMode::default(),
+            settings_return: Screen::Menu,
         }
     }
 }
@@ -172,6 +178,21 @@ pub enum Action {
     /// (turf → boss). JS has no offline boss entry; the online lobby's MODE
     /// button (`lob_mode`) is the interaction this mirrors.
     ModeCycle,
+    /// Task 59 (menus.js `_scr_settings` L2042-2204): open the settings panel
+    /// from the main menu / pause overlay.
+    OpenSettings,
+    /// BACK → the screen recorded in `UiState::settings_return`.
+    CloseSettings,
+    /// One 0.05-grid step of a settings slider (≡ `_slider` L1976-2000).
+    SettingsStep(crate::settings::Slider, i8),
+    /// Segmented quality / theme cycles (≡ `SETTINGS_TABS` video tab L183).
+    SettingsQuality,
+    SettingsTheme,
+    /// Video toggles (renderer.js L140/L150).
+    SettingsShadows,
+    SettingsBloom,
+    /// RESET TO DEFAULTS (menus.js L2145-2161).
+    SettingsReset,
 }
 
 /// The online screens' button intents (menus.js `_scr_online` /
@@ -572,12 +593,44 @@ fn small_button_dyn(
     ));
 }
 
-/// Build all four screen trees (only one is displayed at a time).
+/// Task 59: one slider row (`-` / `+` on the JS 0.05 grid) with a live label.
+fn settings_row(
+    commands: &mut Commands,
+    parent: Entity,
+    role: &'static str,
+    text: &str,
+    minus: Action,
+    plus: Action,
+) {
+    let r = commands.spawn((row(8.0), ChildOf(parent))).id();
+    commands.spawn((label(text, 18.0, Color::WHITE), LabelRole(role), ChildOf(r)));
+    small_button(commands, r, "-", minus);
+    small_button(commands, r, "+", plus);
+}
+
+/// Task 59: one segmented-option row (quality / theme / toggles).
+fn settings_cycle_row(
+    commands: &mut Commands,
+    parent: Entity,
+    role: &'static str,
+    text: &str,
+    action: Action,
+) {
+    let r = commands.spawn((row(8.0), ChildOf(parent))).id();
+    commands.spawn((label(text, 18.0, Color::WHITE), LabelRole(role), ChildOf(r)));
+    small_button(commands, r, "CYCLE", action);
+}
+
+/// Build all screen trees (only one is displayed at a time).
 pub fn build_ui(mut commands: Commands) {
     // Task 46 batch C2: the boss HUD / bossAudio state machines live with
     // the UI (registered here so both the real app and the headless test
     // apps get them).
     commands.init_resource::<BossHudRes>();
+    // Task 59: every app that builds the UI (including the headless UI test
+    // app) owns the settings resource; the real app's persisted copy is
+    // inserted by WorldPlugin before Startup, so init_resource keeps it.
+    commands.init_resource::<crate::settings::Settings>();
     // Task 46: placeholder defeat quake (boss.js L182) — same registration
     // surface as `BossHudRes` so test apps get it too.
     commands.init_resource::<crate::boss_render::BossShake>();
@@ -612,6 +665,8 @@ pub fn build_ui(mut commands: Commands) {
         "ONLINE",
         Action::Online(OnlineAction::EnterHub),
     );
+    // Task 59 (menus.js L893): main-menu SETTINGS button.
+    button(&mut commands, menu_col, "SETTINGS", Action::OpenSettings);
     // Spec: main menu "退出". A browser tab has no window to close, so the
     // button only exists on native.
     #[cfg(not(target_arch = "wasm32"))]
@@ -959,8 +1014,82 @@ pub fn build_ui(mut commands: Commands) {
     button(&mut commands, pause_col, "RESUME", Action::Resume);
     button(&mut commands, pause_col, "RESTART", Action::Restart);
     button(&mut commands, pause_col, "MAIN MENU", Action::Menu);
+    // Task 59 (menus.js L3685): pause-overlay SETTINGS button.
+    button(&mut commands, pause_col, "SETTINGS", Action::OpenSettings);
     #[cfg(not(target_arch = "wasm32"))]
     button(&mut commands, pause_col, "QUIT", Action::Quit);
+
+    // ================= settings (Task 59) =================
+    {
+        use crate::settings::Slider;
+        let set = commands.spawn(full_panel(Screen::Settings, PANEL_BG)).id();
+        let sc = commands.spawn((col(10.0), ChildOf(set))).id();
+        commands.spawn((label("SETTINGS", 44.0, Color::WHITE), ChildOf(sc)));
+        commands.spawn((label("Changes save automatically", 15.0, DIM), ChildOf(sc)));
+        settings_row(
+            &mut commands,
+            sc,
+            "set_master",
+            "MASTER",
+            Action::SettingsStep(Slider::Master, -1),
+            Action::SettingsStep(Slider::Master, 1),
+        );
+        settings_row(
+            &mut commands,
+            sc,
+            "set_music",
+            "MUSIC",
+            Action::SettingsStep(Slider::Music, -1),
+            Action::SettingsStep(Slider::Music, 1),
+        );
+        settings_row(
+            &mut commands,
+            sc,
+            "set_sfx",
+            "SFX",
+            Action::SettingsStep(Slider::Sfx, -1),
+            Action::SettingsStep(Slider::Sfx, 1),
+        );
+        settings_row(
+            &mut commands,
+            sc,
+            "set_sensitivity",
+            "SENSITIVITY",
+            Action::SettingsStep(Slider::Sensitivity, -1),
+            Action::SettingsStep(Slider::Sensitivity, 1),
+        );
+        settings_cycle_row(
+            &mut commands,
+            sc,
+            "set_quality",
+            "QUALITY",
+            Action::SettingsQuality,
+        );
+        settings_cycle_row(
+            &mut commands,
+            sc,
+            "set_theme",
+            "THEME",
+            Action::SettingsTheme,
+        );
+        settings_cycle_row(
+            &mut commands,
+            sc,
+            "set_shadows",
+            "SHADOWS",
+            Action::SettingsShadows,
+        );
+        settings_cycle_row(
+            &mut commands,
+            sc,
+            "set_bloom",
+            "BLOOM",
+            Action::SettingsBloom,
+        );
+        let bottom = commands.spawn((row(12.0), ChildOf(sc))).id();
+        small_button(&mut commands, bottom, "RESET", Action::SettingsReset);
+        small_button(&mut commands, bottom, "BACK", Action::CloseSettings);
+    }
 
     // ================= results =================
     let res = commands.spawn(full_panel(Screen::Results, PANEL_BG)).id();
@@ -1366,6 +1495,20 @@ pub fn apply_action(
         // Results "BACK TO LOBBY" (JS `netMatchEnd` re-shows the lobby,
         // main.js L769-846).
         Action::NetBackToLobby => st.screen = Screen::OnlineLobby,
+        // Task 59: pure screen hops; the row actions mutate the Settings
+        // resource and are handled by `settings_clicks` (which needs the
+        // audio / env / look resources this pure helper does not own).
+        Action::OpenSettings => {
+            st.settings_return = st.screen;
+            st.screen = Screen::Settings;
+        }
+        Action::CloseSettings => st.screen = st.settings_return,
+        Action::SettingsStep(_, _)
+        | Action::SettingsQuality
+        | Action::SettingsTheme
+        | Action::SettingsShadows
+        | Action::SettingsBloom
+        | Action::SettingsReset => {}
     }
     pc.paused = st.screen != Screen::Hud;
 }
@@ -1486,6 +1629,9 @@ pub fn ui_state_machine(
                     os.flags.leave_confirm = true;
                 }
             }
+            // Task 59 (menus.js L2170: `Esc, B, Back`): Esc on settings
+            // returns to the originating screen (BACK button semantics).
+            Screen::Settings => st.screen = st.settings_return,
             _ => {}
         }
         println!("[inkwave] ui {:?}", st.screen);
@@ -1523,6 +1669,15 @@ pub fn ui_state_machine(
                 }
             }
             Screen::Hud => {}
+            // Task 59: Enter on settings = BACK (≡ JS settings screen's
+            // default button); the Esc path above follows the same rule.
+            Screen::Settings => apply_action(
+                &mut st,
+                &mut pc,
+                Action::CloseSettings,
+                &mut demo,
+                &mut quit,
+            ),
             // Task 24: Enter on the hub joins (onKey L2733 `doJoin`), on the
             // lobby it toggles ready (the READY? button's accept).
             // `doJoin` opens with `clearTimeout(st.autoT)` (L2619) even on
@@ -2090,6 +2245,7 @@ pub fn ui_update(
     mut bars: Query<(&BarRole, &mut Node), Without<ScreenRoot>>,
     mut cross: Query<(&Crosshair, &mut BackgroundColor)>,
     boss: Res<BossHudRes>,
+    settings: Res<crate::settings::Settings>,
 ) {
     for (root, mut node) in roots.iter_mut() {
         let want = if st.screen == root.0 {
@@ -2112,6 +2268,7 @@ pub fn ui_update(
     let now = time.elapsed_secs();
 
     let on_menu = st.screen == Screen::Menu;
+    let on_settings = st.screen == Screen::Settings;
 
     // Task 46 batch C2 — boss HUD placeholder档 (≡ the hud-boss.js writes).
     // Non-boss matches leave `BossHudRes::out` at the all-off default, so
@@ -2154,10 +2311,37 @@ pub fn ui_update(
         (0.0, 0.0, 0.0)
     };
 
-    if on_hud || on_results || on_menu {
+    if on_hud || on_results || on_menu || on_settings {
         for (role, mut text, mut color) in labels.iter_mut() {
             // (new text, new colour) — `None` colour keeps the current one.
             let (t, c): (String, Option<Color>) = match role.0 {
+                // Task 59: live settings rows (≡ menus.js `_scr_settings`).
+                "set_master" if on_settings => {
+                    (format!("MASTER  {:.0}%", settings.master * 100.0), None)
+                }
+                "set_music" if on_settings => {
+                    (format!("MUSIC  {:.0}%", settings.music * 100.0), None)
+                }
+                "set_sfx" if on_settings => (format!("SFX  {:.0}%", settings.sfx * 100.0), None),
+                "set_sensitivity" if on_settings => {
+                    (format!("SENSITIVITY  {:.2}x", settings.sensitivity), None)
+                }
+                "set_quality" if on_settings => (
+                    format!("QUALITY  {}", settings.quality.to_ascii_uppercase()),
+                    None,
+                ),
+                "set_theme" if on_settings => (
+                    format!("THEME  {}", settings.theme.to_ascii_uppercase()),
+                    None,
+                ),
+                "set_shadows" if on_settings => (
+                    format!("SHADOWS  {}", if settings.shadows { "ON" } else { "OFF" }),
+                    None,
+                ),
+                "set_bloom" if on_settings => (
+                    format!("BLOOM  {}", if settings.bloom { "ON" } else { "OFF" }),
+                    None,
+                ),
                 // Task 46: the offline mode selector label.
                 "menu_mode" if on_menu => (format!("MODE {}", st.play_mode.label()), None),
                 "timer" if on_hud => (fmt_clock(demo.m.time), Some(timer_color(demo.m.time))),
@@ -2280,6 +2464,118 @@ pub fn ui_button_style(
             Interaction::Hovered => BTN_BG_HOVER,
             Interaction::None => BTN_BG,
         };
+    }
+}
+
+/// Task 59 (≡ main.js L398-406 `_setSettings`): apply a settings-row click
+/// to every runtime consumer and persist immediately. Screen hops
+/// (`OpenSettings` / `CloseSettings`) stay in `apply_action`; this system
+/// owns only the row actions, so the pure state machine and its tests are
+/// untouched. It runs after `ui_state_machine` in the WorldPlugin chain.
+/// Row-application rule (≡ main.js L398-406 `_setSettings`): an Action
+/// mutates the settings, re-targets the audio buses / look / environment and
+/// asks for a runtime refresh. `true` = a change happened (the caller then
+/// persists). It is a plain deterministic function over plain resources —
+/// no Bevy systems or hidden state — so the state machine is directly
+/// anchorable (TR-59.2).
+#[allow(clippy::too_many_arguments)]
+pub fn apply_settings_row(
+    a: Action,
+    settings: &mut crate::settings::Settings,
+    env: &mut crate::environment::EnvState,
+    refresh: &mut crate::environment::EnvRefresh,
+    vols: &mut crate::audio::music::AudioVolumes,
+    look: &mut crate::input::LookSettings,
+    now: f64,
+) -> bool {
+    match a {
+        Action::SettingsStep(slider, dir) => {
+            settings.step(slider, dir);
+            look.sensitivity = settings.sensitivity as f32;
+            // `_applyAudioVolumes()` sends all three buses; unchanged slots
+            // just re-target the same tapered value (audio.js L165-172,
+            // τ = 0.04 s).
+            vols.set_volumes(
+                Some(settings.master),
+                Some(settings.music),
+                Some(settings.sfx),
+                now,
+            );
+        }
+        Action::SettingsQuality => {
+            settings.cycle_quality();
+            env.apply_settings(settings);
+            refresh.0 = true;
+        }
+        Action::SettingsTheme => {
+            settings.cycle_theme();
+            env.apply_settings(settings);
+            refresh.0 = true;
+        }
+        Action::SettingsShadows => {
+            settings.shadows = !settings.shadows;
+            env.apply_settings(settings);
+            refresh.0 = true;
+        }
+        Action::SettingsBloom => {
+            settings.bloom = !settings.bloom;
+            env.apply_settings(settings);
+            refresh.0 = true;
+        }
+        Action::SettingsReset => {
+            *settings = crate::settings::Settings::defaults();
+            look.sensitivity = settings.sensitivity as f32;
+            vols.set_volumes(
+                Some(settings.master),
+                Some(settings.music),
+                Some(settings.sfx),
+                now,
+            );
+            env.apply_settings(settings);
+            refresh.0 = true;
+        }
+        _ => return false,
+    }
+    true
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn settings_clicks(
+    st: Res<UiState>,
+    mut clicks: MessageReader<Pointer<Click>>,
+    actions: Query<&UiAction>,
+    mut settings: ResMut<crate::settings::Settings>,
+    mut env: ResMut<crate::environment::EnvState>,
+    mut refresh: ResMut<crate::environment::EnvRefresh>,
+    mut vols: ResMut<crate::audio::music::AudioVolumes>,
+    mut look: ResMut<crate::input::LookSettings>,
+    time: Res<Time>,
+) {
+    // Hidden panels are not pickable, but a stray click message must not
+    // mutate settings outside the settings screen. Both readers keep their
+    // own cursor, so consuming nothing here is fine.
+    if st.screen != Screen::Settings {
+        return;
+    }
+    for ev in clicks.read() {
+        if ev.event.button != PointerButton::Primary {
+            continue;
+        }
+        let Some(a) = actions.get(ev.entity).ok().map(|u| u.0) else {
+            continue;
+        };
+        let now = f64::from(time.elapsed_secs());
+        if apply_settings_row(
+            a,
+            &mut settings,
+            &mut env,
+            &mut refresh,
+            &mut vols,
+            &mut look,
+            now,
+        ) {
+            settings.save();
+        }
     }
 }
 
@@ -2909,5 +3205,173 @@ mod tests {
             (ui_state_machine, ui_update, online_ui_update).chain(),
         );
         app
+    }
+
+    /// TR-59.2 / AC-M5-2: the settings screen opens from the menu, a row
+    /// change re-applies to every runtime consumer, the settings DOCUMENT
+    /// round-trips through write/read, and BACK returns to the originating
+    /// screen. The real Bevy click→save link is anchored separately by
+    /// `task59_settings_click_system_applies_andsaves`.
+    #[test]
+    fn task59_settings_state_machine_and_document_roundtrip() {
+        use crate::audio::music::{AudioVolumes, taper};
+        use crate::environment::{EnvRefresh, EnvState};
+        use crate::input::LookSettings;
+        use crate::settings::{Settings, Slider};
+
+        let path =
+            std::env::temp_dir().join(format!("inkwave-task59-ui-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+
+        // Open (pure state machine, ≡ menus.js L893 / L3685).
+        let mut app = ui_test_app();
+        {
+            use bevy::ecs::system::SystemState;
+            let mut ss =
+                SystemState::<(ResMut<UiState>, ResMut<PlayerControls>, ResMut<DemoSim>)>::new(
+                    app.world_mut(),
+                );
+            let (mut st, mut pc, mut demo) = ss.get_mut(app.world_mut()).unwrap();
+            let mut quit = false;
+            apply_action(&mut st, &mut pc, Action::OpenSettings, &mut demo, &mut quit);
+        }
+        assert_eq!(app.world().resource::<UiState>().screen, Screen::Settings);
+        assert!(app.world().resource::<PlayerControls>().paused);
+
+        // A MASTER − step re-targets the bus with taper(v^1.5) and persists.
+        let mut settings = Settings::defaults();
+        let mut env = EnvState::from_settings(&settings);
+        let mut refresh = EnvRefresh::default();
+        let mut vols = AudioVolumes::from_settings(&settings);
+        let mut look = LookSettings {
+            sensitivity: settings.sensitivity as f32,
+            ..Default::default()
+        };
+        let before = settings.master;
+        assert!(apply_settings_row(
+            Action::SettingsStep(Slider::Master, -1),
+            &mut settings,
+            &mut env,
+            &mut refresh,
+            &mut vols,
+            &mut look,
+            1.0,
+        ));
+        assert!((settings.master - (before - 0.05)).abs() < 1e-9);
+        assert_eq!(vols.master.value_at(1.0), taper(before));
+        assert_eq!(vols.master.value_at(10.0), taper(settings.master));
+        settings.save_to(&path);
+        let reloaded = Settings::load_from(&path);
+        assert_eq!(reloaded, settings, "reload must reapply the saved row");
+
+        // Quality cycle → low ⇒ all optional post FX off (NFR-M5-3).
+        let mut s = Settings::defaults();
+        s.quality = "ultra".into();
+        assert!(apply_settings_row(
+            Action::SettingsQuality,
+            &mut s,
+            &mut env,
+            &mut refresh,
+            &mut vols,
+            &mut look,
+            2.0,
+        ));
+        assert_eq!(s.quality, "low"); // wraps ultra → low
+        assert!(!env.params.post_enabled);
+        assert!(refresh.0, "runtime lights/fog/Bloom must refresh");
+
+        // BACK returns to the originating screen.
+        {
+            use bevy::ecs::system::SystemState;
+            let mut ss =
+                SystemState::<(ResMut<UiState>, ResMut<PlayerControls>, ResMut<DemoSim>)>::new(
+                    app.world_mut(),
+                );
+            let (mut st, mut pc, mut demo) = ss.get_mut(app.world_mut()).unwrap();
+            let mut quit = false;
+            apply_action(
+                &mut st,
+                &mut pc,
+                Action::CloseSettings,
+                &mut demo,
+                &mut quit,
+            );
+        }
+        assert_eq!(app.world().resource::<UiState>().screen, Screen::Menu);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// P1-4 fix: the REAL Bevy system chain — a `Pointer<Click>` on a
+    /// `UiAction` row must run `ui_state_machine` (two independent message
+    /// cursors), then `settings_clicks` mutating the resources and calling
+    /// `Settings::save()` on the instance's storage path.
+    #[test]
+    fn task59_settings_click_system_applies_and_saves() {
+        use crate::audio::music::{AudioVolumes, taper};
+        use crate::environment::{EnvRefresh, EnvState};
+        use crate::input::LookSettings;
+        use crate::settings::{Settings, Slider};
+        use bevy::camera::NormalizedRenderTarget;
+        use bevy::picking::backend::HitData;
+        use bevy::picking::pointer::{Location, PointerId};
+        use std::time::Duration;
+
+        let path =
+            std::env::temp_dir().join(format!("inkwave-task59-click-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let mut settings = Settings::defaults();
+        settings.storage_path = Some(path.clone());
+        let before = settings.master;
+
+        let mut app = ui_test_app();
+        app.insert_resource(settings.clone())
+            .insert_resource(EnvState::from_settings(&settings))
+            .insert_resource(EnvRefresh::default())
+            .insert_resource(AudioVolumes::from_settings(&settings))
+            .insert_resource(LookSettings::default())
+            .add_systems(Update, settings_clicks.after(ui_state_machine));
+        app.world_mut().resource_mut::<UiState>().screen = Screen::Settings;
+        let btn = app
+            .world_mut()
+            .spawn(UiAction(Action::SettingsStep(Slider::Master, -1)))
+            .id();
+        let click = Pointer::new(
+            PointerId::Mouse,
+            Location {
+                // A synthetic click needs no real window target.
+                target: NormalizedRenderTarget::None {
+                    width: 1,
+                    height: 1,
+                },
+                position: Vec2::ZERO,
+            },
+            Click {
+                button: PointerButton::Primary,
+                hit: HitData::new(Entity::PLACEHOLDER, 0.0, None, None),
+                duration: Duration::ZERO,
+                count: 1,
+            },
+            btn,
+        );
+        app.world_mut().write_message(click);
+        app.update();
+
+        let s = app.world().resource::<Settings>();
+        assert!(
+            (s.master - (before - 0.05)).abs() < 1e-9,
+            "click stepped the slider"
+        );
+        assert_eq!(app.world().resource::<UiState>().screen, Screen::Settings);
+        assert_eq!(
+            app.world().resource::<AudioVolumes>().master.value_at(10.0),
+            taper(s.master),
+            "click re-targeted the audio bus"
+        );
+        let saved = std::fs::read_to_string(&path).expect("click called the real save()");
+        let reloaded = Settings::from_json(&saved);
+        assert_eq!(reloaded.master, s.master, "reload reapplies the click");
+        assert!(reloaded.boot_quality.is_none());
+        let _ = std::fs::remove_file(&path);
     }
 }

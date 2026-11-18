@@ -2475,12 +2475,6 @@ impl DuckState {
     }
 }
 
-/// Slider defaults (config.js `DEFAULT_SETTINGS`, mirrored by audio.js L165
-/// which clamps missing keys to these on `init`).
-const DEFAULT_MASTER: f64 = 0.8;
-const DEFAULT_MUSIC: f64 = 0.6;
-const DEFAULT_SFX: f64 = 0.85;
-
 /// ≡ `audio.setVolumes({ master, music, sfx })` (audio.js L165-172). Each
 /// bus is a [`Param`] so the JS `setTargetAtTime(taper(v), now, 0.04)`
 /// smoothing is reproduced deterministically (τ = 0.04 s, frame-rate
@@ -2494,21 +2488,29 @@ pub struct AudioVolumes {
 }
 
 impl Default for AudioVolumes {
+    /// Defaults come from the extracted `DEFAULT_SETTINGS` table (deterministic
+    /// and independent of the user's HOME file — the real app overrides this
+    /// resource with the persisted document in `WorldPlugin::build`).
+    /// ≡ audio.js L114-116 `init()` seeding bus gains with `taper(vol.*)`.
     fn default() -> Self {
-        Self {
-            master: Param::new(taper(DEFAULT_MASTER)),
-            music: Param::new(taper(DEFAULT_MUSIC)),
-            sfx: Param::new(taper(DEFAULT_SFX)),
-        }
+        Self::from_settings(&crate::settings::Settings::defaults())
     }
 }
 
 impl AudioVolumes {
+    #[must_use]
+    pub fn from_settings(s: &crate::settings::Settings) -> Self {
+        Self {
+            master: Param::new(taper(s.master)),
+            music: Param::new(taper(s.music)),
+            sfx: Param::new(taper(s.sfx)),
+        }
+    }
+
     /// ≡ `setVolumes`: non-finite / `None` slots keep their old value; each
     /// finite slider re-targets its bus with τ = 0.04 s (audio.js L166-171).
-    /// Parity API: M1 has no settings UI to drive it yet — the buses read
-    /// the defaults until one lands.
-    #[allow(dead_code)]
+    /// Task 59: driven by the settings screen on every volume change
+    /// (≡ main.js L406 `_applyAudioVolumes` after `_setSettings`).
     pub fn set_volumes(
         &mut self,
         master: Option<f64>,

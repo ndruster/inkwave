@@ -418,6 +418,13 @@ pub struct EnvState {
     pub shadows: bool,
 }
 
+/// Task 59: the settings screen changed `EnvState` and needs the runtime
+/// lights/fog/Bloom refreshed by `environment_controls` (which otherwise only
+/// reacts to the K/L/T debug keys). Same no-rebuild semantics as D-T55-⑦:
+/// the sky texture and already-spawned rigs keep their boot values.
+#[derive(Resource, Default)]
+pub struct EnvRefresh(pub bool);
+
 impl Default for EnvState {
     fn default() -> Self {
         Self::from_boot()
@@ -450,6 +457,29 @@ impl EnvState {
             params: env_params(theme, tier),
             shadows: default_settings().1,
         }
+    }
+
+    /// Task 59: boot the environment from the persisted settings document.
+    /// `env_params` supplies the extracted (theme, tier) table; the two JS
+    /// renderer switches `settings.bloom` / `settings.shadows` (renderer.js
+    /// L140/L150) are applied on top. Startup env overrides are resolved by
+    /// `Settings::load()` before this call (≡ README §7 headless matrix).
+    #[must_use]
+    pub fn from_settings(s: &crate::settings::Settings) -> Self {
+        let mut params = env_params(s.effective_theme(), s.effective_quality());
+        params.bloom = params.bloom && s.bloom;
+        params.post_enabled = params.bloom || params.ao || params.msaa > 0;
+        Self {
+            params,
+            shadows: s.shadows,
+        }
+    }
+
+    /// Runtime application of a settings change (called by the settings UI,
+    /// ≡ JS `_setSettings` → `R.applySettings` main.js L401-405). No sky
+    /// texture or rig rebuild happens here — same D-T55-⑦ semantics.
+    pub fn apply_settings(&mut self, s: &crate::settings::Settings) {
+        *self = Self::from_settings(s);
     }
 
     pub fn cycle_tier(&mut self) {

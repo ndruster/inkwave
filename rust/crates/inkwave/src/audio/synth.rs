@@ -132,9 +132,8 @@ impl Param {
     pub fn exp(&mut self, value: f64, time: f64) {
         self.push(EvKind::Exp, value, time, 0.0);
     }
-    /// `setTargetAtTime(target, startTime, timeConstant)` — engine parity,
-    /// unused by the SFX table.
-    #[allow(dead_code)]
+    /// `setTargetAtTime(target, startTime, timeConstant)` — engine parity;
+    /// Task 59: consumed by `AudioVolumes::set_volumes` (τ = 0.04 s).
     pub fn target(&mut self, value: f64, time: f64, tc: f64) {
         self.push(EvKind::Target, value, time, tc);
     }

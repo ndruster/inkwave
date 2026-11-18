@@ -434,3 +434,9 @@ goldens）、Rust 设置屏与持久化、kit SFX 与音频消费者、RenderLay
 `char-pose-ref.json` 扩到 6097 帧（K2: bow 蓄力/松弦/空中 cant + brolly 触发面）；
 上游 JS 无 bowl 武器（config/kits/HOLD 零入口，仅注释残留），作为事实登记不做移植。
 复核项见 `.trae/specs/rust-bevy-port-m5/REVIEW_CHECKLIST.md`「Task 58 复核登记」。
+**Task 59（设置屏与持久化）**已完成：复用已钉源的 `environment.json:defaultSettings`
+（21 键，独立 `settings-crosscheck.mjs` 双向核对），新增 `src/settings.rs`
+（native 文件 / wasm localStorage 双载体、启动覆盖不落盘、宽容逐键解码）、
+BEVY 设置屏 8 行 + RESET/BACK、音量三轨 `set_volumes` τ=0.04 接线、
+`EnvRefresh` 运行期切档；13 项锚测含真实 `Pointer<Click> → 系统 → 保存` 链路。
+偏差 D-T59-1..4 与未接线字段见 M5 REVIEW_CHECKLIST。

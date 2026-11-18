@@ -42,6 +42,9 @@ mod props;
 // QualityTier accessors stay as pinned test/compat anchors (dead_code allow).
 #[allow(dead_code)]
 mod quality;
+// Task 59: settings screen state + native/wasm persistence (≡ main.js
+// localStorage['inkwave.settings'] + DEFAULT_SETTINGS from environment.json).
+mod settings;
 // Task 52: schema/materials/bake/res are all wired through
 // `level_render` + `world::build_level_world` (batch E2 bake + upload).
 mod texlib;

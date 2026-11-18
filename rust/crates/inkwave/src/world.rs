@@ -24,7 +24,7 @@ use inkwave_sim::collision::CollisionWorld;
 use inkwave_sim::geometry::{Brush, StageLayout};
 use inkwave_sim::ink_atlas::InkAtlas;
 
-use crate::environment::{EnvState, srgb_color};
+use crate::environment::{EnvRefresh, EnvState, srgb_color};
 use crate::ink_render::{InkAtlasRes, InkImage};
 use crate::level_render::{LevelExt, LevelMaterial, add_texlib_placeholders};
 use bevy::post_process::bloom::Bloom;
@@ -619,9 +619,20 @@ impl Plugin for WorldPlugin {
             paused: true,
             ..default()
         };
-        // Task 55: boot theme/tier from INKWAVE_THEME / INKWAVE_QUALITY; the
-        // extracted data drives clear colour, lights, fog and shadow size.
-        let boot = EnvState::default();
+        // Task 59: boot theme/tier/shadows/bloom from the persisted settings
+        // document; INKWAVE_THEME / INKWAVE_QUALITY remain startup overrides
+        // (applied inside Settings::load, never written back).
+        let settings = crate::settings::Settings::load();
+        let boot = EnvState::from_settings(&settings);
+        // Task 59: the real app applies the persisted document to audio /
+        // look; the *Default* impls stay deterministic (extracted table) so
+        // unit tests never depend on the user's HOME file. `add_audio`'s
+        // init_resource call below does not overwrite these inserts.
+        let audio_vols = crate::audio::music::AudioVolumes::from_settings(&settings);
+        let look = crate::input::LookSettings {
+            sensitivity: settings.sensitivity as f32,
+            ..Default::default()
+        };
         let boot_horizon = srgb_color(boot.params.horizon);
         app.add_plugins((
             crate::ink_render::InkPlugin,
@@ -629,6 +640,9 @@ impl Plugin for WorldPlugin {
             crate::level_render::LevelPlugin,
         ))
         .insert_resource(boot)
+        .insert_resource(settings)
+        .insert_resource(audio_vols)
+        .insert_resource(look)
         .insert_resource(ClearColor(boot_horizon))
         .insert_resource(LayoutRes(layout))
         .insert_resource(SimWorld(world))
@@ -660,7 +674,9 @@ impl Plugin for WorldPlugin {
         .init_resource::<crate::char::bridge::CharBridge>()
         // Task 56 batch C: showcase state machine + build-once lobby set.
         .init_resource::<crate::ui::showcase_state::ShowcaseState>()
-        .init_resource::<crate::ui::showcase_scene::ShowcaseScene>();
+        .init_resource::<crate::ui::showcase_scene::ShowcaseScene>()
+        // Task 59: environment refresh signal from the settings screen.
+        .init_resource::<EnvRefresh>();
         // Task 24: the online session. Stored as a *non-send* resource — the
         // platform transport is not `Send + Sync` (native `Receiver`, wasm
         // `Rc`), and the Bevy main thread owns it. `RelayBase` is inserted by
@@ -728,6 +744,10 @@ impl Plugin for WorldPlugin {
                     crate::ui::online_ui_update,
                 )
                     .chain(),
+                // Task 59: settings-row clicks run after the UI state machine
+                // (screen hops) and before the environment refresh consumer;
+                // registered outside the chain to stay below Bevy's tuple cap.
+                crate::ui::settings_clicks.after(crate::ui::ui_state_machine),
                 (
                     // Task 54 batch C2: the pose bridge — CharAnim state →
                     // rig tree writes; runs right after the root sync group
@@ -1025,6 +1045,7 @@ fn build_level_world(
 fn environment_controls(
     keys: Res<ButtonInput<KeyCode>>,
     mut state: ResMut<EnvState>,
+    mut refresh: ResMut<EnvRefresh>,
     mut clear: ResMut<ClearColor>,
     mut ambient: ResMut<GlobalAmbientLight>,
     mut shadow_map: ResMut<DirectionalLightShadowMap>,
@@ -1046,7 +1067,10 @@ fn environment_controls(
         state.cycle_theme();
         changed = true;
     }
-    if !changed {
+    // Task 59: a settings-screen change refreshes the same runtime consumers
+    // as a debug-key change (no sky/rig rebuild, D-T55-⑦).
+    let dirty = std::mem::take(&mut refresh.0);
+    if !changed && !dirty {
         return;
     }
     let p = &state.params;

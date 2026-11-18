@@ -187,3 +187,67 @@ GTAO/grade/SMAA/tilt-shift、云/PMREM/海面、alley 材质逐档落地且逐�
 - `gate-task58.sh`（模板 gate-task56.sh，DETERM 增补 char-pose-ref.json 双跑）；
   TRUNK 段按 D-T40-1 登记；REVIEW_CHECKLIST 登记 bow 持握/开镜、brolly 伞面、
   （bowl 不存在）视觉复核项。
+
+---
+
+## Task59 实施设计（2026-11-13，开工实读 + 评审返工后定稿）
+
+### §0 上游锚点与范围
+- `src/config.js` L561-591：`DEFAULT_SETTINGS`（21 键）与 `QUALITY` 四档；
+  `src/main.js` L41-42/L59 `localStorage['inkwave.settings']`、
+  L347-355 `loadJSON` 合并、L398-406 `_setSettings` 立即保存 + `_applyAudioVolumes`；
+  `src/audio.js` L114-116 `taper(v)=v^1.5`、L165-172 `setVolumes` τ=0.04；
+  `src/ui/menus.js` L2042-2204 `_scr_settings`、L1976-2000 `_slider`（step 0.05）、
+  L893/L3685 设置按钮、L2170 `Esc,B,Back`。
+- 保守范围：Rust 只接线被真实消费的 13 字段（音量三轨、画质/主题、阴影/泛光、
+  灵敏度、FOV、invertY/aimAssist/showFps/cameraShake 持久化）；其余 9 个 JS 键与
+  运行期键不在 Rust 数据模型内 → 登记偏差，不伪接线。
+
+### §1 数据面（零新增资产）
+- `assets/environment.json:defaultSettings` + `quality` 已由 `extract-environment.mjs`
+  从 config.js 切片生成且钉 `source.commit`；`settings.rs` 用 `include_str!` +
+  `JVal` 读取，缺字段即 panic（不手抄回退，NFR-M5-6）。
+- `settings-crosscheck.mjs` 以独立正则解析器逐键比对 21 个上游键（双向：缺键/多键
+  均失败），不 import 提取器；门禁 DETERM 双跑 `extract-environment.mjs` 字节一致。
+
+### §2 持久化与偏差
+- D-T59-1：native 配置文件 `$HOME/.inkwave/settings.json`（`INKWAVE_SETTINGS_PATH`
+  覆盖）；wasm `web-sys Storage`（只加 feature，不加 crate）。
+- D-T59-2：Rust 扩展 `theme` 行（JS 设置屏无主题行）。
+- D-T59-3：`fov` 持久化但不改相机（固定参考 FOV）。
+- D-T59-4：wasm 键改为 **`inkwave.rust.settings`**，与 JS 同键会覆写 Rust 未实现的
+  9 个 JS 字段（评审 P0-2），故分键隔离。
+- 未接线字段：`padSensitivity/colorblind/minimap/matchLength/lastMode/difficulty/
+  rumble/aimAssistMouse/fpsCap` + JS 运行期 `fullscreen/fovMode/lastStage/
+  stageTimes/seenWeapons`；`invertY/aimAssist/showFps/cameraShake` 存而暂无消费者。
+
+### §3 启动覆盖（评审 P0-1 修复）
+- `INKWAVE_QUALITY`/`INKWAVE_THEME` 存于 `Settings.boot_quality/boot_theme`，
+  供 `EnvState::from_settings` 等消费者用 `effective_*()` 读取；**不写入文档**
+  （`to_json` 无 boot 字段），用户显式切档时清除对应 boot 覆盖。
+- 真实应用把持久化文档应用到 `EnvState`/`AudioVolumes`/`LookSettings`；
+  各 `Default` impl 保持从提取表读数（测试不依赖用户 HOME，评审 P1-3）。
+
+### §4 宽容解码（评审 P0-3 修复）
+- `serde_json` 对 `1e999` 整份拒绝；JS `JSON.parse` 保留其他键。Rust 改为逐键
+  宽容扫描 `field_raw` + `sanitize()` 单键回退，单个坏值不丢整份文档。
+
+### §5 UI 与运行时接线
+- `Screen::Settings` + 主菜单/暂停 SETTINGS 按钮；8 行（三音量、灵敏度、
+  画质、主题、阴影、泛光）+ RESET/BACK；`LabelRole("set_*")` 实时值文本；
+  Esc/Enter/BACK 三条返回路径。
+- `apply_settings_row` 纯规则 → `settings_clicks` 系统（双 MessageReader 各自游标、
+  屏幕守卫）→ `EnvRefresh` 通知 `environment_controls` 刷新灯光/雾/Bloom
+  （保持 D-T55-⑦ 不重建天空/rig）；音量三轨 `set_volumes` τ=0.04。
+
+### §6 测试与评审
+- 13 项锚测：默认值来自提取表、词表互钉、合并/clamp、非有限值不丢文档、
+  0.05 网格、启动覆盖不落盘、写读往返、**真实 `save()` 链**、low 档全关、
+  taper 初值、状态机开/关、文档往返、**真实 Pointer<Click> → 系统 → 保存**。
+- 独立评审首轮 FAIL（3 P0 + 6 P1 + 11 P2）：P0-1/2/3 全修，P1-1/2/3/4/5/6
+  全修或落档，P2 主要项已修；复验见 Task 59 Completion Evidence。
+
+### §7 门禁
+- `gate-task59.sh`（模板 gate-task58.sh）：DETERM 改 environment 双跑；XCHK 增
+  `settings-crosscheck.mjs` + settings 测试；TRUNK 单次按 D-T40-1 登记。
+  REVIEW_CHECKLIST 登记设置屏布局/焦点/online 屏共存、双载体持久化实机复核。
