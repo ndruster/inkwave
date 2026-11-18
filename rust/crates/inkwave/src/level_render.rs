@@ -411,11 +411,10 @@ pub fn level_material_wiring(
     wake: Res<crate::fx::swim_wake::SwimWakeState>,
     demo: Option<Res<crate::ink_render::DemoSim>>,
     mut feed: ResMut<RippleFeed>,
-    // Task 56: take the ACTIVE camera. The single-camera assumption was
-    // registered in REVIEW_CHECKLIST (M4 L84) as a prerequisite for a lobby
-    // camera; selecting by `is_active` keeps the current one-camera build
-    // byte-identical while making multi-camera setups safe.
-    cams: Query<(&GlobalTransform, &Camera)>,
+    // Task 61: restrict to the gameplay camera explicitly — the layer-1
+    // showcase camera is also `is_active` while full-frame, so the old
+    // "first active camera" rule would feed the wrong eye to paint.js.
+    cams: Query<(&GlobalTransform, &Camera), With<crate::world::MainCamera>>,
     props: Option<Res<crate::props::PropsState>>,
     mut mats: ResMut<Assets<LevelMaterial>>,
 ) {

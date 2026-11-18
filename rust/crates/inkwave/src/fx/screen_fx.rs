@@ -1666,7 +1666,7 @@ pub fn screen_fx_update(
     time: Res<Time>,
     pc: Res<crate::input::PlayerControls>,
     demo: Res<crate::ink_render::DemoSim>,
-    cams: Query<(&Projection, &GlobalTransform), With<Camera>>,
+    cams: Query<(&Projection, &GlobalTransform), With<crate::world::MainCamera>>,
     windows: Query<&Window>,
     mut st: ResMut<ScreenFxState>,
 ) {

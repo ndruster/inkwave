@@ -318,7 +318,9 @@ fn empty_mesh() -> Mesh {
 /// is current).
 pub fn fx_update(
     time: Res<Time>,
-    cams: Query<&GlobalTransform, With<Camera>>,
+    // Task 61: the second (showcase) camera must not make `.single()` fail
+    // or silently disable FX — only the gameplay camera is a projection base.
+    cams: Query<&GlobalTransform, With<crate::world::MainCamera>>,
     mut fs: ResMut<FxState>,
     mut rs: ResMut<FxRenderState>,
     mut commands: Commands,

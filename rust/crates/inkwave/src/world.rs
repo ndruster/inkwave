@@ -14,6 +14,7 @@
 
 use std::collections::HashMap;
 
+use bevy::camera::visibility::RenderLayers;
 use bevy::light::{CascadeShadowConfigBuilder, DirectionalLightShadowMap, GlobalAmbientLight};
 use bevy::pbr::ExtendedMaterial;
 use bevy::pbr::{DistanceFog, FogFalloff};
@@ -28,6 +29,19 @@ use crate::environment::{EnvRefresh, EnvState, srgb_color};
 use crate::ink_render::{InkAtlasRes, InkImage};
 use crate::level_render::{LevelExt, LevelMaterial, add_texlib_placeholders};
 use bevy::post_process::bloom::Bloom;
+
+// Task 61: RenderLayers mapping (D-T61-1 — the upstream had no THREE.Layers
+// numbers; it used a separate Scene + camera + render target). Layer 0 owns
+// the level world, actors, FX and Bevy UI; layer 1 owns the 3D lobby set.
+pub const WORLD_LAYER: usize = 0;
+pub const SHOWCASE_LAYER: usize = 1;
+
+/// The single gameplay camera (level/FX/UI consumers are restricted to it).
+#[derive(Component, Debug)]
+pub struct MainCamera;
+/// The second camera that renders only layer 1 while full-frame is active.
+#[derive(Component, Debug)]
+pub struct ShowcaseCamera;
 
 // Task 55: sky / sun / fog / sea / shadow-size constants are no longer
 // hand-written here. `EnvParams` reads THEMES + QUALITY from the extracted
@@ -774,9 +788,8 @@ impl Plugin for WorldPlugin {
                     crate::audio::sfx_gc,
                     environment_controls,
                     camera_rig,
-                    // Task 56 batch C: while the alley set is full-frame the
-                    // extracted hub/line-up pose wins over `camera_rig`; on
-                    // exit this system stops writing and the rig reclaims it.
+                    // Task 61: this drives the layer-1 SECOND camera only;
+                    // `camera_rig` keeps owning the main camera unconditionally.
                     crate::ui::showcase_scene::showcase_camera_update,
                     // Task 52 batch E2: ripple / wake / clock uniform wiring
                     // into every level material; runs right after `camera_rig`
@@ -1003,6 +1016,8 @@ fn build_level_world(
     let cam = commands
         .spawn((
             Camera3d::default(),
+            MainCamera,
+            RenderLayers::layer(WORLD_LAYER),
             Projection::from(PerspectiveProjection {
                 // cameraRig.js L188: vertical FOV from the horizontal 82° at
                 // the fixed 16/9 reference; Bevy derives `aspect` from the window.
@@ -1055,7 +1070,9 @@ fn environment_controls(
     mut shadow_map: ResMut<DirectionalLightShadowMap>,
     mut sun: Query<&mut DirectionalLight>,
     mut fog: Query<&mut DistanceFog>,
-    cameras: Query<Entity, With<Camera3d>>,
+    // Task 61: Bloom is a MAIN-camera post-process only — the layer-1
+    // showcase camera must never inherit it (review P1-1).
+    cameras: Query<Entity, With<MainCamera>>,
     mut commands: Commands,
 ) {
     let mut changed = false;
@@ -1124,7 +1141,7 @@ fn camera_rig(
     settings: Res<crate::input::LookSettings>,
     shake: Res<crate::boss_render::BossShake>,
     time: Res<Time>,
-    mut q: Query<(&mut Transform, &mut Projection), With<Camera3d>>,
+    mut q: Query<(&mut Transform, &mut Projection), With<MainCamera>>,
 ) {
     let (yaw, pitch) = (pc.yaw, pc.pitch);
     // follow the player's feet + visual offset, damped (upstream pivot lerp)

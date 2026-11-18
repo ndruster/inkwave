@@ -1561,7 +1561,7 @@ pub fn hooks_frame(
 // the Bevy system
 // ---------------------------------------------------------------------------
 
-use bevy::prelude::{Camera, GlobalTransform, Query, Res, ResMut, Time, With};
+use bevy::prelude::{GlobalTransform, Query, Res, ResMut, Time, With};
 
 use super::FxState;
 use crate::ink_render::DemoSim;
@@ -1574,7 +1574,7 @@ pub fn fx_hooks(
     time: Res<Time>,
     demo: Res<DemoSim>,
     pc: Res<PlayerControls>,
-    cams: Query<&GlobalTransform, With<Camera>>,
+    cams: Query<&GlobalTransform, With<crate::world::MainCamera>>,
     mut fs: ResMut<FxState>,
 ) {
     if pc.paused {

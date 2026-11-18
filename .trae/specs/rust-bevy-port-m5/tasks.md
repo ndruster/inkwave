@@ -122,7 +122,7 @@
     （启动 clippy 失败 / 中途返工）保留作为完整证据链。
 
 ## Task 61: RenderLayers 分层与第二相机
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: M4 Task 56（`level_render.rs` `is_active` 加固是基础）
 - **Description**: 关卡世界/UI/大厅按 RenderLayers 分层并启用正式第二相机，消除 M4
@@ -134,6 +134,34 @@
     沿用 M4 `wired_systems_*` 模式）+ 全部相机消费者 Query 迁移后的冲突检查。
   - `rule` TR-61.2: REVIEW_CHECKLIST 登记（hub/lobby 无叠加、切换过渡观感）。
 - **Notes**: M4 REVIEW_CHECKLIST L142 的分层方案（逐实体加层 + UI 指定 target camera）为起点。
+- **Completion Evidence（2026-11-18）**：
+  - 口径修正：上游无 THREE.Layers 层号（独立 Scene + 第二相机 + renderTarget，
+    showcase.js L3042-3085）；Rust layer0=关卡/FX/UI、layer1=3D lobby set
+    为设计决策（D-T61-1）。旧文档「6 处消费者」实读为 5 reader + 2 writer。
+  - `world.rs` 增 `MainCamera`/`ShowcaseCamera` marker 与层常量；主相机显式
+    layer0；`camera_rig` 与 Bloom 的 `environment_controls` 均限定 `MainCamera`。
+  - `showcase_scene.rs` 从提取的 `camera_pose` spawn layer1 第二相机（初始
+    inactive），`showcase_camera_update` 只写第二相机位姿/near/far 与 is_active；
+    主相机 transform/near/far 完全不变（D-T56-⑦ 占位语义消除）；set 根与子
+    实体标记 layer1。
+  - 7 处消费者收紧：`fx/render.rs`、`fx/hooks.rs`、`fx/swim_wake.rs`、
+    `fx/screen_fx.rs`、`level_render.rs`（reader）+ 上述两 writer，双相机下
+    `.single()` 不再失效、FX 不静默关闭。
+  - 测试：`showcase_scene` 双相机冒烟（真实 Bevy app + 层位集 helper +
+    inactive→active→inactive + 主相机不变性 + pedestal cue）11 项全绿；
+    `cargo test --workspace` 全绿；clippy/wasm check 通过。
+  - 独立评审：首轮 FAIL（P1 Bloom 应用到第二相机、P1 双相机清屏/顺序风险
+    未登记、P1 门禁未闭合）→ Bloom query 显改 `With<MainCamera>`、
+    D-T61-4 登记清屏/order 为 GPU 复核项，文档「6 处」口径改为 5 reader +
+    2 writer、过时调度注释修正；修复后 clippy 复验干净。
+  - 门禁：`rust/tools/verify/logs/task61-gates-20261118T082702Z.log` →
+    `GATE_VERDICT=PASS`（FMT/CLIPPY/TEST/WASM/TREE/DETERM/XCHK/HEADLESS/
+    HEADLESS_BOSS/RELEASE_BUILD 全 0，`DETERM=BYTE_IDENTICAL`，
+    JS_TREE_CLEAN/SIM_TREE_CLEAN；TRUNK 一次尝试 wasm-bindgen SIGKILL
+    → `TRUNK=DEGRADED` 按 D-T40-1 环境性非阻断登记）。
+  - 复核项：D-T61-2（cross-dissolve 未移植）、D-T61-3（planar reflection
+    交互）、D-T61-4（双相机清屏/order）均在 M5 REVIEW_CHECKLIST 登记为
+    GPU-only 复核项；未在沙箱伪验收。
 
 ## Task 62: 3D 大厅终稿（角色 preview / 名牌 / emote）
 - **Status**: `pending`

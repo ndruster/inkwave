@@ -381,7 +381,7 @@ pub fn swim_wake_update(
     time: Res<Time>,
     pc: Res<crate::input::PlayerControls>,
     demo: Res<crate::ink_render::DemoSim>,
-    cams: Query<&GlobalTransform, With<Camera>>,
+    cams: Query<&GlobalTransform, With<crate::world::MainCamera>>,
     mut st: ResMut<SwimWakeState>,
 ) {
     if pc.paused {

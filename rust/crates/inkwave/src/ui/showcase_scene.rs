@@ -9,30 +9,41 @@
 //!     side walls, dock, eight lineup marks and the ink pedestal — from the
 //!     extracted `lobbyset.json`, and toggles its visibility from
 //!     `ShowcaseState::full_frame`.
-//!   * `showcase_camera_update` overrides the main camera with the extracted
-//!     hub/line-up pose while the set is full-frame. On exit `camera_rig`
-//!     reclaims transform/FOV, while near/far are restored explicitly here
-//!     (`camera_rig` never rewrites those — review P1-1).
+//!   * `showcase_camera_update` drives a REAL second camera (layer 1) with
+//!     the extracted hub/line-up pose while the set is full-frame, instead of
+//!     overriding the main camera (Task 61 removes the D-T56-⑦ placeholder).
+//!     Every single-camera consumer now targets `MainCamera` explicitly.
 //!
-//! D-T56-⑦: the upstream `LobbySet` owns a SECOND camera. Reusing the single
-//! existing camera here avoids breaking the UI target and the six single-camera
-//! `Query<&GlobalTransform, With<Camera>>` consumers (fx / level_render);
-//! `level_render::level_material_wiring` is still hardened with an `is_active`
-//! filter for the multi-camera future. Consequence: the level world is not
-//! layer-separated from the alley, so both are visible during hub/lobby — a
-//! GPU visual review item, not a sandbox-verifiable one (NFR-M4-5).
+//! Upstream has no THREE.Layers numbers: the split is a separate Scene +
+//! camera + render target (`showcase.js` L3042-3085). The Rust layer mapping
+//! (world/FX/UI = 0, lobby set = 1) is registered as D-T61-1.
 //! Materials, neon, steam, planar reflections, PMREM, nameplate anchors,
-//! cross-dissolves and the character preview rig are likewise deferred.
+//! cross-dissolves and the character preview rig are GPU review items.
 
+use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 
 use crate::environment::EnvState;
 use crate::net::OnlineSession;
+use crate::world::{MainCamera, SHOWCASE_LAYER, ShowcaseCamera};
 
 use super::showcase_state::{
     ShowcaseCue, ShowcaseState, alley_dims, camera_pose, hub_spot, pedestal, spots,
 };
 use super::{Screen, UiState, online, online_facts};
+
+/// Task 61: the second camera's query (kept as an alias so clippy's
+/// type-complexity lint does not obscure the system signature).
+type ShowcaseCameraQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static mut Transform,
+        &'static mut Projection,
+        &'static mut Camera,
+    ),
+    (With<ShowcaseCamera>, Without<MainCamera>),
+>;
 
 /// Root of the placeholder alley set; its `Visibility` gates every child.
 #[derive(Component)]
@@ -46,6 +57,9 @@ pub struct ShowcasePedestal;
 #[derive(Resource, Default)]
 pub struct ShowcaseScene {
     pub root: Option<Entity>,
+    /// The layer-1 camera, spawned once with the set and toggled by
+    /// `showcase_camera_update` (Task 61).
+    pub camera: Option<Entity>,
     pub cue_serial: u32,
     /// First frame on an online screen seeds the state from the whole view
     /// instead of diffing against the default weapon (review P1-2).
@@ -109,6 +123,29 @@ pub fn showcase_scene_update(
 ) {
     if state.full_frame && scene.root.is_none() {
         scene.root = Some(build_set(&mut commands, &mut meshes, &mut mats));
+        // Task 61: the set gets its OWN camera on layer 1 (the main camera
+        // only sees layer 0). Initial pose/near/far are the extracted values;
+        // `showcase_camera_update` writes the live pose each frame.
+        let pose = camera_pose(state.mode);
+        let cam = commands
+            .spawn((
+                Camera3d::default(),
+                ShowcaseCamera,
+                RenderLayers::layer(SHOWCASE_LAYER),
+                Projection::from(PerspectiveProjection {
+                    fov: pose.fov.to_radians(),
+                    near: pose.near,
+                    far: pose.far,
+                    ..default()
+                }),
+                Transform::default(),
+            ))
+            .id();
+        commands.entity(cam).insert(Camera {
+            is_active: false,
+            ..default()
+        });
+        scene.camera = Some(cam);
     }
     if let Some(root) = scene.root {
         // The root is spawned Visible (full_frame implies the set is wanted),
@@ -130,25 +167,24 @@ pub fn showcase_scene_update(
     }
 }
 
-/// Camera override. Runs AFTER `world::camera_rig` in the schedule, so while
-/// full-frame the extracted pose wins. On exit `camera_rig` reclaims the
-/// transform and FOV on its next frame; `near`/`far` are NOT rewritten there,
-/// so this system restores them once (review P1-1).
+/// Task 61: drive the layer-1 showcase camera (never the main camera). While
+/// `full_frame`, the extracted pose wins and the second camera becomes active;
+/// on exit it is deactivated, so the main camera's transform / FOV / clip
+/// planes are untouched (the old D-T56-⑦ restore hack is gone).
 pub fn showcase_camera_update(
     state: Res<ShowcaseState>,
     mut scene: ResMut<ShowcaseScene>,
-    mut cams: Query<(&mut Transform, &mut Projection), With<Camera3d>>,
+    mut cams: ShowcaseCameraQuery,
 ) {
+    let Some(cam_entity) = scene.camera else {
+        return;
+    };
+    let Ok((mut tf, mut proj, mut camera)) = cams.get_mut(cam_entity) else {
+        return;
+    };
     if !state.full_frame {
-        if scene.camera_overridden {
-            scene.camera_overridden = false;
-            for (_, mut proj) in &mut cams {
-                if let Projection::Perspective(p) = &mut *proj {
-                    p.near = crate::world::CAM_NEAR;
-                    p.far = crate::world::CAM_FAR;
-                }
-            }
-        }
+        camera.is_active = false;
+        scene.camera_overridden = false;
         return;
     }
     let pose = camera_pose(state.mode);
@@ -157,15 +193,14 @@ pub fn showcase_camera_update(
     if dir.length_squared() < 1e-8 {
         return;
     }
-    for (mut tf, mut proj) in &mut cams {
-        tf.translation = pos;
-        tf.look_to(Dir3::new_unchecked(dir.normalize()), Vec3::Y);
-        if let Projection::Perspective(p) = &mut *proj {
-            p.fov = pose.fov.to_radians();
-            p.near = pose.near;
-            p.far = pose.far;
-        }
+    tf.translation = pos;
+    tf.look_to(Dir3::new_unchecked(dir.normalize()), Vec3::Y);
+    if let Projection::Perspective(p) = &mut *proj {
+        p.fov = pose.fov.to_radians();
+        p.near = pose.near;
+        p.far = pose.far;
     }
+    camera.is_active = true;
     scene.camera_overridden = true;
 }
 
@@ -224,10 +259,21 @@ fn build_set(
     });
 
     let root = commands
-        .spawn((ShowcaseSetRoot, Visibility::Visible, Transform::default()))
+        .spawn((
+            ShowcaseSetRoot,
+            Visibility::Visible,
+            RenderLayers::layer(SHOWCASE_LAYER),
+            Transform::default(),
+        ))
         .id();
     let child = |mesh: Handle<Mesh>, mat: Handle<StandardMaterial>, tf: Transform| {
-        (Mesh3d(mesh), MeshMaterial3d(mat), tf, ChildOf(root))
+        (
+            Mesh3d(mesh),
+            MeshMaterial3d(mat),
+            RenderLayers::layer(SHOWCASE_LAYER),
+            tf,
+            ChildOf(root),
+        )
     };
     commands.spawn(child(
         floor,
@@ -282,6 +328,13 @@ fn build_set(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Bevy 0.19 `RenderLayers::bits()` is a `&[u64]` bitset, not an integer.
+    fn has_layer(app: &App, e: Entity, bit: u64) -> bool {
+        app.world()
+            .get::<RenderLayers>(e)
+            .is_some_and(|l| l.bits().first().is_some_and(|w| w & (1u64 << bit) != 0))
+    }
     use crate::ui::showcase_state::ShowcaseMode;
 
     #[test]
@@ -318,7 +371,7 @@ mod tests {
     // state-layer `sync_from_online_view` (covered by its own tests); the full
     // Update chain is checked by cargo check / clippy, not by this App.
     #[test]
-    fn wired_systems_build_gate_and_restore_the_camera() {
+    fn wired_systems_build_gate_and_drive_the_second_camera() {
         use bevy::asset::{AssetApp, AssetPlugin};
 
         let mut app = App::new();
@@ -334,39 +387,60 @@ mod tests {
             Update,
             (showcase_scene_update, showcase_camera_update).chain(),
         );
-        let cam = app
+        // The gameplay camera is layer 0 and MUST NOT be touched by the
+        // showcase systems (Task 61 removes the D-T56-⑦ override).
+        let main_cam = app
             .world_mut()
             .spawn((
                 Camera3d::default(),
+                MainCamera,
+                RenderLayers::layer(crate::world::WORLD_LAYER),
                 Projection::Perspective(PerspectiveProjection {
                     near: crate::world::CAM_NEAR,
                     far: crate::world::CAM_FAR,
                     ..default()
                 }),
-                Transform::default(),
+                Transform::from_translation(Vec3::new(7.0, 8.0, 9.0)),
             ))
             .id();
 
         app.update(); // build frame (Commands are deferred)
         app.update(); // visibility + camera writes see the spawned entities
-        let root = app
-            .world()
-            .resource::<ShowcaseScene>()
-            .root
-            .expect("placeholder set built");
+        let scene = app.world().resource::<ShowcaseScene>();
+        let root = scene.root.expect("placeholder set built");
+        let second = scene.camera.expect("layer-1 camera spawned");
         assert_eq!(
             *app.world().get::<Visibility>(root).unwrap(),
             Visibility::Visible
         );
+        // Layer split: main = layer 0 only, second = layer 1 only, set = layer1.
+        assert!(has_layer(&app, main_cam, 0) && !has_layer(&app, main_cam, 1));
+        assert!(has_layer(&app, second, 1) && !has_layer(&app, second, 0));
+        assert!(has_layer(&app, root, 1) && !has_layer(&app, root, 0));
+        assert!(app.world().get::<Camera>(second).unwrap().is_active);
+        assert!(app.world().get::<Camera>(main_cam).unwrap().is_active);
         // Expected values are the JS literals (lobbySet.js L44), NOT a
         // recomputation through the implementation under test.
-        let tf = app.world().get::<Transform>(cam).unwrap();
+        let tf = app.world().get::<Transform>(second).unwrap();
         assert!((tf.translation - Vec3::new(-2.45, 2.25, 10.4)).length() < 1e-4);
-        let Projection::Perspective(p) = app.world().get::<Projection>(cam).unwrap() else {
-            panic!("world camera is perspective");
+        let Projection::Perspective(p) = app.world().get::<Projection>(second).unwrap() else {
+            panic!("showcase camera is perspective");
         };
         assert!((p.fov - 32.0_f32.to_radians()).abs() < 1e-5);
         assert_eq!((p.near, p.far), (0.1, 140.0));
+        // The main camera's own state is unchanged (no override hack).
+        assert_eq!(
+            app.world().get::<Transform>(main_cam).unwrap().translation,
+            Vec3::new(7.0, 8.0, 9.0)
+        );
+        let Projection::Perspective(main_p) = app.world().get::<Projection>(main_cam).unwrap()
+        else {
+            panic!("main camera is perspective");
+        };
+        assert_eq!(
+            (main_p.near, main_p.far),
+            (crate::world::CAM_NEAR, crate::world::CAM_FAR)
+        );
 
         // A one-shot cue must actually drive the pedestal transform.
         {
@@ -390,16 +464,17 @@ mod tests {
             "cue drives the pedestal rotation"
         );
 
-        // Leaving full-frame hides the set AND restores the world clip planes
-        // (review P1-1: camera_rig only rewrites transform + FOV).
+        // Leaving full-frame hides the set AND deactivates the second camera;
+        // the main camera's clip planes were never touched.
         app.world_mut().resource_mut::<ShowcaseState>().full_frame = false;
         app.update();
         assert_eq!(
             *app.world().get::<Visibility>(root).unwrap(),
             Visibility::Hidden
         );
-        let Projection::Perspective(p) = app.world().get::<Projection>(cam).unwrap() else {
-            panic!("world camera is perspective");
+        assert!(!app.world().get::<Camera>(second).unwrap().is_active);
+        let Projection::Perspective(p) = app.world().get::<Projection>(main_cam).unwrap() else {
+            panic!("main camera is perspective");
         };
         assert_eq!(p.near, crate::world::CAM_NEAR);
         assert_eq!(p.far, crate::world::CAM_FAR);

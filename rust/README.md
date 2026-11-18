@@ -445,3 +445,8 @@ BEVY 设置屏 8 行 + RESET/BACK、音量三轨 `set_volumes` τ=0.04 接线、
 crosscheck；`sfx_kit.rs` 复用 `SfxGate`（元数据回退）、脚步消费者真 bake + 真
 `AudioPlayer` voice（surface 规则 ≡ main.js L543-546）；53 名音色函数为上游代码
 不可提取，采用通用合成并登记 D-T60-4，muzzle 回写登记 D-T60-3。
+**Task 61（RenderLayers/第二相机）**完成：layer0=关卡/FX/UI、layer1=3D lobby set，
+第二相机从提取位姿驱动并启停，主相机完全不被覆盖；7 处相机消费者（5 reader +
+2 writer）全部限定 `MainCamera`；双相机 Bevy 冒烟测试锚定层位集/激活切换/主相机
+不变性。D-T61-1（层映射为 Rust 设计决策）、D-T61-4（双相机清屏/顺序为 GPU 复核项）
+登记于 M5 REVIEW_CHECKLIST。

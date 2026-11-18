@@ -76,6 +76,10 @@ Task 60（kit SFX 与脚步消费者）完成：live 53 名 kit SFX 提取（旧
 `kit-sfx.json` 钉源 + 独立 crosscheck、`sfx_kit.rs` 复用 `SfxGate` 与真脚步消费者
 （真 bake + 真 voice）；D-T60-1..5 偏差（42→53、surface/左右脚、muzzle 未回写、
 通用合成音色、远端 18m 剔除）登记于 M5 REVIEW_CHECKLIST。
+Task 61（RenderLayers/第二相机）完成：layer0 关卡/FX/UI、layer1 3D lobby set，
+第二相机由提取位姿驱动并启停、主相机不再被覆盖；7 处相机消费者（5 reader +
+2 writer）限定 `MainCamera`；双相机冒烟测试锚定层位集/激活/主相机不变性。
+D-T61-1（层映射设计决策）/D-T61-4（清屏顺序 GPU 复核）登记于 M5 REVIEW_CHECKLIST。
 
 ## 质量档位
 

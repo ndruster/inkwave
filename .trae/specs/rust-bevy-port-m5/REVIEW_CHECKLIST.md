@@ -105,3 +105,27 @@ Evidence。以下为**待用户 GPU/浏览器机器复核**的视觉与载体项
   `MatchEvent::Fire.muzzle` 由 `inkwave_sim` 生成且 hooks 只读，零改动 sim
   约束下未回写 FX/射击事件原点（仍用 M4 的 `approx_muzzle`）——**登记为明确
   偏差而非已接线**，待总评审裁决是否在后续任务以 inkwave 侧改写事件实现。
+
+## Task 61 复核登记（2026-11-18）
+
+无头可测：双相机冒烟（layer0/layer1 位集、第二相机 inactive→active→inactive、
+主相机位姿/near/far 不变）+ 全部 7 处相机消费者 Query 收紧（5 reader + 2 writer，
+旧文档「6 处」为口径笔误）；门禁结论见
+`tasks.md` Task 61 Completion Evidence。以下为**待用户 GPU 机器复核**：
+
+- [ ] **hub/lobby 无世界叠加**：第二相机只渲染 layer1 的 3D alley set，
+  主相机渲染 layer0 关卡世界；full_frame 时应无关卡世界透出（D-T56-⑦ 占位
+  语义已消除）。
+- [ ] **切换过渡观感**：full_frame 进出的 set 显隐与第二相机启停时机；
+  上游 `showcase.js` L3057-3085 的 cross-dissolve / `covered` 清屏尚未移植
+  （D-T61-2），需确认切换无闪烁。
+- [ ] **UI 层级与重复渲染 / 双相机清屏与顺序（D-T61-4）**：第二相机
+  `clear_color=Default` 且与主相机同 target、同 order；两者同时 active 时，
+  若第二相机后渲染会清掉 layer0（含 UI）输出。代码层面成立但仅 GPU 可确认，
+  需复核相机 order / clear 策略，必要时给第二相机设 `ClearColorConfig::Nothing`。
+  名牌 DOM 叠层（Task 62）与大厅 3D 的相对层级。
+- [ ] **lobbySet planar reflection / 水面**：`lobbySet.js` L643-690 的地面反射
+  相机与主场景水面反射相机（`environment.js` L1818-1822）和本任务第二相机的
+  交互（D-T61-3）。
+- [ ] **D-T61-1 层映射**：上游无 THREE.Layers 层号，layer0/layer1 为 Rust
+  设计决策，需确认实际画面与「独立 Scene + 第二相机 + renderTarget」等价。

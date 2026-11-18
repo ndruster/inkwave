@@ -305,3 +305,54 @@ GTAO/grade/SMAA/tilt-shift、云/PMREM/海面、alley 材质逐档落地且逐�
   XCHK 加 sfx_kit/task60 测试与 kit-sfx-crosscheck；TRUNK 按 D-T40-1 登记。
 - REVIEW_CHECKLIST 登记 53 名听感、footstep surface/材质、通用合成音色偏差
   D-T60-4、muzzle 偏差 D-T60-3。
+
+---
+
+## Task61 实施设计（2026-11-18，开工实读定稿）
+
+### §0 锚点与口径
+- 上游 JS **没有 THREE.Layers 层号**：分层语义由「独立 Scene + 第二相机 +
+  独立 renderTarget + 合成」实现（`showcase.js` L927-931  studio scene/cam
+  26°、L1589-1592 lobby set cam 30°、L3042-3085 双 scene 合成；
+  `lobbySet.js` L44/L69-70 CAM + hubCamera；`cameraRig.js` L87-92 gameCam/
+  fitCam；`main.js` L1192-1196 先 R.render 再 showcase.render）。
+- D-T61-1：Rust 层映射（layer0 = 关卡世界/角色/props/FX + Bevy UI，
+  layer1 = 3D lobby set/studio overlay）为设计决策，不声称上游有对应层号。
+- 文档「6 处单相机消费者」实读为 **5 reader + 2 writer**：reader =
+  `level_render.rs:414`（已 is_active 加固）、`fx/render.rs:319`、
+  `fx/hooks.rs:1574`、`fx/swim_wake.rs:381`、`fx/screen_fx.rs:1666`；
+  writer = `world.rs::camera_rig`、`showcase_scene.rs::showcase_camera_update`。
+
+### §1 数据面
+- 无新数据/提取器；第二相机位姿来自已钉源的 `showcase_state::camera_pose`
+  （M4 从 `lobbySet.js` 提取的 CAM/hubCamera/studio 值），禁止手抄。
+
+### §2 实现面
+- `world.rs` 增 `MainCamera` / `ShowcaseCamera` marker + 两个层常量；
+  主相机 spawn 时显式 `RenderLayers::layer(0)` + `MainCamera`。
+- `showcase_scene.rs` spawn 第二相机（layer1 + `ShowcaseCamera`，初始 inactive）；
+  `showcase_camera_update` 改为写第二相机 Transform/Projection 并切换
+  `Camera.is_active`，不再覆盖主相机（消除 D-T56-⑦ 占位）；退出时恢复主相机
+  独立 near/far（主相机不再被改，自动恢复）。
+- layer1 set 根 + 子实体标记 `RenderLayers::layer(1)`；layer0 实体保持默认层。
+  默认 Bevy UI 节点仍在 layer0，第二相机看不到 → 无重复 UI（GPU 复核）。
+
+### §3 消费者迁移（必须同批）
+- 5 reader 统一 `With<MainCamera>`（或保留 `is_active` 过滤）取主相机基，
+  避免双相机下 `.single()` 变 None 导致 FX 静默关闭；
+  2 writer 同样限定 `With<MainCamera>`。
+- `low` 档 `reduced ⇒ full_frame=false` 保持（第二相机常关），headless
+  分支不加载 WorldPlugin（无相机）——保底路径不变。
+
+### §4 锚测（TR-61.1）
+- 最小 Bevy App 双相机冒烟：主/第二相机 layer mask、第二相机
+  inactive→active→inactive 的位姿/near/far 与恢复、set 实体层标记、
+  全部相机消费者 Query 无冲突（`check_app` / `wired_systems_*` 模板）。
+
+### §5 评审/门禁
+- 独立评审 + `gate-task61.sh`（模板 gate-task60.sh，DETERM 用 lobbyset 双跑，
+  XCHK 用 task61 相机测试）；GPU-only 项登记 REVIEW_CHECKLIST。
+
+### §6 偏差与复核
+- D-T61-1 层映射设计决策；hub/lobby 无叠加、cross-dissolve 过渡、UI 层级、
+  planar reflection 与第二相机交互均为 GPU 复核项，不在沙箱伪验收。
