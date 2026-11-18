@@ -72,6 +72,10 @@ Task 59（设置屏与持久化）完成——`settings.rs` 复用 `environment.
 native/wasm 双载体、BEVY 设置屏与音量/画质/主题/灵敏度接线、13 项锚测与独立
 21 键 crosscheck。偏差 D-T59-1..4（native 文件载体、theme 扩展、fov 存而不应用、
 wasm 独立键避免覆写 JS 字段）及 GPU/载体复核项见 M5 REVIEW_CHECKLIST。
+Task 60（kit SFX 与脚步消费者）完成：live 53 名 kit SFX 提取（旧文档 42 笔误修正）、
+`kit-sfx.json` 钉源 + 独立 crosscheck、`sfx_kit.rs` 复用 `SfxGate` 与真脚步消费者
+（真 bake + 真 voice）；D-T60-1..5 偏差（42→53、surface/左右脚、muzzle 未回写、
+通用合成音色、远端 18m 剔除）登记于 M5 REVIEW_CHECKLIST。
 
 ## 质量档位
 

@@ -82,3 +82,26 @@ Evidence。以下为**待用户 GPU/浏览器机器复核**的视觉与载体项
   `colorblind`、`minimap`、`matchLength`、`lastMode`、`difficulty`、`rumble`、
   `aimAssistMouse`、`fpsCap`；`fov` 存但不应用（D-T59-3）；
   `invertY/aimAssist/showFps/cameraShake` 存而暂无运行期消费者。
+
+## Task 60 复核登记（2026-11-18）
+
+无头可测部分：53 名 kit SFX 提取 + 独立 crosscheck + 5 项锚测
+（sfx_kit × 4 / footstep 生产消费者 × 1）；九段门禁结论见 tasks.md。
+以下为**待用户 GPU/听感机器复核**的项：
+
+- [ ] **53 名 kit SFX 听感**：M4 文档旧口径「42 名」与 live 上游不符；实有 53 名
+  （bow 7 / mitts 9 / blade 5 / brolly 7 / boomerang 6 / torpedo 6 / shaker 5 /
+  tracer 4 / waddle 4）。Rust 携带提取的 gain/max/jitter/reverb/minGap 元数据，
+  门控逐名正确；`build(v,p)` 音色函数体属上游代码、无法提取，现由通用合成
+  `b_kit_generic` 代替（**D-T60-4 明确偏差**，音色不等同原版）——逐名听感需实机对照。
+- [ ] **footstep 节奏/材质**：生产系统按 **surface** 选 base 表的
+  `step_dry`/`step_ink`/`step_enemy`（main.js L543-546），音量按 local/remote
+  与 speed 衰减；`FootstepEvent` 无 surface 字段（默认 dry，D-T60-2）、远端 18m
+  剔除未接线（D-T60-5），需复核不同地面/远近距离的脚步观感。
+- [ ] **kit 事件→cue 覆盖**：`SfxGate` 零改动、元数据回退到 kit 表；
+  实际挥拍/开伞/拉弓/蓄力等事件在游戏内的触发时机与音量平衡需实机复核。
+- [ ] **muzzle 回写偏差（D-T60-3）**：`char/bridge.rs` 的 `get_muzzle` /
+  `getMuzzleHand` / `getHeadPosition` / `aimReady` getter 已在 M4 交付，但
+  `MatchEvent::Fire.muzzle` 由 `inkwave_sim` 生成且 hooks 只读，零改动 sim
+  约束下未回写 FX/射击事件原点（仍用 M4 的 `approx_muzzle`）——**登记为明确
+  偏差而非已接线**，待总评审裁决是否在后续任务以 inkwave 侧改写事件实现。

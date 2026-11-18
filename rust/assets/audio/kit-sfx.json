@@ -1,0 +1,419 @@
+{
+  "cues": [
+    {
+      "gain": 0.24,
+      "jitter": 0,
+      "max": 2,
+      "name": "blade_charge",
+      "reverb": 0.06
+    },
+    {
+      "gain": 0.62,
+      "jitter": 0.03,
+      "max": 3,
+      "name": "blade_heavy",
+      "reverb": 0.16
+    },
+    {
+      "gain": 0.62,
+      "jitter": 0.05,
+      "max": 4,
+      "minGap": 0.04,
+      "name": "blade_hit",
+      "reverb": 0.1
+    },
+    {
+      "gain": 0.26,
+      "jitter": 0,
+      "max": 2,
+      "name": "blade_ready",
+      "reverb": 0.22
+    },
+    {
+      "gain": 0.5,
+      "jitter": 0.05,
+      "max": 5,
+      "minGap": 0.03,
+      "name": "blade_swish",
+      "reverb": 0.07
+    },
+    {
+      "gain": 0.55,
+      "jitter": 0.05,
+      "max": 3,
+      "name": "boomerang_burst",
+      "reverb": 0.24
+    },
+    {
+      "gain": 0.2,
+      "jitter": 0,
+      "max": 3,
+      "name": "boomerang_orbit",
+      "reverb": 0.04
+    },
+    {
+      "gain": 0.45,
+      "jitter": 0.04,
+      "max": 3,
+      "name": "boomerang_return",
+      "reverb": 0.08
+    },
+    {
+      "gain": 0.3,
+      "jitter": 0.08,
+      "max": 4,
+      "minGap": 0.05,
+      "name": "boomerang_shred",
+      "reverb": 0.03
+    },
+    {
+      "gain": 0.62,
+      "jitter": 0.05,
+      "max": 3,
+      "name": "boomerang_throw",
+      "reverb": 0.06
+    },
+    {
+      "gain": 0.22,
+      "jitter": 0,
+      "max": 4,
+      "name": "boomerang_whirr",
+      "reverb": 0.04
+    },
+    {
+      "gain": 0.5,
+      "jitter": 0.05,
+      "max": 6,
+      "minGap": 0.02,
+      "name": "bow_burst",
+      "reverb": 0.2
+    },
+    {
+      "gain": 0.3,
+      "jitter": 0,
+      "max": 3,
+      "name": "bow_draw",
+      "reverb": 0.04
+    },
+    {
+      "gain": 0.28,
+      "jitter": 0,
+      "max": 2,
+      "name": "bow_full",
+      "reverb": 0.22
+    },
+    {
+      "gain": 0.58,
+      "jitter": 0.03,
+      "max": 4,
+      "name": "bow_loose",
+      "reverb": 0.14
+    },
+    {
+      "gain": 0.3,
+      "jitter": 0,
+      "max": 2,
+      "name": "bow_ring1",
+      "reverb": 0.14
+    },
+    {
+      "gain": 0.5,
+      "jitter": 0.06,
+      "max": 6,
+      "minGap": 0.03,
+      "name": "bow_thunk",
+      "reverb": 0.08
+    },
+    {
+      "gain": 0.32,
+      "jitter": 0.02,
+      "max": 8,
+      "name": "bow_tick",
+      "reverb": 0.06
+    },
+    {
+      "gain": 0.62,
+      "jitter": 0.04,
+      "max": 4,
+      "name": "brolly_blast",
+      "reverb": 0.12
+    },
+    {
+      "gain": 0.6,
+      "jitter": 0.04,
+      "max": 3,
+      "name": "brolly_break",
+      "reverb": 0.16
+    },
+    {
+      "gain": 0.3,
+      "jitter": 0.05,
+      "max": 3,
+      "minGap": 0.05,
+      "name": "brolly_close",
+      "reverb": 0.04
+    },
+    {
+      "gain": 0.46,
+      "jitter": 0.08,
+      "max": 5,
+      "minGap": 0.04,
+      "name": "brolly_hit",
+      "reverb": 0.05
+    },
+    {
+      "gain": 0.5,
+      "jitter": 0.04,
+      "max": 3,
+      "name": "brolly_launch",
+      "reverb": 0.12
+    },
+    {
+      "gain": 0.42,
+      "jitter": 0.04,
+      "max": 3,
+      "minGap": 0.05,
+      "name": "brolly_open",
+      "reverb": 0.06
+    },
+    {
+      "gain": 0.3,
+      "jitter": 0.02,
+      "max": 2,
+      "name": "brolly_regrow",
+      "reverb": 0.2
+    },
+    {
+      "gain": 0.3,
+      "jitter": 0,
+      "max": 2,
+      "name": "mitts_charge",
+      "reverb": 0.05
+    },
+    {
+      "gain": 0.55,
+      "jitter": 0.05,
+      "max": 3,
+      "name": "mitts_cling",
+      "reverb": 0.06
+    },
+    {
+      "gain": 0.26,
+      "jitter": 0,
+      "max": 2,
+      "name": "mitts_drain",
+      "reverb": 0.04
+    },
+    {
+      "gain": 0.24,
+      "jitter": 0,
+      "max": 2,
+      "name": "mitts_full",
+      "reverb": 0.18
+    },
+    {
+      "gain": 0.65,
+      "jitter": 0.05,
+      "max": 3,
+      "name": "mitts_land",
+      "reverb": 0.22
+    },
+    {
+      "gain": 0.55,
+      "jitter": 0.04,
+      "max": 3,
+      "name": "mitts_leap",
+      "reverb": 0.08
+    },
+    {
+      "gain": 0.55,
+      "jitter": 0.07,
+      "max": 6,
+      "minGap": 0.025,
+      "name": "mitts_pop",
+      "reverb": 0.12
+    },
+    {
+      "gain": 0.5,
+      "jitter": 0.06,
+      "max": 4,
+      "minGap": 0.03,
+      "name": "mitts_punch",
+      "reverb": 0.04
+    },
+    {
+      "gain": 0.5,
+      "jitter": 0.06,
+      "max": 3,
+      "name": "mitts_unstick",
+      "reverb": 0.05
+    },
+    {
+      "gain": 0.26,
+      "jitter": 0.03,
+      "max": 3,
+      "minGap": 0.05,
+      "name": "shaker_clink",
+      "reverb": 0.14
+    },
+    {
+      "gain": 0.44,
+      "jitter": 0.02,
+      "max": 2,
+      "minGap": 0.05,
+      "name": "shaker_clink_max",
+      "reverb": 0.22
+    },
+    {
+      "gain": 0.16,
+      "jitter": 0,
+      "max": 3,
+      "name": "shaker_fizz",
+      "reverb": 0.03
+    },
+    {
+      "gain": 0.28,
+      "jitter": 0.05,
+      "max": 2,
+      "name": "shaker_fizzle",
+      "reverb": 0.06
+    },
+    {
+      "gain": 0.3,
+      "jitter": 0.06,
+      "max": 3,
+      "minGap": 0.04,
+      "name": "shaker_hop",
+      "reverb": 0.06
+    },
+    {
+      "gain": 0.6,
+      "jitter": 0.04,
+      "max": 3,
+      "name": "torpedo_launch",
+      "reverb": 0.1
+    },
+    {
+      "gain": 0.3,
+      "jitter": 0,
+      "max": 2,
+      "minGap": 0.1,
+      "name": "torpedo_lock",
+      "reverb": 0.06
+    },
+    {
+      "gain": 0.55,
+      "jitter": 0.05,
+      "max": 4,
+      "name": "torpedo_pop",
+      "reverb": 0.2
+    },
+    {
+      "gain": 0.22,
+      "jitter": 0.04,
+      "max": 3,
+      "name": "torpedo_throw",
+      "reverb": 0.05
+    },
+    {
+      "gain": 0.55,
+      "jitter": 0.03,
+      "max": 3,
+      "name": "torpedo_transform",
+      "reverb": 0.12
+    },
+    {
+      "gain": 0.2,
+      "jitter": 0,
+      "max": 4,
+      "name": "torpedo_whirr",
+      "reverb": 0.05
+    },
+    {
+      "gain": 0.45,
+      "jitter": 0.05,
+      "max": 5,
+      "minGap": 0.03,
+      "name": "tracer_bounce",
+      "reverb": 0.12
+    },
+    {
+      "gain": 0.5,
+      "jitter": 0.02,
+      "max": 4,
+      "minGap": 0.05,
+      "name": "tracer_hit",
+      "reverb": 0.12
+    },
+    {
+      "gain": 0.14,
+      "jitter": 0,
+      "max": 4,
+      "name": "tracer_hum",
+      "reverb": 0.05
+    },
+    {
+      "gain": 0.5,
+      "jitter": 0.04,
+      "max": 4,
+      "name": "tracer_zap",
+      "reverb": 0.08
+    },
+    {
+      "gain": 0.26,
+      "jitter": 0.06,
+      "max": 3,
+      "minGap": 0.08,
+      "name": "waddle_hop",
+      "reverb": 0.04
+    },
+    {
+      "gain": 0.34,
+      "jitter": 0.04,
+      "max": 3,
+      "name": "waddle_land",
+      "reverb": 0.06
+    },
+    {
+      "gain": 0.3,
+      "jitter": 0,
+      "max": 3,
+      "minGap": 0.1,
+      "name": "waddle_lock",
+      "reverb": 0.08
+    },
+    {
+      "gain": 0.36,
+      "jitter": 0,
+      "max": 8,
+      "name": "waddle_walk",
+      "reverb": 0.05
+    }
+  ],
+  "meta": {
+    "note": "Kit SFX self-register into SFX via src/game/kits/index.js. M4 docs said 42; live upstream registers 53. Functions (build/loop) are code, not data — the Rust synthesiser stays in sfx_table.rs.",
+    "source": {
+      "baseCount": 148,
+      "commit": "0d7ab048e3ff3f44d07f999027e8e30e99130057",
+      "files": [
+        "src/audio/audio.js",
+        "src/game/kits/index.js",
+        "src/game/kits/brolly.js",
+        "src/game/kits/bow.js",
+        "src/game/kits/bow-sfx.js",
+        "src/game/kits/blade.js",
+        "src/game/kits/blade-fx.js",
+        "src/game/kits/mitts.js",
+        "src/game/kits/mitts-assets.js",
+        "src/game/kits/shaker.js",
+        "src/game/kits/waddle.js",
+        "src/game/kits/torpedo.js",
+        "src/game/kits/tracer.js",
+        "src/game/kits/boomerang.js"
+      ],
+      "kind": "read-only-js-tree",
+      "kitCount": 53
+    }
+  }
+}
+

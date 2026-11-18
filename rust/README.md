@@ -440,3 +440,8 @@ goldens）、Rust 设置屏与持久化、kit SFX 与音频消费者、RenderLay
 BEVY 设置屏 8 行 + RESET/BACK、音量三轨 `set_volumes` τ=0.04 接线、
 `EnvRefresh` 运行期切档；13 项锚测含真实 `Pointer<Click> → 系统 → 保存` 链路。
 偏差 D-T59-1..4 与未接线字段见 M5 REVIEW_CHECKLIST。
+**Task 60（kit SFX 与脚步消费者）**已完成接线：实读修正上游 kit SFX 为 **53 名**
+（旧文档 42 为笔误），新增 `extract-kit-sfx.mjs` + `kit-sfx.json`（钉源）+ 独立
+crosscheck；`sfx_kit.rs` 复用 `SfxGate`（元数据回退）、脚步消费者真 bake + 真
+`AudioPlayer` voice（surface 规则 ≡ main.js L543-546）；53 名音色函数为上游代码
+不可提取，采用通用合成并登记 D-T60-4，muzzle 回写登记 D-T60-3。

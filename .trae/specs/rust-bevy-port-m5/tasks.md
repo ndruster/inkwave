@@ -77,18 +77,49 @@
     （首轮评审前 / wasm `write_at` 编译错误）保留作为完整证据链。
 
 ## Task 60: kit SFX 与生产消费者接线
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: M4 Task 50/54；与 Task 58 可并行
-- **Description**: 42 名 kit 系 SFX（`kits/*-sfx.js` 自注册，Task 50 事件缺口）接线；
-  footstep 队列接音频 hook（M4 D-T54-5⑫ 测试自 drain → 生产消费）；
+- **Description**: **53 名**（实读修正，旧文档写 42）kit 系 SFX（`kits/*` 自注册，
+  Task 50 事件缺口）接线；footstep 队列接音频 hook（M4 D-T54-5⑫ 测试自 drain → 生产消费）；
   `getMuzzle/getHeadPosition/aimReady` 回写射击/FX 消费者（替换 sim 射击原点直用）。
 - **Acceptance Criteria Addressed**: AC-M5-1
 - **Test Requirements**:
-  - `rule` TR-60.1: 42 名 SFX 表提取锚测（≡JS 自注册顺序/参数）+ 事件→cue 映射单测 +
+  - `rule` TR-60.1: 53 名 SFX 表提取锚测（≡JS 自注册顺序/参数）+ 事件→cue 映射单测 +
     footstep 消费节奏锚测；`low` 档音频关闭路径回归。
   - `rule` TR-60.2: REVIEW_CHECKLIST 听感登记（kit SFX 触发时机/音量平衡，用户机复核）。
 - **Notes**: 不新增 crate 依赖（D-T50 选型延续）；SfxGate voice cap 语义复用。
+- **Completion Evidence（2026-11-18）**：
+  - 口径修正：实读 live 上游 **53 名** kit SFX（旧文档 42 为笔误，D-T60-1）；
+    新增 `extract-kit-sfx.mjs`（import 真实 SFX 注册表，14 个上游文件钉
+    `source.commit`）→ `assets/audio/kit-sfx.json`（53 名，gain/max/jitter/
+    reverb/minGap）；接入 `run-all.sh`；`kit-sfx-crosscheck.mjs` 独立正则双向
+    核对 53 名 → `KIT_SFX_CROSSCHECK=PASS names=53`。
+  - Rust：`audio/sfx_kit.rs` 以 `include_str!` + JVal 解析 53 名，
+    `kit_meta()` 供 `sfx_table::meta()` 回退，**SfxGate 零改动**；
+    53 名 `build(v,p)` 属上游代码不可提取 → `b_kit_generic` 通用合成
+    （D-T60-4 明确偏差，音色需 GPU/听感复核）。
+  - 脚步生产消费者：`audio.rs::footstep_sfx` 注册于 `char_pose_bridge` 之后，
+    `take_footsteps()` 真 drain → surface 规则 `step_dry/step_ink/step_enemy`
+    （≡ main.js L543-546）→ 真 `sfx.cue()` bake + 真 `AudioPlayer` spawn
+    + `SfxGate` + 音量公式（local 0.7/remote 0.45 × speed 衰减）。
+  - 偏差登记：D-T60-1（42→53）、D-T60-2（FootstepEvent 无 surface，默认 dry）、
+    D-T60-3（muzzle getter 已有但 sim 事件只读，未回写）、D-T60-4（通用合成
+    音色）、D-T60-5（远端 18m 剔除未接线）均在 M5 REVIEW_CHECKLIST。
+  - 测试：`sfx_kit` × 4（53 名/唯一性、meta 对齐提取值、门控零改动播 kit cue、
+    surface cue + 三 base cue 真 bake）+ `task60` × 1（真实 Bevy app：bridge 入队
+    → 系统 drain → 真 bake + voice 登记 → 静音守卫）；设备缺失时 AudioPlayer
+    entity 被即时回收，锚定 bake/voice 记帐而非 entity 寿命。
+  - 独立评审：首轮 FAIL（P0 假接线：只计 gate 数且 cue 名不存在；P1 无门禁、
+    53 名无合成音色、speed 门伪造）→ P0 修为真 cue + 真 bake/spawn，
+    P1 修为 surface 规则 + 通用合成偏差 + 文档 §0-§6/42→53 同步；
+    复验 `REVIEW_VERDICT: PASS`（余 P2 纯注释项已修）。
+  - 门禁：`rust/tools/verify/logs/task60-gates-20261118T050954Z.log` →
+    `GATE_VERDICT=PASS`（FMT/CLIPPY/TEST/WASM/TREE/DETERM/XCHK/HEADLESS/
+    HEADLESS_BOSS/RELEASE_BUILD 全 0，`DETERM=BYTE_IDENTICAL`，
+    JS_TREE_CLEAN/SIM_TREE_CLEAN；TRUNK 一次尝试 wasm-bindgen SIGKILL
+    → `TRUNK=DEGRADED` 按 D-T40-1 环境性非阻断登记）。前两轮日志
+    （启动 clippy 失败 / 中途返工）保留作为完整证据链。
 
 ## Task 61: RenderLayers 分层与第二相机
 - **Status**: `pending`

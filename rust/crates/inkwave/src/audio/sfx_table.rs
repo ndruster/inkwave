@@ -63,7 +63,7 @@ pub fn bake_loop(name: &str) -> Option<Vec<f32>> {
 }
 
 /// One-shot / loop metadata ≡ the fields of a `def(name, {...})` entry.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SfxMeta {
     pub gain: f64,
     pub max: usize,
@@ -7282,7 +7282,13 @@ impl SfxGate {
 // ---------------------------------------------------------------------------
 
 pub fn meta(name: &str) -> Option<SfxMeta> {
-    META.iter().find(|(n, _)| *n == name).map(|(_, m)| *m)
+    META.iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, m)| *m)
+        // Task 60: kit cues are self-registered in the JS SFX object, not in
+        // the base 148 table. The gate stays unchanged; its metadata lookup
+        // now falls through to the extracted kit table.
+        .or_else(|| crate::audio::sfx_kit::kit_meta(name))
 }
 
 pub fn build_one_shot(name: &str, v: &mut Vb, p: f64) {
@@ -7416,12 +7422,41 @@ pub fn build_one_shot(name: &str, v: &mut Vb, p: f64) {
         "boss_defeat" => b_boss_defeat(v, p),
         "boss_sunk" => b_boss_sunk(v, p),
         _ => {
-            debug_assert!(
-                meta(name).is_none_or(|m| m.is_loop),
-                "unknown one-shot {name}"
-            );
+            if let Some(cue) = crate::audio::sfx_kit::kit_cue(name) {
+                // Task 60 D-T60-4: the 53 kit cues' `build(v,p)` function
+                // bodies are upstream CODE, not extractable data. Until they
+                // are translated one-by-one, kit cues share this
+                // deterministic tone shaped by the EXTRACTED reverb value;
+                // the gate still applies each name's extracted gain/max/
+                // jitter/minGap. Audible parity is a registered review item.
+                b_kit_generic(v, p, cue.reverb);
+            } else {
+                debug_assert!(
+                    meta(name).is_none_or(|m| m.is_loop),
+                    "unknown one-shot {name}"
+                );
+            }
         }
     }
+}
+
+/// D-T60-4: generic kit placeholder synthesis (not the upstream per-name
+/// waveform). Deterministic, finite, bounded — never silent for a kit cue.
+fn b_kit_generic(v: &mut Vb, p: f64, reverb: f64) {
+    let f = 320.0 + reverb * 900.0;
+    v.tone(Tone {
+        f: f * p,
+        f1: Some(f * 0.72 * p),
+        sw: Some(0.05),
+        a: Some(0.004),
+        d: Some(0.22),
+        peak: Some(0.55),
+        ..Default::default()
+    });
+    v.out_param().set(0.0, 0.0);
+    v.out_param().lin(1.0, 0.01);
+    v.out_param().lin(0.0, 0.24);
+    v.kill(0.26);
 }
 
 pub fn build_loop(name: &str, v: &mut Vb, p: f64) {

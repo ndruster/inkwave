@@ -251,3 +251,57 @@ GTAO/grade/SMAA/tilt-shift、云/PMREM/海面、alley 材质逐档落地且逐�
 - `gate-task59.sh`（模板 gate-task58.sh）：DETERM 改 environment 双跑；XCHK 增
   `settings-crosscheck.mjs` + settings 测试；TRUNK 单次按 D-T40-1 登记。
   REVIEW_CHECKLIST 登记设置屏布局/焦点/online 屏共存、双载体持久化实机复核。
+
+---
+
+## Task60 实施设计（2026-11-18，开工实读定稿）
+
+### §0 口径修正（D-T60-1）
+- M4 文档写「42 名 kit SFX」，实读上游：`src/audio/audio.js` L399 `SFX` 表 +
+  `src/game/kits/index.js` 自注册 9 个 kit 模块，**实有 53 名**（base 148 → 201）。
+  以 live 表为准，不手抄 42。
+- `getMuzzle/getHeadPosition/aimReady` 的 Rust getter 在 M4 `char/bridge.rs` 已交付；
+  FX 事件由 `inkwave_sim` 生成、`MatchEvent::Fire` 在 hooks 中只读，零改动 sim
+  约束下回写事件原点不可达 → D-T60-3 偏差登记（不伪造接线）；footstep 生产消费者
+  是本任务的可达核心。
+
+### §1 数据面
+- 新增 `extract-kit-sfx.mjs`：直接 import `audio.js`（SFX + SFX_NAMES）与
+  `kits/index.js`（触发自注册），筛选 53 名，提取 JSON-safe 元数据
+  （gain/max/jitter/reverb/minGap）；函数体属代码不在数据里；
+  输出 `assets/audio/kit-sfx.json`（stable-json，`source.commit` 钉 14 个上游文件）。
+- 接入 `run-all.sh`；新增 `kit-sfx-crosscheck.mjs`：独立正则扫描 9 个 kit 源文件的
+  `def('name')` / `SFX.name = {}` 注册点，双向比对 53 名（不 import 提取器）。
+
+### §2 Rust 表与门控复用
+- 新增 `audio/sfx_kit.rs`：`include_str!` + JVal 解析 53 名，`kit_meta()` 供
+  `sfx_table::meta()` 回退；**`SfxGate` 零改动**（`play()` 自动获得 kit 的
+  gain/max/jitter/minGap）；base 148 名仍在 sfx_table.rs。
+
+### §3 footstep 生产消费者（首轮评审 P0 返工）
+- `audio.rs::footstep_sfx` 运行于 `char_pose_bridge` 之后（world.rs group2 chain），
+  `take_footsteps()` 生产消费（替代 M4 测试自 drain）。首轮误用不存在的
+  `step_walk/run` 且只计 gate 数；修正为上游真实 **surface 规则**
+  （main.js L543-546：`step_dry`/`step_ink`/`step_enemy`）与音量公式
+  （local 0.7/remote 0.45 × `min(1, 0.45+speed/8)`），`sfx.cue()` 真 bake +
+  真 `AudioPlayer` spawn（与 audio_sfx 同链），静音/暂停守卫。
+  `FootstepEvent` 无 surface 字段 → D-T60-2；远端 18m 剔除 → D-T60-5。
+
+### §4 锚测
+- 4 项 `sfx_kit`（53 名/唯一性、kit meta 与提取值一致、门控零改动可播 kit cue、
+  surface cue 与真实 base 表 bake）+ 1 项 `task60`（真实 Bevy app：bridge 入队 →
+  系统 drain → 真 bake + voice 队列登记 → 静音守卫；设备缺失时 AudioPlayer
+  entity 会被即时回收，故锚定 bake/voice 记帐而非 entity 寿命）。
+
+### §5 首轮评审结论
+- 首轮 `REVIEW_VERDICT: FAIL`：P0-1 脚步仅计数假接线（已修：真 cue + 真
+  spawn）、P1-1 无门禁/完成证据（门禁重跑中）、P1-2 53 名无合成音色（已修：
+  `b_kit_generic` 通用合成 + D-T60-4 偏差）、P1-3 speed 门伪造（已修：surface
+  规则 + D-T60-2/-5）、P2-1..5（注释/§6-§7/42→53/crosscheck 数值/钉源口径）。
+  复验待门禁 verdict 后执行。
+
+### §6 门禁
+- `gate-task60.sh`（模板 gate-task59.sh）：DETERM 改 kit SFX 双跑、
+  XCHK 加 sfx_kit/task60 测试与 kit-sfx-crosscheck；TRUNK 按 D-T40-1 登记。
+- REVIEW_CHECKLIST 登记 53 名听感、footstep surface/材质、通用合成音色偏差
+  D-T60-4、muzzle 偏差 D-T60-3。

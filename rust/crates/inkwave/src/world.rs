@@ -754,6 +754,10 @@ impl Plugin for WorldPlugin {
                     // (group 1 is at the `chain()` tuple cap, so it heads
                     // group 2 — still before every consumer below).
                     crate::char::bridge::char_pose_bridge,
+                    // Task 60: production footstep consumer — queued by the
+                    // bridge above, drained into the unchanged SfxGate below
+                    // (the M4 self-draining test no longer owns the queue).
+                    crate::audio::footstep_sfx,
                     // Task 56 batch C: sync the showcase state from the very
                     // same OnlineView the 2D panel consumed in group 1, then
                     // build/gate the placeholder alley set from it.

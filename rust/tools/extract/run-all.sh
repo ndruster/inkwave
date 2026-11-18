@@ -25,3 +25,5 @@ node extract-character.mjs
 node extract-environment.mjs
 # 3D lobby set / showcase layout (Task 56 batch B)
 node extract-lobbyset.mjs
+# kit weapon SFX cue table (Task 60: 53 live self-registered cues)
+node extract-kit-sfx.mjs

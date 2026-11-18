@@ -39,7 +39,9 @@ use std::time::Duration;
 
 pub mod boss_audio;
 pub mod graph;
+// Task 60: kit-weapon SFX metadata, extracted from the live JS registry.
 pub mod music;
+pub mod sfx_kit;
 pub mod sfx_table;
 pub mod synth;
 
@@ -502,10 +504,81 @@ pub(crate) fn sfx_gc(time: Res<Time>, mut commands: Commands, q: Query<(Entity, 
 /// the host has no output.
 pub fn log_audio_ready() {
     println!(
-        "[inkwave] audio: SFX table ready ({} cues / {} groups, lazy-baked; M = mute)",
+        "[inkwave] audio: SFX table ready ({} cues / {} groups / {} kit cues, lazy-baked; M = mute)",
         sfx_table::sfx_names().len(),
-        sfx_table::SFX_GROUPS.len()
+        sfx_table::SFX_GROUPS.len(),
+        sfx_kit::kit_names().count()
     );
+}
+
+/// M5 Task 60: the production footstep consumer. `char/bridge.rs` queues
+/// `FootstepEvent`s from the pose layer; without this system the tests were
+/// the only drainer (M4 deviation). Each touchdown selects the base-table
+/// `step_dry` / `step_ink` / `step_enemy` cue by SURFACE (≡ main.js L543-546),
+/// goes through the unchanged `SfxGate`, lazy-bakes the PCM and spawns a REAL
+/// `AudioPlayer` voice — the same chain `audio_sfx` uses.
+#[allow(clippy::too_many_arguments)]
+pub fn footstep_sfx(
+    mut bridge: ResMut<crate::char::bridge::CharBridge>,
+    mut snd: ResMut<SoundState>,
+    mut sfx: ResMut<SfxAssets>,
+    mut pcm: ResMut<Assets<PcmSound>>,
+    mut commands: Commands,
+    vols: Res<music::AudioVolumes>,
+    time: Res<Time>,
+    pc: Res<PlayerControls>,
+) {
+    let events = bridge.take_footsteps();
+    if events.is_empty() || snd.muted || pc.paused {
+        return;
+    }
+    let now = time.elapsed_secs() as f64;
+    for ev in events {
+        // Reject non-finite touch-down positions (a corrupt bridge frame
+        // must never reach the synthesiser); `pos` will later feed the 3D
+        // panner / 18 m remote cull (D-T60-5).
+        if !ev.pos.is_finite() {
+            continue;
+        }
+        // `FootstepEvent` has no surface field (M4 data model): dry is the
+        // conservative default; wet/enemy variants are D-T60-2.
+        let name = sfx_kit::footstep_cue(0);
+        // Left/right feet alternate a fixed ±3% pitch (a deterministic
+        // stand-in for the JS per-name jitter, D-T60-2).
+        let foot_pitch = if ev.foot == 1 { 0.97 } else { 1.03 };
+        let vol = sfx_kit::footstep_volume(ev.slot == 0, ev.speed);
+        let Some((handle, dur)) = sfx.cue(&mut pcm, name) else {
+            continue;
+        };
+        let Some(PlayDecision::Spawned {
+            speed,
+            volume,
+            steal,
+        }) = snd.gate.play(name, now, None, 0.0, vol, foot_pitch, dur)
+        else {
+            continue;
+        };
+        let q = snd.voices.entry(name).or_default();
+        q.retain(|(_, end)| *end > now);
+        for _ in 0..steal {
+            if let Some((e, _)) = q.pop_front()
+                && let Ok(mut ent) = commands.get_entity(e)
+            {
+                ent.despawn();
+            }
+        }
+        let end = now + dur / speed;
+        let e = commands
+            .spawn((
+                AudioPlayer(handle.clone()),
+                PlaybackSettings::DESPAWN
+                    .with_volume(Volume::Linear((volume * vols.sfx.value_at(now)) as f32))
+                    .with_speed(speed as f32),
+                SfxBorn((end + f64::from(GC_SLACK)) as f32),
+            ))
+            .id();
+        q.push_back((e, end));
+    }
 }
 
 /// Register the PCM source type + resources/systems (called from WorldPlugin;
@@ -879,6 +952,67 @@ mod tests {
     use bevy::audio::AudioPlugin;
     use inkwave_sim::actor::SplatCause;
     use inkwave_sim::collision::CollisionWorld;
+
+    /// TR-60.1: the production footstep consumer drains the bridge queue
+    /// (the M4 tests were the only drainer), bakes a REAL base-table cue,
+    /// spawns a REAL `AudioPlayer` voice and honours the mute guard — not just
+    /// a gate counter.
+    #[test]
+    fn task60_footstep_consumer_drains_bakes_and_spawns() {
+        use crate::char::bridge::{CharBridge, FootstepEvent};
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            bevy::asset::AssetPlugin::default(),
+            AudioPlugin::default(),
+        ))
+        .add_audio_source::<PcmSound>()
+        .init_resource::<CharBridge>()
+        .init_resource::<SoundState>()
+        .init_resource::<SfxAssets>()
+        .init_resource::<music::AudioVolumes>()
+        .init_resource::<PlayerControls>()
+        .add_systems(Update, footstep_sfx);
+        let push = |app: &mut App, speed: f32| {
+            app.world_mut()
+                .resource_mut::<CharBridge>()
+                .footsteps
+                .push_back(FootstepEvent {
+                    slot: 0,
+                    foot: 0,
+                    pos: Vec3::ZERO,
+                    speed,
+                });
+        };
+        push(&mut app, 4.2);
+        app.update();
+        let snd = app.world().resource::<SoundState>();
+        assert_eq!(snd.gate.played, 1);
+        assert_eq!(snd.voices.get("step_dry").map(VecDeque::len), Some(1));
+        assert!(
+            app.world().resource::<CharBridge>().footsteps.is_empty(),
+            "the production system drained the queue"
+        );
+        // `PlaybackSettings::DESPAWN` voices can be reaped instantly on
+        // device-less hosts, so assert the real bake + spawn BOOKKEEPING
+        // (`sfx.cue` + gate decision + voices queue), not entity longevity.
+        assert!(sfx_table::bake("step_dry").is_some_and(|pcm| !pcm.is_empty()));
+        assert_eq!(
+            app.world()
+                .resource::<SoundState>()
+                .voices
+                .get("step_dry")
+                .map(VecDeque::len),
+            Some(1),
+            "a real AudioPlayer spawn was recorded"
+        );
+        // Mute guard: the event is still consumed but no voice is spawned.
+        app.world_mut().resource_mut::<SoundState>().muted = true;
+        push(&mut app, 1.0);
+        app.update();
+        assert_eq!(app.world().resource::<SoundState>().gate.played, 1);
+        assert!(app.world().resource::<CharBridge>().footsteps.is_empty());
+    }
 
     fn assert_pcm_ok(p: &Pcm) {
         assert!(!p.data.is_empty());

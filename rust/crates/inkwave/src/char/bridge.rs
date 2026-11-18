@@ -73,11 +73,10 @@ thread_local! {
 /// One footfall edge emitted by the pose core (≡ character.js L1605-1614
 /// `onEvent('footstep', {foot, pos, speed})` → bus `actor:<name>`).
 ///
-/// DEFERRED (registered): the Task 50 audio bus has no `actor:*` hook yet
-/// (`fx/hooks.rs` module header: "Polled (no bus equivalent): actor:*
-/// (footstep/land/jump/form/dive/…)") — the events are queued here for the
-/// batch that wires the footstep SFX consumer; nothing pops them yet.
-#[allow(dead_code)] // queued for the deferred footstep consumer (see above)
+/// Task 60: the queue is consumed in production by `audio::footstep_sfx`
+/// (registered after this bridge's pose system in `WorldPlugin::build`):
+/// surface cue + volume → the unchanged `SfxGate` → a real `AudioPlayer`.
+/// The M4 self-draining bridge test remains as the cadence anchor.
 #[derive(Debug, Clone, Copy)]
 pub struct FootstepEvent {
     pub slot: usize,
@@ -197,7 +196,7 @@ pub struct CharBridge {
     archive: Option<self::rig::CharArchive>,
     manifest: Option<CharManifest>,
     slots: Vec<SlotRig>,
-    /// Footstep queue (see [`FootstepEvent`] — deferred audio wiring).
+    /// Footstep queue (see [`FootstepEvent`] — consumed by `audio::footstep_sfx`).
     pub footsteps: VecDeque<FootstepEvent>,
     /// Slots pending a rig rebuild after [`CharBridge::set_weapon`].
     pending: Vec<(usize, String)>,
@@ -1428,7 +1427,8 @@ mod tests {
 
     /// Footstep queue: scripted walking must eventually emit touchdown
     /// edges. The test itself drains the queue; the audio consumer hook is
-    /// DEFERRED (D-T54-5③), so there is no production consumer yet.
+    /// Task 60: production consumer is `audio::footstep_sfx`; this bridge
+    /// test anchors the touch-down cadence only (it uses its own app).
     #[test]
     fn footstep_queue_emits_touchdowns() {
         let mut app = bridge_app();
