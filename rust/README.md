@@ -474,3 +474,8 @@ grade 链、四档 pass 派生（low 全关）、GTAO/SMAA/tilt 参数，`enviro
 hurt_color。4 项锚测 + `postprocess-crosscheck` 54 断言 + `environment-crosscheck` 97 checks
 + 九段门禁 PASS（`task65-gates-20261119T202624Z.log`）；D-T65-1..3（tilt-shift 是 CSS / GPU
 pass 仅数据面 / uHurtColor 补缺）登记用户机复核。
+**Task 66（环境终稿）**完成：`environment.json` 扩展提取云烘焙/PMREM/远景 cube/平面反射四档/
+海面 44 波与三组 swell（正则无手抄）；`env_bake.rs` 数据面 + mulberry32 波纹理跨语言
+SHA256 golden（JS 生成/Rust 比对）。6 项锚测 + `environment-crosscheck` 139 checks + 九段
+门禁 PASS（`task66-gates-20261119T205957Z.log`）；D-T66-1/2（GPU 观感用户机复核 / 烘焙
+运行期生成不入库）已登记，独立评审 2 项 P1 返工闭环。

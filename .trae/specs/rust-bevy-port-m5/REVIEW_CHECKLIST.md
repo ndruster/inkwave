@@ -221,3 +221,23 @@ GTAO/SMAA/tilt 参数、pass order）+ `postprocess-crosscheck` 54 断言 + `env
   而非 GPU pass，Rust 只持数据；diorama 观感需浏览器复核。
 - [ ] **逐档观感差异**：low/medium/high/ultra 开关组合数据面单测 + headless 四组合冒烟通过，
   实际视觉差异与 low 全关保底的用户观感需逐档确认。
+
+## Task 66 复核登记（2026-11-20）
+
+无头可测：6 项 Task66 锚测（bake 常量逐值、swell 三组 k/相位/速度/振幅、波纹理 mulberry32
+字节确定、跨语言 SHA256 golden、SHA256 自检、主题 cloud/envK 有限性）+ `environment-crosscheck`
+139 checks（+42 Task66）；门禁结论见 `tasks.md` Task 66 Completion Evidence。独立评审首轮 P1
+（swell 振幅手抄未钉源、SHA256 golden 实为自证）已返工复验。以下为**待用户 GPU 复核**：
+
+- [ ] **云 ray-march 观感（D-T66-1）**：CLOUD_W/H=2048/640、seed 3/cov 0.46、320 步已钉测，
+  云的层次/自阴影/银边/漂移与主题三档（day/sunset/golden）差异需用户 GPU 机确认。
+- [ ] **PMREM 环境反射（D-T66-1）**：size 256、envK 默认 0.66 + 三档 envK 已锚测，
+  实际反射清晰度/强度需用户机复核。
+- [ ] **平面 + 远景反射（D-T66-1）**：cube 512/CubeCamera(2,30000)、四档缩放
+  （low 0/medium 0.28/high 0.4/ultra 0.5）已钉测；低档关闭保底、marina 平面镜像与
+  远景 cube 的观感需用户 GPU 机确认。
+- [ ] **海面 swell/泡沫/焦散（D-T66-1）**：44 波 makeWaveTexture + 三组 swell +
+  `swellAmp mix(0.035,0.16)` 参数已锚测且波纹理有跨语言 SHA256 golden；实际波形、
+  泡沫阈值与 marina 焦散/湿润观感需用户机复核。
+- [ ] **烘焙产物策略（D-T66-2）**：运行期确定性生成、仅描述符/种子入库（不内嵌 ~10 MB
+  云 RT），wasm 尺寸与主题切换时烘焙延迟需实机确认。

@@ -5,6 +5,7 @@
 // reconciles them against rust/assets/environment.json. Any upstream drift
 // or extractor regression fails the gate's XCHK stage.
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -119,4 +120,93 @@ for (const m of mapRows) {
   if (!(day in doc.themes) || !(dusk in doc.themes)) throw new Error(`${id}: theme outside THEMES`);
 }
 
-console.log(`environment-crosscheck: ${checks} checks OK (4 quality rows, 3 themes, 8 map themes, grade/bloom defaults)`);
+// ---- Task 66: cloud / PMREM / reflection / sea BAKE constants -------------
+const bake = doc.bake;
+if (!bake) throw new Error('environment.json missing bake section (Task 66)');
+// Cloud: CLOUD_W/H + defaults + strips, independent numeric regex.
+const cw = matches(envSrc, /const CLOUD_W = (\d+), CLOUD_H = (\d+);/, 'CLOUD_W/H')[0];
+eq(bake.cloud.width, Number(cw[1]), 'bake.cloud.width');
+eq(bake.cloud.height, Number(cw[2]), 'bake.cloud.height');
+const cloudSeed = matches(envSrc, /u\.uSeed\.value = T\.cloudSeed \?\? ([\d.]+);/, 'cloud seed default')[0];
+const cloudCov = matches(envSrc, /u\.uCov\.value = T\.cloudCov \?\? ([\d.]+);/, 'cloud cov default')[0];
+near(bake.cloud.seed, Number(cloudSeed[1]), 'bake.cloud.seed');
+near(bake.cloud.coverage, Number(cloudCov[1]), 'bake.cloud.coverage');
+eq(bake.cloud.scan_bands, Number(matches(envSrc, /const strips = (\d+), h =/, 'cloud strips')[0][1]), 'bake.cloud.scan_bands');
+// PMREM size + envK default.
+eq(bake.pmrem.size, Number(matches(envSrc, /fromScene\([^)]*\{ size: (\d+) \}\)/, 'PMREM size')[0][1]), 'bake.pmrem.size');
+near(bake.pmrem.env_k_default, Number(matches(envSrc, /environmentIntensity = T\.envK \?\? ([\d.]+)/, 'envK default')[0][1]), 'bake.pmrem.env_k_default');
+// Far reflection cube + CubeCamera tiers.
+const cube = matches(envSrc, /WebGLCubeRenderTarget\((\d+),/, 'far cube size')[0];
+const cam = matches(envSrc, /new THREE\.CubeCamera\((\d+),\s*(\d+),/, 'CubeCamera')[0];
+eq(bake.far.cube_size, Number(cube[1]), 'bake.far.cube_size');
+eq(bake.far.cube_near, Number(cam[1]), 'bake.far.cube_near');
+eq(bake.far.cube_far, Number(cam[2]), 'bake.far.cube_far');
+// Reflection tier scales parsed from the actual _renderReflection ternary.
+const reflLine = matches(envSrc, /const scale = !this\.reflections \|\| q === 'low' \? 0 :[^\n]+/, 'reflection scale')[0][0];
+for (const [tier, re] of [
+  ['low', /q === 'low' \? (\d+)/],
+  ['medium', /q === 'medium' \? ([\d.]+)/],
+  ['ultra', /q === 'ultra' \? ([\d.]+)/],
+  ['high', /: ([\d.]+)\) \*/],
+]) {
+  near(bake.reflection.tier_scale[tier], Number(reflLine.match(re)[1]), `reflection tier ${tier}`);
+}
+// Sea wave texture + makeWaveTexture constants.
+const waveDef = matches(envSrc, /function makeWaveTexture\(size = (\d+), seed = (\d+)\)/, 'wave texture def')[0];
+eq(bake.sea.wave_texture_size, Number(waveDef[1]), 'bake.sea.wave_texture_size');
+eq(bake.sea.wave_seed, Number(waveDef[2]), 'bake.sea.wave_seed');
+eq(bake.sea.wave_count, Number(matches(envSrc, /for \(let i = 0; i < (\d+); i\+\+\) \{\s*const f = 2 \+/, 'wave count')[0][1]), 'bake.sea.wave_count');
+near(bake.sea.wind, Number(matches(envSrc, /const wind = ([\d.]+);/, 'wave wind')[0][1]), 'bake.sea.wind');
+near(bake.sea.freq_rnd_pow, Number(matches(envSrc, /Math\.pow\(rnd\(\), ([\d.]+)\) \* (\d+)/, 'wave freq')[0][1]), 'bake.sea.freq_rnd_pow');
+eq(bake.sea.freq_max, Number(matches(envSrc, /Math\.pow\(rnd\(\), [\d.]+\) \* (\d+)/, 'wave freq')[0][1]), 'bake.sea.freq_max');
+near(bake.sea.amp_pow, Number(matches(envSrc, /1 \/ Math\.pow\(kl, ([\d.]+)\)/, 'wave amp')[0][1]), 'bake.sea.amp_pow');
+// Swell: three components pinned by their exact GLSL literals, INCLUDING the
+// per-component amplitude (h += A * sin(ph)); independent 5-field regex.
+const swellLines = matches(envSrc, /k\s*=\s*vec2\(([-\d.]+),\s*([-\d.]+)\);\s*ph\s*=\s*dot\(p,\s*k\)\s*\+\s*t\s*\*\s*([\d.]+)(?:\s*\+\s*([\d.]+))?;\s*h\s*\+=\s*([\d.]+)\s*\*\s*sin\(ph\)/g, 'swell components');
+eq(swellLines.length, 3, 'swell component count');
+for (let i = 0; i < 3; i++) {
+  const [, kx, ky, speed, phase, ampI] = swellLines[i];
+  const c = bake.swell.components[i];
+  near(c.k[0], Number(kx), `swell[${i}].k.x`);
+  near(c.k[1], Number(ky), `swell[${i}].k.y`);
+  near(c.speed, Number(speed), `swell[${i}].speed`);
+  near(c.phase, phase ? Number(phase) : 0, `swell[${i}].phase`);
+  near(c.amp, Number(ampI), `swell[${i}].amp`);
+}
+const amp = matches(envSrc, /mix\(([\d.]+),\s*([\d.]+),\s*smoothstep\(([\d.]+),\s*([\d.]+),\s*dDeck\)\)/, 'swellAmp')[0];
+near(bake.swell.amp_min, Number(amp[1]), 'swell.amp_min');
+near(bake.swell.amp_max, Number(amp[2]), 'swell.amp_max');
+near(bake.swell.deck_min, Number(amp[3]), 'swell.deck_min');
+near(bake.swell.deck_max, Number(amp[4]), 'swell.deck_max');
+// Wave SHA256 golden: independent reimplementation of the upstream
+// makeWaveTexture wave constructor + canonical LE binary serialization.
+function mulberry32(a) {
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+{
+  const s = bake.sea;
+  const rnd = mulberry32(s.wave_seed);
+  const buf = Buffer.alloc(s.wave_count * 24);
+  let o = 0;
+  for (let i = 0; i < s.wave_count; i++) {
+    const f = 2 + Math.pow(rnd(), s.freq_rnd_pow) * s.freq_max;
+    const ang = s.wind + (rnd() - 0.5) * 2.4;
+    let kx = Math.round(Math.cos(ang) * f), ky = Math.round(Math.sin(ang) * f);
+    if (kx === 0 && ky === 0) kx = 2;
+    const kl = Math.hypot(kx, ky);
+    const amp = 1 / Math.pow(kl, s.amp_pow);
+    const phase = rnd() * Math.PI * 2;
+    buf.writeInt32LE(kx, o); o += 4;
+    buf.writeInt32LE(ky, o); o += 4;
+    buf.writeBigInt64LE(BigInt(Math.round(amp * 1e9)), o); o += 8;
+    buf.writeBigInt64LE(BigInt(Math.round(phase * 1e9)), o); o += 8;
+  }
+  eq(bake.wave_sha256, createHash('sha256').update(buf).digest('hex'), 'bake.wave_sha256');
+}
+
+console.log(`environment-crosscheck: ${checks} checks OK (4 quality rows, 3 themes, 8 map themes, grade/bloom defaults, Task 66 bake constants)`);

@@ -303,7 +303,7 @@
     未在沙箱伪验收 GPU 观感。
 
 ## Task 66: 环境终稿（云/PMREM/远景反射/海面）
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: medium
 - **Depends On**: Task 65（pass 顺序）
 - **Description**: 云烘焙、PMREM 环境反射、远景反射、海面 swell·marina·泡沫
@@ -313,6 +313,25 @@
   - `rule` TR-66.1: 云/PMREM 烘焙确定性 + 参数提取锚测 + headless 四组合冒烟。
   - `rule` TR-66.2: REVIEW_CHECKLIST 登记（黄昏/金色/白天三主题观感，用户机复核）。
 - **Notes**: 烘焙产物是否入库或运行期生成是实施设计决策点（wasm 尺寸约束）。
+- **Completion Evidence** (2026-11-20):
+  - 数据面：`extract-environment.mjs` 扩展提取云烘焙（2048×640/seed 3/cov 0.46/
+    10 strips）、PMREM（size 256/envK 0.66）、远景 cube（512/CubeCamera 2-30000）、
+    平面反射四档（0/0.28/0.4/0.5）、海面 makeWaveTexture（256/11/44 波/wind 0.55）与
+    GLSL_SWELL 三组 k/相位/速度/振幅（全部正则解析无手抄）进 `assets/environment.json`。
+    `environment-crosscheck.mjs` 独立重解析 139 checks（+42 Task66）。
+  - `env_bake.rs`（新模块）消费提取常量：`bake_wave_descriptors()` 用 `char/math.rs::Rng`
+    （mulberry32）忠实复刻上游 makeWaveTexture 前 44 波；`bake.wave_sha256` 是 JS 参考实现
+    + node crypto 生成的**跨语言 golden**，Rust 用 std-only SHA256（自检 abc 向量）按量化
+    （1e-9）字节比对，golden 非自证。
+  - 锚测：6 项 Task66 专项（bake 常量逐值、swell 三组全字段含振幅、波纹理字节确定、
+    跨语言 SHA256 golden、SHA256 自检、主题 cloud/envK 有限性）+ environment-crosscheck
+    139 checks + headless 四组合 + wasm32 check。
+  - 九段门禁 `rust/tools/verify/logs/task66-gates-20261119T205957Z.log`：
+    `FMT/CLIPPY/TEST/WASM/TREE/DETERM/XCHK/TRUNK/RELEASE_BUILD/HEADLESS/
+    HEADLESS_BOSS_EXIT=0`，`DETERM=BYTE_IDENTICAL`，`JS_TREE_CLEAN`、`SIM_TREE_CLEAN`，
+    `GATE_VERDICT=PASS`（TRUNK 真实通过）。独立评审首轮 P1（swell 振幅手抄未钉源、
+    SHA256 golden 实为自证）已返工并复验，D-T66-1/2 登记于 REVIEW_CHECKLIST，未在沙箱
+    伪验收 GPU 云/PMREM/反射/海面观感。
 
 ## Task 67: 3D alley 材质终稿
 - **Status**: `pending`

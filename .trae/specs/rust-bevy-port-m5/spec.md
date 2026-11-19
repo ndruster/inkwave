@@ -524,3 +524,39 @@ GTAO/grade/SMAA/tilt-shift、云/PMREM/海面、alley 材质逐档落地且逐�
   省 pass）；当前仅数据面统一，渲染顺序以数据层锚测 + 用户机复核。
 - SMAA：无内建且需 area/search 纹理，门控数据面 + 用户机复核。
 - tilt-shift：维持 DOM/CSS 覆盖层，不做 GPU pass。
+
+---
+
+## Task66 实施设计（2026-11-20，开工实读定稿）
+
+### §0 锚点与保守范围
+- 上游 `src/world/environment.js`：云烘焙 L203-329（`CLOUD_W=2048/CLOUD_H=640`、
+  seed 3/cov 0.46、320 步 dt=16）、PMREM L1697/1743-1750（`fromScene` size 256、
+  `envK` 默认 0.66）、远景反射 L1869-1904（cube 512、CubeCamera near 2/far 30000）、
+  平面反射 L1791-1864（low 关 / medium 0.28 / high 0.4 / ultra 0.5）、海面 L1262-1311/
+  472-483/732-736（`makeWaveTexture(256,11)`、44 波、`2+rnd^1.5*26` 频率、`k^-1.3`
+  振幅、三组 swell k=(0.110,0.047)/(-0.052,0.097)/(0.173,-0.141)、速度 0.95/1.13/1.61、
+  幅度 0.45/0.35/0.20、4 层采样 0.041/0.097/0.0083/0.29）。
+- 主题三档 `cloud/cloudCov/cloudSeed/envK/waveStrength/seaAmbientK/sunSpec/marina/foam`
+  已在 `assets/environment.json`（Task 55），但烘焙/着色器常量全缺。
+- 扩展 `extract-environment.mjs` 提取常量进同一 JSON（保持 schema/钉源，不新建 JSON 破坏
+  crosscheck）；`environment-crosscheck.mjs` 独立重解析新增字段。
+
+### §1 数据面与偏差
+- `env_bake.rs`（新模块，非 environment.rs 内嵌）提供 `CloudBake/PmremSpec/
+  ReflectionSpec/SeaSpec/SwellSpec` 数据面，消费 `Theme::get/opt_num/array` + 新 JSON 常量；
+  海面波纹理用 `char/math.rs::Rng`（mulberry32）做**运行期确定性生成 + 跨语言 SHA256
+  golden 锚测**（JS `extract-environment.mjs` 用 makeWaveTexture 参考实现生成 golden 钉入
+  `bake.wave_sha256`，`environment-crosscheck.mjs` 独立重算，Rust `env_bake.rs` 用 std-only
+  SHA256 比对；amp/phase 量化到 1e-9 以容忍 libm/v8 末位差），不入库（云 RT 2048×640
+  HalfFloat ≈10 MB，避免撑大 wasm）。
+- D-T66-1：云 ray-march/PMREM cube/平面+远景反射/泡沫焦散的 GPU 观感不可沙箱验，仅数据面
+  + 用户机复核；D-T66-2：烘焙产物运行期确定性生成不入库，仅描述符/种子入库。
+
+### §2 测试与门禁
+- TR-66.1：新增字段逐值锚测（crosscheck 139 checks，含 swell 三组振幅）、波纹理 mulberry32
+  双跑字节确定 + 跨语言 SHA256 golden（`bake.wave_sha256`，JS 生成/Rust 比对）、主题三档参数
+  有限性、headless 四组合冒烟。
+- TR-66.2：REVIEW_CHECKLIST 登记（黄昏/金色/白天三主题云/海面/反射观感、low 降级）。
+- 门禁 `gate-task66.sh`（模板 gate-task65.sh，DETERM 用 extract-environment 双跑，
+  XCHK 用扩展后的 environment-crosscheck）。

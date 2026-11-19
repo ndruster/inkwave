@@ -11,6 +11,7 @@
 //   src/config.js             DEFAULT_SETTINGS / QUALITY / TIMES / MAPS /
 //                             mapTheme()
 import { upstreamCommit } from './upstream-commit.mjs';
+import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -120,6 +121,142 @@ for (const [id, row] of Object.entries(mapThemes)) {
   }
 }
 
+// ---- Task 66: cloud / PMREM / reflection / sea BAKE constants -------------
+// Scalars are located by source-fragment assertions then narrow regexes, so
+// upstream drift fails the pipeline instead of silently changing the artifact.
+function lineOf(src, needle, where) {
+  const hit = src.split('\n').find((l) => l.includes(needle));
+  if (!hit) throw new Error(`${where}: no line with ${needle}`);
+  return hit;
+}
+function numAfter(s, needle) {
+  const i = s.indexOf(needle);
+  if (i < 0) throw new Error(`no ${needle} in ${s}`);
+  const m = s.slice(i + needle.length).match(/-?\d+(?:\.\d+)?/);
+  if (!m) throw new Error(`no number after ${needle} in ${s}`);
+  return Number(m[0]);
+}
+
+// Cloud bake: CLOUD_W/H, default seed/cov, GLSL step constants.
+assertContains(envSrc, 'const CLOUD_W = 2048, CLOUD_H = 640;', 'environment.js cloud size');
+const cloudSize = lineOf(envSrc, 'const CLOUD_W =', 'CLOUD_W');
+const cloudSeedLine = lineOf(envSrc, 'uSeed: { value: 3.0 }', 'cloud uSeed');
+const cloud = {
+  width: numAfter(cloudSize, 'CLOUD_W = '),
+  height: numAfter(cloudSize, 'CLOUD_H = '),
+  seed: numAfter(cloudSeedLine, 'uSeed: { value: '),
+  coverage: numAfter(lineOf(envSrc, 'uCov: { value: 0.46 }', 'cloud uCov'), 'uCov: { value: '),
+  scan_bands: numAfter(lineOf(envSrc, 'const strips = 10', 'cloud strips'), 'strips = '),
+};
+for (const needle of ['HB = 1150', 'CELL = 2700', 'RMAX = 55000', 'TOPMAX = 3300', 'dt = 16']) {
+  assertContains(envSrc, needle, 'environment.js cloud GLSL constants');
+}
+
+// PMREM + env intensity default.
+assertContains(envSrc, 'new THREE.PMREMGenerator(', 'environment.js PMREM');
+const envKLine = lineOf(envSrc, 'scene.environmentIntensity = T.envK ?? 0.66', 'envK default');
+const pmrem = {
+  size: numAfter(lineOf(envSrc, '{ size: 256 }', 'PMREM size'), 'size: '),
+  env_k_default: numAfter(envKLine, 'T.envK ?? '),
+};
+
+// Far reflection (cube 512, CubeCamera near/far) + planar reflection tiers.
+const farLine = lineOf(envSrc, 'new THREE.WebGLCubeRenderTarget(512', 'far cube');
+const cubeCamLine = lineOf(envSrc, 'new THREE.CubeCamera(2, 30000', 'CubeCamera');
+const far = {
+  cube_size: numAfter(farLine, 'WebGLCubeRenderTarget('),
+  cube_near: numAfter(cubeCamLine, 'CubeCamera('),
+  cube_far: numAfter(cubeCamLine, 'CubeCamera(2, '),
+};
+const reflLine = lineOf(envSrc, "const scale = !this.reflections || q === 'low' ? 0 :", 'planar reflection scale');
+for (const needle of ["q === 'medium' ? 0.28", "q === 'ultra' ? 0.5", ': 0.4)']) {
+  assertContains(reflLine, needle, 'environment.js reflection tier');
+}
+const reflection = {
+  tier_scale: { low: 0, medium: 0.28, high: 0.4, ultra: 0.5 },
+};
+
+// Sea wave texture (makeWaveTexture size/seed/wave count/wind/freq/amp).
+const waveDef = lineOf(envSrc, 'function makeWaveTexture(size = 256, seed = 11)', 'makeWaveTexture');
+const waveCountLine = lineOf(envSrc, 'for (let i = 0; i < 44; i++)', 'wave count');
+const windLine = lineOf(envSrc, 'const wind = 0.55;', 'wave wind');
+const freqLine = lineOf(envSrc, 'Math.pow(rnd(), 1.5) * 26', 'wave freq');
+const ampLine = lineOf(envSrc, '1 / Math.pow(kl, 1.3)', 'wave amp');
+const sea = {
+  wave_texture_size: numAfter(waveDef, 'size = '),
+  wave_seed: numAfter(waveDef, 'seed = '),
+  wave_count: numAfter(waveCountLine, 'i < '),
+  wind: numAfter(windLine, 'wind = '),
+  freq_rnd_pow: numAfter(freqLine, 'rnd(), '),
+  freq_max: numAfter(freqLine, '* '),
+  amp_pow: numAfter(ampLine, 'kl, '),
+};
+
+// Swell: three (k, phase, speed, amplitude) components parsed from the actual
+// GLSL lines (environment.js L477-479) — NO hand-copied constants.
+const swellLineRe = /k\s*=\s*vec2\(([-\d.]+),\s*([-\d.]+)\);\s*ph\s*=\s*dot\(p,\s*k\)\s*\+\s*t\s*\*\s*([\d.]+)(?:\s*\+\s*([\d.]+))?;\s*h\s*\+=\s*([\d.]+)\s*\*\s*sin\(ph\)/g;
+const swellMatches = [...envSrc.matchAll(swellLineRe)];
+if (swellMatches.length !== 3) {
+  throw new Error(`postprocess extract: expected 3 swell components, got ${swellMatches.length}`);
+}
+const swell = {
+  components: swellMatches.map((m) => ({
+    k: [Number(m[1]), Number(m[2])],
+    speed: Number(m[3]),
+    phase: m[4] ? Number(m[4]) : 0.0,
+    amp: Number(m[5]),
+  })),
+  amp_min: numAfter(lineOf(envSrc, 'mix(0.035, 0.16, smoothstep(3.0, 70.0', 'swellAmp'), 'mix('),
+  amp_max: numAfter(lineOf(envSrc, 'mix(0.035, 0.16, smoothstep(3.0, 70.0', 'swellAmp'), 'mix(0.035, '),
+  deck_min: numAfter(lineOf(envSrc, 'smoothstep(3.0, 70.0, dDeck)', 'swellAmp step'), 'smoothstep('),
+  deck_max: numAfter(lineOf(envSrc, 'smoothstep(3.0, 70.0, dDeck)', 'swellAmp step'), 'smoothstep(3.0, '),
+};
+
+// Task 66 TR-66.1: bit-exact reference reimplementation of the upstream
+// `makeWaveTexture` wave constructor (environment.js L1262-1273), used ONLY
+// to produce a SHA256 golden that the Rust bake must match. This is an
+// independent JS reference path — not self-verification of the Rust code.
+function mulberry32(a) {
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function referenceWaveDescriptors(spec) {
+  const rnd = mulberry32(spec.wave_seed);
+  const waves = [];
+  for (let i = 0; i < spec.wave_count; i++) {
+    const f = 2 + Math.pow(rnd(), spec.freq_rnd_pow) * spec.freq_max;
+    const ang = spec.wind + (rnd() - 0.5) * 2.4;
+    let kx = Math.round(Math.cos(ang) * f), ky = Math.round(Math.sin(ang) * f);
+    if (kx === 0 && ky === 0) kx = 2;
+    const kl = Math.hypot(kx, ky);
+    const amp = 1 / Math.pow(kl, spec.amp_pow);
+    const phase = rnd() * Math.PI * 2;
+    waves.push([kx, ky, amp, phase]);
+  }
+  return waves;
+}
+// Canonical binary form shared with the Rust bake test: per wave,
+// kx(i32 LE) + ky(i32 LE) + round(amp·1e9)(i64 LE) + round(phase·1e9)(i64 LE)
+// = 24 bytes. Amp/phase are quantized to 1e-9 so the golden pins the FORMULA
+// (RNG/exponents/constants) without depending on libm's last-bit pow rounding.
+const WAVE_Q = 1e9;
+const _waves = referenceWaveDescriptors(sea);
+const _buf = Buffer.alloc(_waves.length * 24);
+{
+  let o = 0;
+  for (const [kx, ky, amp, phase] of _waves) {
+    _buf.writeInt32LE(kx, o); o += 4;
+    _buf.writeInt32LE(ky, o); o += 4;
+    _buf.writeBigInt64LE(BigInt(Math.round(amp * WAVE_Q)), o); o += 8;
+    _buf.writeBigInt64LE(BigInt(Math.round(phase * WAVE_Q)), o); o += 8;
+  }
+}
+const waveGolden = createHash('sha256').update(_buf).digest('hex');
+
 const doc = {
   schema: 1,
   source: {
@@ -137,6 +274,15 @@ const doc = {
   quality: QUALITY,
   times: TIMES,
   mapThemes,
+  bake: {
+    cloud,
+    pmrem,
+    far,
+    reflection,
+    sea,
+    swell,
+    wave_sha256: waveGolden,
+  },
 };
 const out = stableStringify(doc) + '\n';
 if (out.includes('NaN') || out.includes('Infinity')) throw new Error('environment.json contains NaN/Infinity');

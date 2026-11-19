@@ -97,6 +97,9 @@ Task 65（后处理链）完成：`postprocess.json` 提取 grade 12 uniform（�
 四档开关/真实 addPass 顺序；`fx/post_process.rs` 四档 pass 派生（low 全关）+ 12-uniform grade
 链 + GTAO/SMAA/tilt 参数，`environment.rs::Grade` 补 hurt_color。4 项锚测 + `postprocess-crosscheck`
 54 断言 + `environment-crosscheck` 97 checks + 九段门禁 PASS；D-T65-1..3 登记用户机复核。
+Task 66（环境终稿）完成：`environment.json` 扩展提取云/PMREM/远景 cube/反射四档/海面 44 波/
+三组 swell；`env_bake.rs` mulberry32 波纹理跨语言 SHA256 golden（JS 生成/Rust 比对）。
+6 项锚测 + `environment-crosscheck` 139 checks + 九段门禁 PASS；D-T66-1/2 登记用户机复核。
 
 ## 质量档位
 
