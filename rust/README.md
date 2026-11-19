@@ -462,3 +462,9 @@ kFront 回退、动态 rig 锚点缺失）登记为 GPU/浏览器复核项。
 做距离衰减+pan+湿声 voice 播放。8 项 Task63 锚测 + `audio-bus-crosscheck` 61 断言 +
 九段门禁 PASS（`task63-gates-20261119T192251Z.log`）；D-T63-1..4（HRTF→等功率 pan、
 完整 FIR→紧凑尾音、WebAudio 压限→静态软限幅、基础 cue 默认 reverb）登记听感复核。
+**Task 64（fx composite pass 与 DOM 叠层）**完成：`screenfx.json` 提取 composite uniform/
+20 项 pass 阈值/decay/伤害数字池/小地图点标参数；`fx/composite.rs` 数据面含 pass gate
+逐字段复刻、伤害数字 combo 池、minimap 相对年龄 FX 状态机，生产系统接 HitSend/
+SpecialSlam/Respawn 真实事件，low 档强制叠层全关。7 项锚测 + `screenfx-crosscheck`
+67 断言 + 九段门禁 PASS（`task64-gates-20261119T195857Z.log`）；D-T64-1..4（heal 上游无 /
+GPU+DOM 仅数据面 / 名牌通道统一 / superjump FX 无事件生产者）登记用户机复核。

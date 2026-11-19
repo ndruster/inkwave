@@ -180,3 +180,26 @@ wet 取样点/双耳尾音拓扑）已返工并复验。以下为**待用户听�
   基础 cue 混响量的场景适配需听感复核。
 - [ ] **mute/low tier 保底**：静音开关与 low 档下空间湿声总线的旁通在 headless
   有锚测，实际外放设备的静音瞬时性（无残响泄漏）需用户机确认。
+
+## Task 64 复核登记（2026-11-20）
+
+无头可测：7 项 Task64 锚测（composite uniform 初值/逐项阈值、decay+池参数、
+pass gate low 档强制关、伤害数字 combo/上限/退场、minimap 落地年龄+类别过期、
+生产系统真实事件生产者与低档全关）+ `screenfx-crosscheck.mjs` 67 断言；门禁结论见
+`tasks.md` Task 64 Completion Evidence。独立评审首轮 P1（落地用绝对年龄、池无生产者）
+已返工复验。以下为**待用户 GPU/浏览器复核**：
+
+- [ ] **composite pass 观感与 bloom 顺序（D-T64-2）**：shader 本体与真实 pass 未接，
+  Rust 只算 pass_enabled 判据与 uniform；叠层画面、grade→screenfx→output 顺序、
+  与 bloom/后处理的交互需用户 GPU 机确认，沙箱不伪验收。
+- [ ] **伤害数字 DOM 可读性**：池上限 6/combo 0.45 s/存活 1.05 s 的数据面已锚测，
+  真实 DOM 节点（字号/CRIT 动画/重叠避让/世界坐标跟随）需浏览器复核。
+- [ ] **小地图点标与死亡标记**：8 点标/12 死亡标记与 transient FX 生命周期已钉测，
+  canvas 绘制与 DOM 节点的动画观感需浏览器复核。
+- [ ] **名牌 DOM 叠层通道（D-T64-3）**：Task 62 名牌数据面已并入统一 overlay
+  （visible_nameplates 计数），真实 DOM 节点与 kFront/安全区接线待 wasm DOM 桥。
+- [ ] **heal 叠层（D-T64-1）**：上游无对应屏幕回血效果，Rust 未新增伪效果；如需
+  回血反馈应作为新需求设计，不在本任务复刻范围。
+- [ ] **jump/land/boom FX 生产者（D-T64-4）**：superjump 飞行态与 `bomb:explode`
+  无 MatchEvent 承载，`land_jump()` 未按 actor 过滤（JS 按 `f.actor`）；这些 FX
+  的生命周期状态机仅单测覆盖，实机点标动画需浏览器复核。

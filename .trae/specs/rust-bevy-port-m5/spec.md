@@ -439,3 +439,38 @@ GTAO/grade/SMAA/tilt-shift、云/PMREM/海面、alley 材质逐档落地且逐�
   IR 双跑 hash、湿/干与 sendScale/distanceCut 曲线、3D pan 与 inverse gain、
   mute/low tier 回归；XCHK 跑 `task63` 专项（带实际测试数守卫）。
 - TR-63.2：REVIEW_CHECKLIST 登记空间感/混响尾音/压限响度为用户机听感复核。
+
+---
+
+## Task64 实施设计（2026-11-20，开工实读定稿）
+
+### §0 锚点与保守范围
+- JS：`fx/screenfx.js` L544-558 composite uniform 声明、L569-576 效果状态、
+  L870-879 `_decayAll`（exp(-dt·6)）、L953-963 心跳/hurt（lowK=(0.5-hp)/0.38、
+  bpm=80+70·lowK）、L595-603 damage 累积窗 0.06 s；`ui/hud-boss.js` L402-440
+  伤害数字池（上限 6、combo 窗 0.45 s、存活 1.05 s、退场 0.45 s、CRIT 0.9 s）；
+  `ui/hud.js` L250-255/L1745-1766 小地图 8 点标 + 12 死亡标记；`game/minimap.js`
+  L19-24 FX 生命（slam 0.9 / boom 0.7 / jump 3 / land 0.35 / spawn 0.8）。
+- 新增 `extract-screenfx.mjs` + `assets/screenfx.json` 钉源（commit 指向
+  `src/fx/screenfx.js` / `src/ui/hud-boss.js` / `src/ui/hud.js` / `src/game/minimap.js`）；
+  `screenfx-crosscheck.mjs` 独立行式重解析。
+- **实读偏差**：上游 screenfx.js / fx.js 无 heal 屏幕叠层（回血只在 game 逻辑），
+  任务描述中的「治疗叠层」按 D-T64-1 登记为上游无对应物、不新增伪效果；沙箱无 GPU，
+  composite shader pass 本体与真实 DOM 节点渲染只做数据面 + 用户机复核（D-T64-2）。
+
+### §1 数据面与偏差
+- `fx/composite.rs`（新模块）消费 `screenfx.json`：composite uniform 初值表、
+  `pass_enabled` 判据阈值、decay 常数、damage-number 池参数、minimap 点标/FX 参数、
+  pass 顺序（grade 后 / output 前，CONTRACTS L218-220）。全部只读表值，禁手抄。
+- D-T64-1：heal 叠层上游无对应；D-T64-2：GPU pass + DOM 节点仅数据面，观感用户机复核；
+  D-T64-3：Task 62 名牌 DOM 通道由本任务的数据面统一载体兑现，真实节点仍待 wasm DOM 桥；
+  D-T64-4：瞬态 FX 生产者接入 `special:slam`/`respawn`/`HitSend`（伤害数字），
+  `jump`/`land` 数据面原语无 MatchEvent 承载 superjump 飞行态，落地年龄状态机以单测覆盖。
+
+### §2 测试与门禁
+- TR-64.1：`screenfx.json` 参数锚测（每值对 JS，crosscheck 独立重解析）、composite
+  uniform 初值/阈值确定性、damage-number 池状态机（combo/上限/退场/CRIT）、minimap
+  点标/FX 生命周期、`low` 档全关（pass_enabled=false + 叠层队列空）、headless 冒烟。
+- TR-64.2：REVIEW_CHECKLIST 登记（叠层观感、与 bloom 顺序、伤害数字可读性、小地图点标）。
+- 门禁 `gate-task64.sh`（模板 gate-task63.sh，DETERM 用 screenfx 双跑，
+  XCHK 跑 `task64` 专项 + screenfx crosscheck + 既有 crosschecks）。

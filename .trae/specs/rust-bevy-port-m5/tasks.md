@@ -239,7 +239,7 @@
     未在沙箱伪验收 HRTF/完整 FIR/WebAudio envelope。
 
 ## Task 64: fx composite pass 与 DOM 叠层
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: medium
 - **Depends On**: M4 Task 51/49
 - **Description**: screenfx composite pass（vignette/受伤/治疗/复活叠层，fx.js/screenfx.js）、
@@ -250,6 +250,25 @@
     headless 不 panic。
   - `rule` TR-64.2: REVIEW_CHECKLIST 登记（叠层观感/与 bloom 交互）。
 - **Notes**: wgpu 渲染管线新增 pass，实施设计需给出与 Task 65 后处理链的顺序关系。
+- **Completion Evidence** (2026-11-20):
+  - 数据面：`extract-screenfx.mjs` 从只读 `screenfx.js`/`hud-boss.js`/`hud.js`/
+    `minimap.js` 提取 composite uniform 初值、pass_enabled 逐项阈值（20 项）、
+    decay/心跳常数、伤害数字池（上限 6/combo 0.45/存活 1.05/CRIT 900 ms）与小地图
+    点标（8 点/12 死亡标记/FX 生命），钉源 `assets/screenfx.json`（commit a48f1546）。
+  - `fx/composite.rs`（新模块）消费提取表：`PassActivity` 忠实复刻 JS `any` 表达式
+    （逐字段阈值 + lens_on）；`DamageNumberPool` 实现 combo 合并/上限/退场/CRIT scale；
+    `MinimapFxLane` 按 JS 相对年龄语义（t+=dt、landing `life=min(life,t+0.35)`）；
+    `CompositeOverlay` Resource 统一名牌/伤害数字/小地图 FX，生产系统接 MatchEvent
+    真实生产者（HitSend→伤害数字、SpecialSlam/Respawn→小地图 FX）。
+  - 锚测：7 项 Task64 专项（composite spec/阈值、decay+池参数、pass gate low 档、
+    伤害数字池、minimap 落地年龄+类别过期、生产系统事件生产者与低档全关）+
+    `screenfx-crosscheck.mjs` 67 断言独立重解析全绿。
+  - 九段门禁 `rust/tools/verify/logs/task64-gates-20261119T195857Z.log`：
+    `FMT/CLIPPY/TEST/WASM/TREE/DETERM/XCHK/TRUNK/RELEASE_BUILD/HEADLESS/
+    HEADLESS_BOSS_EXIT=0`，`DETERM=BYTE_IDENTICAL`，`JS_TREE_CLEAN`、`SIM_TREE_CLEAN`，
+    `GATE_VERDICT=PASS`（TRUNK 真实通过）；workspace 427+601 测试通过。
+    独立评审首轮 P1（minimap 落地用绝对年龄、池无生产者）已返工并复验；D-T64-1..4
+    登记于 M5 REVIEW_CHECKLIST，未在沙箱伪验收 GPU/DOM 观感。
 
 ## Task 65: 后处理链（GTAO/grade/SMAA/tilt-shift）
 - **Status**: `pending`

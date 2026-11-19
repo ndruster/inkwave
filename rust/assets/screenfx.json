@@ -1,0 +1,107 @@
+{
+  "composite": {
+    "material_name": "InkwaveScreenFX",
+    "pass_order": [
+      "grade",
+      "screenfx",
+      "output"
+    ],
+    "pass_terms": {
+      "aura": 0.002,
+      "blast": 0.002,
+      "chargePulse": 0.002,
+      "chroma": 0.004,
+      "desat": 0.002,
+      "edgeInk": 0.002,
+      "flash": 0.002,
+      "flood": 0.001,
+      "focus": 0.002,
+      "heart": 0.002,
+      "hurt": 0.002,
+      "kill": 0.002,
+      "punch": 0.0004,
+      "sat": 0.002,
+      "satPop": 0.002,
+      "shimmer": 0.002,
+      "speed": 0.002,
+      "stretch": 0.0005,
+      "swim": 0.002,
+      "urg": 0.002
+    },
+    "pass_thresholds": [
+      0.0004,
+      0.0005,
+      0.001,
+      0.002,
+      0.004
+    ],
+    "taps": 8,
+    "uniform_defaults": {
+      "aspect": 1.7777777777777777,
+      "charge": [
+        1,
+        1,
+        1,
+        0
+      ],
+      "heart": [
+        0.6,
+        0.02,
+        0.06,
+        0
+      ],
+      "hurt": 0,
+      "kill": [
+        1,
+        1,
+        1,
+        0
+      ],
+      "res": [
+        1600,
+        900
+      ],
+      "sat": 1
+    }
+  },
+  "damage_number": {
+    "combo_window": 0.45,
+    "crit_ms": 900,
+    "life": 1.05,
+    "out_after": 0.45,
+    "pool_cap": 6,
+    "weak_scale_bonus": 0.2
+  },
+  "decay": {
+    "bpm_base": 80,
+    "bpm_scale": 70,
+    "damage_window": 0.06,
+    "heart_damp": 6,
+    "hurt_damp": 4,
+    "low_k_denom": 0.38,
+    "rate": 6
+  },
+  "minimap": {
+    "death_mark_count": 12,
+    "dot_count": 8,
+    "fx_cap": 40,
+    "fx_life": {
+      "boom": 0.7,
+      "jump": 3,
+      "land": 0.35,
+      "slam": 0.9,
+      "spawn": 0.8
+    }
+  },
+  "schema": 1,
+  "source": {
+    "commit": "a48f1546b220f60d5e257017120da32cc8ee8dd5",
+    "files": [
+      "src/fx/screenfx.js",
+      "src/ui/hud-boss.js",
+      "src/ui/hud.js",
+      "src/game/minimap.js"
+    ]
+  }
+}
+

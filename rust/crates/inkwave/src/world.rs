@@ -680,6 +680,9 @@ impl Plugin for WorldPlugin {
         .init_resource::<crate::fx::zone_marks::ZoneMarksState>()
         .init_resource::<crate::fx::swim_wake::SwimWakeState>()
         .init_resource::<crate::fx::screen_fx::ScreenFxState>()
+        // Task 64: composite overlay data plane (pass gate / damage numbers /
+        // minimap FX); low tier forces it off. Headless/DOM-node free.
+        .init_resource::<crate::fx::composite::CompositeOverlay>()
         // Task 52 batch E2: the ripple pool (paint.js L551-587) fed by the
         // splat stream + capture floods, and the flood-edge tracker.
         .init_resource::<crate::ink_ripple::RippleTable>()
@@ -737,6 +740,9 @@ impl Plugin for WorldPlugin {
                     crate::fx::zone_marks::zone_marks_update,
                     crate::fx::swim_wake::swim_wake_update,
                     crate::fx::screen_fx::screen_fx_update,
+                    // Task 64: composite pass gate + overlay data, after the
+                    // screen-fx state is updated this frame.
+                    crate::fx::composite::composite_overlay_update,
                     crate::audio::music::music_scenes,
                     crate::audio::music::music_update,
                     crate::ui::ui_state_machine,

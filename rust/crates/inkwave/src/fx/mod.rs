@@ -43,6 +43,9 @@
 #![allow(dead_code)]
 
 pub mod api;
+// M5 Task 64: screen-FX composite overlay data plane (pass gate / damage
+// numbers / minimap FX), consumed by the DOM overlay bridge.
+pub mod composite;
 pub mod hooks;
 pub mod particles;
 pub mod render;

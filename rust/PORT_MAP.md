@@ -89,6 +89,10 @@ Task 63（音频总线终稿）完成：`bus.json` 提取 JS 总线拓扑/压限
 `audio/bus.rs` 烘焙 IR 锚测 + 提取 taps 派生紧凑尾音；`Pcm` 立体声化，sfx/脚步经
 `MainCamera` listener 做距离衰减+pan+湿声播放，kit 53 名 per-cue reverb。8 项锚测 +
 `audio-bus-crosscheck` 61 断言 + 九段门禁 PASS；D-T63-1..4 登记听感复核。
+Task 64（fx composite/DOM 叠层）完成：`screenfx.json` 提取 composite uniform/20 项 pass
+阈值/decay/伤害数字池/小地图参数；`fx/composite.rs` pass gate 逐字段复刻 + 伤害数字 combo
+池 + minimap 相对年龄 FX，生产系统接 HitSend/Slam/Respawn 真实事件，low 档全关。
+7 项锚测 + `screenfx-crosscheck` 67 断言 + 九段门禁 PASS；D-T64-1..4 登记用户机复核。
 
 ## 质量档位
 
