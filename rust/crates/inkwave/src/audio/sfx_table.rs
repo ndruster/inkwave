@@ -7291,6 +7291,14 @@ pub fn meta(name: &str) -> Option<SfxMeta> {
         .or_else(|| crate::audio::sfx_kit::kit_meta(name))
 }
 
+/// Task 63: live reverb send. Kit cues use the extracted per-name value;
+/// base cues keep the JS `def.reverb ?? 0.08` default (D-T63-4).
+#[must_use]
+pub fn reverb_for(name: &str) -> f64 {
+    crate::audio::sfx_kit::kit_cue(name)
+        .map_or_else(|| crate::audio::bus::spec().default_reverb, |c| c.reverb)
+}
+
 pub fn build_one_shot(name: &str, v: &mut Vb, p: f64) {
     match name {
         "ui_hover" => b_ui_hover(v, p),

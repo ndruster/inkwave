@@ -164,7 +164,7 @@
     GPU-only 复核项；未在沙箱伪验收。
 
 ## Task 62: 3D 大厅终稿（角色 preview / 名牌 / emote）
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: medium
 - **Depends On**: Task 61
 - **Description**: 接 `spawn_char_rig` 菜单态驱动（脱离 `CharBridge` 的 `DemoSim/paused` 耦合）、
@@ -177,9 +177,29 @@
     名牌投影锚测；headless 不 panic。
   - `rule` TR-62.2: REVIEW_CHECKLIST 登记（名牌可读性/遮挡/满房空房）。
 - **Notes**: DOM 叠层依赖 Task 64 的 DOM 通道，可交叉。
+- **Completion Evidence** (2026-11-20):
+  - 数据面：`showcase_state::Emote` 补 `t0/trig`（flex 2.86/hairflip，
+    `lobbyset-crosscheck.mjs` 独立重解析 JS 全字段）；新增 8 站位名牌投影纯函数
+    （NDC→像素/behind/right-vector scale/kFront/UI 安全区）与 `LobbyNameplates`
+    数据面（ready/host/you/free/emote 随 roster 同步）。
+  - 生产链路：`SessionEvent::Emote {id,name}` 在 `ui_state_machine` 的单一
+    `poll_events` 泵中消费，用 `slot_for_player` 映射同一 team-ordered slot；
+    `ShowcaseMember::emote_serial` 保证同名 emote 重放是新的 one-shot。
+  - `showcase_scene` 按 roster 增删 layer1 per-slot preview，消费提取的
+    `dance/v/dur/hop/t0/trig` 驱动 0.42 s hop 弧线与 dance 变体相位；新成员入场
+    在 spawn 时写入起始时间（修掉 Commands 延迟导致的漏启动）；low tier 不建实体，
+    主相机不被触碰；Bevy 冒烟锚定层位集/位置/roster 增减/重放/名牌增删。
+  - 锚测：5 项 Task62 专项 + 16 项 showcase + 既有 showcase/相机/环境/props
+    crosscheck 全绿；workspace 412 + 601 测试通过。
+  - 九段门禁 `rust/tools/verify/logs/task62-gates-20261119T174824Z.log`：
+    `FMT/CLIPPY/TEST/WASM/TREE/DETERM/XCHK/TRUNK/RELEASE_BUILD/HEADLESS/
+    HEADLESS_BOSS_EXIT=0`，`DETERM=BYTE_IDENTICAL`，`JS_TREE_CLEAN`、
+    `SIM_TREE_CLEAN`，`GATE_VERDICT=PASS`（TRUNK 本次真实通过，非 DEGRADED）。
+    独立评审首轮 P0（emote 事件断链）与 P1（同名重放/spawn 时序/台账）已返工
+    并复验；D-T62-1..4 与 D-T61-4 相关项登记于 M5 REVIEW_CHECKLIST。
 
 ## Task 63: 音频总线终稿（混响/压限/3D panner）
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: medium
 - **Depends On**: M4 Task 50
 - **Description**: convolver 混响 / glue compressor / limiter / 3D panner / 湿信号
@@ -191,6 +211,32 @@
     3D panner 衰减曲线锚测；mute 回归延续。
   - `rule` TR-63.2: REVIEW_CHECKLIST 听感登记（空间感/混响尾音，用户机复核）。
 - **Notes**: 烘焙成本与 wasm 尺寸需评估（`char.bin.gz` 内嵌先例，D-T54-5⑨）。
+- **Completion Evidence** (2026-11-20):
+  - 数据面：`extract-audio-bus.mjs` 从只读 `audio.js`/`music.js` 提取总线拓扑
+    （11 边 / glue+lim 参数 / highpass / revSend/ret / taper / sfxIn）、3D 参数
+    （distCut 10/22000/900/13、panning HRTF→equalpower 回退、inverse/ref 3/
+    rolloff 1.2/maxDistance、sendScale、reverbDistance、defaultReverb 0.08）与 IR
+    描述符（1.5 s/decay 3.4/pre 0.012/seed 3/5 taps/attack 0.002/darken 4/
+    right 0.0031），钉源 `assets/audio/bus.json`（commit 159ba72b）。
+  - `audio/bus.rs` 消费提取表：`bake_ir` 是 `makeImpulse` 的 bit-exact 端口（仅作
+    确定性锚测）；生产用提取 taps 派生的 O(n) 紧凑 plaza 尾音，`distance_cut`/
+    `send_scale`/`distance_gain`/`pan`/`compressor_gain`/`mix_voice` 复刻 JS 曲线。
+  - 生产接线：`Pcm` 扩为带 `channels` 的交错缓冲、`PcmIter` 向 rodio 报真实声道数；
+    `audio_sfx`/`footstep_sfx` 以 `MainCamera` 位姿为 listener，shot/empty 用本地
+    actor、splat 用 victim 位置作声源，经立体声湿/干 voice 播放；`sfx_table::
+    reverb_for` 让 kit 53 名用各自 reverb、基础 148 cue 用默认 0.08。
+  - 锚测：8 项 Task63 专项（图拓扑/IR 逐值+双跑 hash、湿/干与距离曲线、立体声
+    元数据、空间 cue 湿声发声、mute 守卫、team1 声源按 (team,slot) 身份解析、
+    wet 尾音双耳极性/低通前取样）+ `audio-bus-crosscheck.mjs` 61 断言独立重解析
+    + kit-sfx 交叉全绿；IR 修订后 clippy 复验通过。
+  - 九段门禁 `rust/tools/verify/logs/task63-gates-20261119T192251Z.log`：
+    `FMT/CLIPPY/TEST/WASM/TREE/DETERM/XCHK/TRUNK/RELEASE_BUILD/HEADLESS/
+    HEADLESS_BOSS_EXIT=0`，`DETERM=BYTE_IDENTICAL`，`JS_TREE_CLEAN`、
+    `SIM_TREE_CLEAN`，`GATE_VERDICT=PASS`（TRUNK 本次真实通过）。
+    独立评审首轮 P1（team1 声源 5+slot 索引 alias/越界、wet 从低通后取样且乘
+    voice gain/pan、尾音单声道）已返工：改用 `find_actor(team,slot)`、wet 从
+    `head` 取样并走双耳极性尾音；D-T63-1..4 与听感项登记于 M5 REVIEW_CHECKLIST，
+    未在沙箱伪验收 HRTF/完整 FIR/WebAudio envelope。
 
 ## Task 64: fx composite pass 与 DOM 叠层
 - **Status**: `pending`

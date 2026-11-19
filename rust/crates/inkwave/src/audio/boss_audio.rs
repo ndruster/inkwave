@@ -32,7 +32,7 @@ use crate::ui::BossHudRes;
 
 use super::music::{AudioVolumes, MusicRuntime};
 use super::sfx_table::{self, PlayDecision};
-use super::{BossCue, Pcm, PcmSound, SR, SfxAssets, SfxBorn, SoundState};
+use super::{BossCue, Pcm, PcmSound, SfxAssets, SfxBorn, SoundState};
 
 /// One delayed one-shot: `(due, name, pitch, volume)` — the JS `_later` /
 /// `delay` timer + `play()` call.
@@ -197,10 +197,7 @@ pub fn boss_audio_playback(
         let Some(samples) = sfx_table::bake_loop(name) else {
             continue;
         };
-        let h = pcm.add(PcmSound(Pcm {
-            sample_rate: SR,
-            data: samples,
-        }));
+        let h = pcm.add(PcmSound(Pcm::mono(samples)));
         let v = vols.sfx.value_at(now).clamp(0.0, 1.0) as f32;
         let e = commands
             .spawn((

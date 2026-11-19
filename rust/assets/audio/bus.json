@@ -1,0 +1,152 @@
+{
+  "graph": {
+    "edges": [
+      {
+        "from": "sfxIn",
+        "to": "sfxBus"
+      },
+      {
+        "from": "sfxBus",
+        "to": "master"
+      },
+      {
+        "from": "musicBus",
+        "to": "duck"
+      },
+      {
+        "from": "duck",
+        "to": "master"
+      },
+      {
+        "from": "revSend",
+        "to": "conv"
+      },
+      {
+        "from": "conv",
+        "to": "revRet"
+      },
+      {
+        "from": "revRet",
+        "to": "sfxBus"
+      },
+      {
+        "from": "master",
+        "to": "highpass"
+      },
+      {
+        "from": "highpass",
+        "to": "glue"
+      },
+      {
+        "from": "glue",
+        "to": "limiter"
+      },
+      {
+        "from": "limiter",
+        "to": "destination"
+      }
+    ],
+    "glue": {
+      "attack": 0.003,
+      "knee": 8,
+      "ratio": 3,
+      "release": 0.18,
+      "threshold": -12
+    },
+    "highpass": {
+      "frequency": 25,
+      "q": 0.707
+    },
+    "limiter": {
+      "attack": 0.001,
+      "knee": 0,
+      "ratio": 20,
+      "release": 0.08,
+      "threshold": -2
+    },
+    "rev_return": 0.6,
+    "rev_send": 1,
+    "sfx_in": 1,
+    "taper_exponent": 1.5
+  },
+  "impulse": {
+    "attack_seconds": 0.002,
+    "bright": 0.85,
+    "channel_seed_step": 101,
+    "dark": 0.12,
+    "darken_rate": 4,
+    "decay": 3.4,
+    "decay_multiplier": 2.3,
+    "pre": 0.012,
+    "right_offset": 0.0031,
+    "seconds": 1.5,
+    "seed": 3,
+    "tap_tail_gain": 0.4,
+    "taps": [
+      {
+        "amp": 0.5,
+        "time": 0.011
+      },
+      {
+        "amp": 0.36,
+        "time": 0.019
+      },
+      {
+        "amp": 0.3,
+        "time": 0.027
+      },
+      {
+        "amp": 0.22,
+        "time": 0.041
+      },
+      {
+        "amp": 0.15,
+        "time": 0.058
+      }
+    ]
+  },
+  "schema": 1,
+  "source": {
+    "commit": "159ba72b7f12566e8189e1c233d145bdd432a2fd",
+    "files": [
+      "src/audio/audio.js",
+      "src/audio/music.js"
+    ]
+  },
+  "spatial": {
+    "cone_inner": 360,
+    "cone_outer": 360,
+    "default_reverb": 0.08,
+    "dist_cut": {
+      "ceiling": 22000,
+      "floor": 900,
+      "half_life": 13,
+      "near": 10,
+      "q": 0.5
+    },
+    "distance_model": "inverse",
+    "fallback_model": "equalpower",
+    "max_distance_factor": 20,
+    "max_distance_min": 60,
+    "panning_model": "HRTF",
+    "ref_distance": 3,
+    "reverb_distance": {
+      "cap": 0.25,
+      "divisor": 60,
+      "start": 6
+    },
+    "rolloff": 1.2,
+    "send": {
+      "base": 3,
+      "numerator": 3,
+      "ref": 3,
+      "rolloff": 1.2
+    },
+    "smoothing": {
+      "listener": 0.01,
+      "lowpass": 0.05,
+      "send": 0.05
+    }
+  }
+}
+

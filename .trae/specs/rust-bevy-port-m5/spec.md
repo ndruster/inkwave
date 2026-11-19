@@ -356,3 +356,86 @@ GTAO/grade/SMAA/tilt-shift、云/PMREM/海面、alley 材质逐档落地且逐�
 ### §6 偏差与复核
 - D-T61-1 层映射设计决策；hub/lobby 无叠加、cross-dissolve 过渡、UI 层级、
   planar reflection 与第二相机交互均为 GPU 复核项，不在沙箱伪验收。
+
+---
+
+## Task62 实施设计（2026-11-18，开工实读定稿）
+
+### §0 锚点与保守范围
+- JS：`showcase.js` emote 表（L72-78，已入 `lobbyset.json:43-70`，
+  `booyah/wave/dance/flex` 的 dance/v/dur/hop/t0/trig）、L1999-2026 调度、
+  L2056-2090 `lobbyAnchor`/`lobbySlotAnchor`/`_lobProject`（NDC→像素、
+  behind、scale s、UI 矩形遮挡）、`menus.js` L3535-3579 DOM 名牌；
+  `character.js` `DANCE_VARIANTS` / `setDance` / `_poseDance` 三变体。
+- 状态层 M4 已交付（ShowcaseMember/emote()/ShowcaseCue/rows_to_members），
+  `Emote` 缺 `t0/trig`（flex 退化）——本任务补齐提取数据。
+- D-T62-1：完整 `CharAnim` rig 菜单态驱动需要脱离 `DemoSim/paused` 桥接，
+  本任务提供 per-slot 预览实体 + emote 的 dance/hop/rotation 变换面，
+  完整骨树逐帧 pose 仍由现有 pinned replay 锚定、GPU 观感复核。
+- D-T62-2：DOM 名牌叠层依赖 Task 64 通道（tasks.md 明示可交叉）；本任务
+  提供世界→屏幕投影纯函数与 Bevy UI 名牌数据面，真实 DOM 叠层在 Task 64
+  交付后接线，登记为偏差而非伪完成。
+- D-T62-3：运行期 UI 安全矩形与 `kFront` 由 Task 64 通道提供；当前系统用
+  `None/1.0` 回退，投影纯函数已支持实测入参。
+- D-T62-4：`lobbyAnchor` 的动态 `M.y/plateH/sy/vis` 与空位 `dest/launchT`
+  未出现在 Rust 状态层；占用行用 `member_anchor(spot,0,1)`、空位用
+  `slot_anchor(spot)`，动态跟随待 GPU/联网复核。
+
+### §1 数据面
+- 无新提取器：`lobbyset.json` 已含 emotes 四名全字段与 spots/PLATE_H；
+  `showcase_state::Emote` 补 `t0/trig`，从提取文档解析（禁手抄）。
+
+### §2 名牌投影（headless 可测核心）
+- 新增纯函数 `project_lobby_anchor(world, camera_pose, W, H, ui_rect)`：
+  ≡ `_lobProject`（NDC→像素、`behind=ndc.z>1`、scale、UI 矩形内 vis），
+  与 `lobbyAnchor` / `lobbySlotAnchor` 的高度规则（PLATE_H / PLATE_H-0.35）；
+  锚测使用 JS 推导值（非实现自算）。
+
+### §3 场景/状态联动
+- `showcase_scene` 按 roster 增减 per-slot 预览实体（站位来自提取 spots，
+  layer1），消费 `member.emote` 驱动 dance 变体/hop 弧线（T/hop 由提取表）、
+  `replay_count` 消费 cue（dip/pop/hop-twirl/swap）；low 档 full_frame=false
+  时不建实体（保底路径不变）。
+
+### §4 锚测
+- emote 表 t0/trig 钉测（flex 的 2.86/hairflip）、投影锚测（中心/边缘/
+  behind/UI 遮挡）、状态→场景联动（roster 增减/ready/emote 触发）、
+  现有 11 项 showcase 冒烟不回退。
+
+### §5 评审/门禁
+- 独立评审；`gate-task62.sh`（模板 gate-task61.sh，XCHK 跑 showcase 全部
+  测试）；GPU 项（名牌可读性/遮挡、满房空房、emote 流畅度、DOM 叠层）
+  登记 REVIEW_CHECKLIST。
+
+### §6 偏差与复核
+- D-T62-1（预览实体非完整 CharAnim rig）、D-T62-2（DOM 名牌待 Task 64）、
+  D-T61-4 双相机 clear/order 与本任务名牌叠层相对层级一并复核。
+
+---
+
+## Task63 实施设计（2026-11-20，开工实读定稿）
+
+### §0 锚点与保守范围
+- JS：`audio.js` L15-18 总线拓扑、L113-139 master/sfxBus/musicBus/revSend/
+  conv/revRet/hp/glue/limiter、L28 taper、L30 `distCut`、L174-216 listener/
+  panner/sendScale、L218-242 wet/dry 并联；`music.js` L30-38 `mulberry32`、
+  L98-122 `makeImpulse`（1.5 s / decay 3.4 / pre 0.012 / seed 3 / 五组早反射）。
+- 新增 `extract-audio-bus.mjs` + `assets/audio/bus.json` 钉源；`audio-bus-crosscheck.mjs`
+  独立正则重解析上游常量。Rust `audio/bus.rs` 消费提取表，不手抄。
+- Bevy 0.19 无 WebAudio 节点图接入点；Rust 用 **离线混音 facade**：缓存的 mono
+  cue 在 spawn 前按 listener/source 做距离低通、inverse gain、等功率 pan、wet
+  send + 紧凑 plaza 尾音，再以立体声 `PcmSound` 播放。真实 WebAudio 图拓扑与
+  HRTF 仍登记听感/响度复核，不声称逐样本等价。
+
+### §1 数据面与偏差
+- D-T63-1：HRTF panner 无等同实现，用等功率 pan + inverse distance gain；
+  D-T63-2：1.5 s 卷积 IR 用于确定性烘焙锚测，生产用提取早反射派生的紧凑
+  反馈尾音（成本/wasm 约束）；D-T63-3：WebAudio DynamicsCompressor 用提取
+  参数驱动的静态软限幅近似；D-T63-4：基础 148  cue 的 per-name `reverb`
+  未提取，沿用 JS 默认 0.08，kit 53 名用已钉源表。
+
+### §2 测试与门禁
+- TR-63.1：`bus.json` 图结构/参数锚测（每值对 JS）、IR 对 Node 参考样本逐值、
+  IR 双跑 hash、湿/干与 sendScale/distanceCut 曲线、3D pan 与 inverse gain、
+  mute/low tier 回归；XCHK 跑 `task63` 专项（带实际测试数守卫）。
+- TR-63.2：REVIEW_CHECKLIST 登记空间感/混响尾音/压限响度为用户机听感复核。

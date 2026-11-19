@@ -38,6 +38,8 @@ use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 
 pub mod boss_audio;
+// Task 63: extracted bus topology + deterministic IR / spatial / wet path.
+pub mod bus;
 pub mod graph;
 // Task 60: kit-weapon SFX metadata, extracted from the live JS registry.
 pub mod music;
@@ -59,6 +61,8 @@ use sfx_table::{PlayDecision, SfxGate};
 
 use crate::ink_render::DemoSim;
 use crate::input::PlayerControls;
+// Task 63: listener pose comes from the same layer-0 camera as the world FX.
+use crate::world::MainCamera;
 
 /// Sample rate of every baked cue (≡ the WebAudio context rate).
 const SR: u32 = 44100;
@@ -70,11 +74,43 @@ const GC_SLACK: f32 = 2.0;
 // Synthesis (pure, unit-testable)
 // ---------------------------------------------------------------------------
 
-/// Mono float PCM block.
+/// Interleaved float PCM block. Mono cues keep one channel; Task63 spatial
+/// and wet voices are rendered as two channels before the `AudioPlayer`.
 #[derive(Clone, Debug)]
 pub struct Pcm {
     pub sample_rate: u32,
     pub data: Vec<f32>,
+    pub channels: u16,
+}
+
+impl Pcm {
+    #[must_use]
+    pub fn mono(data: Vec<f32>) -> Self {
+        Self {
+            sample_rate: SR,
+            data,
+            channels: 1,
+        }
+    }
+
+    #[must_use]
+    pub fn stereo(data: Vec<f32>, sample_rate: u32) -> Self {
+        Self {
+            sample_rate,
+            data,
+            channels: 2,
+        }
+    }
+
+    #[must_use]
+    pub fn frames(&self) -> usize {
+        self.data.len() / self.channels.max(1) as usize
+    }
+
+    #[must_use]
+    pub fn total_duration(&self) -> Duration {
+        Duration::from_secs_f64(self.frames() as f64 / f64::from(self.sample_rate))
+    }
 }
 
 /// Bake `name` through the ported graph and clamp to [-1, 1]: the JS master
@@ -86,10 +122,61 @@ fn baked(name: &str) -> Option<Pcm> {
     for s in &mut data {
         *s = s.clamp(-1.0, 1.0);
     }
-    Some(Pcm {
-        sample_rate: SR,
-        data,
-    })
+    Some(Pcm::mono(data))
+}
+
+// --- Task 63 live bus -------------------------------------------------------
+
+fn actor_position(demo: &DemoSim, team: usize, slot: usize) -> Option<[f32; 3]> {
+    let idx = inkwave_sim::match_::find_actor(&demo.m.actors, team, slot)?;
+    demo.m.actors.get(idx).map(|a| [a.pos.x, a.pos.y, a.pos.z])
+}
+
+fn spatial_from(source: [f32; 3], camera: Option<&Transform>) -> bus::Spatial {
+    let (listener, forward, up) =
+        camera.map_or(([0.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]), |t| {
+            (
+                t.translation.to_array(),
+                t.forward().as_vec3().to_array(),
+                t.up().as_vec3().to_array(),
+            )
+        });
+    bus::Spatial {
+        listener,
+        forward,
+        up,
+        source,
+        ref_distance: bus::spec().ref_distance,
+    }
+}
+
+/// Render one cached mono cue through the Task63 bus into a stereo asset.
+/// 2-D cues (UI countdown etc.) keep the original mono asset — exactly like
+/// the JS engine, which only routes panned voices via `revSend`/`_panner`.
+fn spatialized(
+    assets: &mut Assets<PcmSound>,
+    handle: &Handle<PcmSound>,
+    source: Option<[f32; 3]>,
+    camera: Option<&Transform>,
+    name: &str,
+) -> Handle<PcmSound> {
+    // Without a main camera (headless/low-tier boot frames) the voice stays
+    // 2-D, exactly like the JS engine before the first listener update.
+    let (Some(source), Some(camera), Some(pcm)) = (source, camera, assets.get(handle)) else {
+        return handle.clone();
+    };
+    if pcm.0.channels != 1 {
+        return handle.clone();
+    }
+    let mono = pcm.0.data.clone();
+    let mixed = bus::mix_voice(
+        &mono,
+        sfx_table::reverb_for(name),
+        Some(spatial_from(source, Some(camera))),
+        SR,
+        bus::spec(),
+    );
+    assets.add(PcmSound(Pcm::stereo(mixed.data, SR)))
 }
 
 // ---------------------------------------------------------------------------
@@ -100,11 +187,12 @@ fn baked(name: &str) -> Option<Pcm> {
 #[derive(Asset, TypePath, Debug)]
 pub struct PcmSound(pub Pcm);
 
-/// `rodio::Source` over an owned mono f32 buffer (the `decoder()` output).
+/// `rodio::Source` over an owned interleaved f32 buffer (mono or stereo).
 pub struct PcmIter {
     data: std::vec::IntoIter<f32>,
     sample_rate: SampleRate,
     frames: usize,
+    channels: ChannelCount,
 }
 
 impl Iterator for PcmIter {
@@ -120,8 +208,7 @@ impl RodioSource for PcmIter {
         Some(self.data.len())
     }
     fn channels(&self) -> ChannelCount {
-        // Monaural by construction; `new(1)` is always valid.
-        ChannelCount::new(1).unwrap()
+        self.channels
     }
     fn sample_rate(&self) -> SampleRate {
         self.sample_rate
@@ -140,7 +227,8 @@ impl Decodable for PcmSound {
         PcmIter {
             data: self.0.data.clone().into_iter(),
             sample_rate: SampleRate::new(self.0.sample_rate).unwrap(),
-            frames: self.0.data.len(),
+            frames: self.0.frames(),
+            channels: ChannelCount::new(self.0.channels).unwrap(),
         }
     }
 }
@@ -380,6 +468,7 @@ pub fn audio_sfx(
     time: Res<Time>,
     mut commands: Commands,
     vols: Res<music::AudioVolumes>,
+    cameras: Query<&Transform, With<MainCamera>>,
 ) {
     // Master: `M` mute + the `master` slider (audio.js L165-172). The WebAudio
     // master gain ≡ Bevy's `GlobalVolume`; it is refreshed every frame so
@@ -421,20 +510,30 @@ pub fn audio_sfx(
     }
 
     let live = !pc.paused;
-    let mut cues: Vec<Sfx> = Vec::new();
+    // Each cue carries its world source (Task63): shot/empty at the local
+    // actor, splats at the victim, clock cues stay 2-D like the JS bus.
+    let mut cues: Vec<(Sfx, Option<[f32; 3]>)> = Vec::new();
     if live && shot {
-        cues.push(Sfx::Shot);
+        cues.push((Sfx::Shot, actor_position(&demo, a.team, a.slot)));
     }
     if live && empty {
-        cues.push(Sfx::Empty);
+        cues.push((Sfx::Empty, actor_position(&demo, a.team, a.slot)));
     }
     if live {
         for ev in demo.m.events.iter() {
             if let Some(c) = splat_cue(ev, a.team) {
-                cues.push(c);
+                let source = match ev {
+                    MatchEvent::Splat {
+                        victim_team,
+                        victim_slot,
+                        ..
+                    } => actor_position(&demo, *victim_team, *victim_slot),
+                    _ => None,
+                };
+                cues.push((c, source));
             }
             if let Some(c) = phase_cue(ev, demo.m.result.as_ref(), a.team) {
-                cues.push(c);
+                cues.push((c, None));
             }
         }
     }
@@ -442,8 +541,9 @@ pub fn audio_sfx(
     if snd.muted || cues.is_empty() {
         return;
     }
+    let camera = cameras.iter().next();
     let shot_kind = demo.m.kinds.first().copied().unwrap_or(WeaponKind::Shooter);
-    for c in cues {
+    for (c, source) in cues {
         for (name, vol) in sfx_cue(c, shot_kind) {
             // Lazy bake: the graph render runs once per name, cached after.
             let Some((handle, dur)) = sfx.cue(&mut pcm, name) else {
@@ -470,10 +570,16 @@ pub fn audio_sfx(
                     ent.despawn();
                 }
             }
-            let end = now + dur / speed;
+            // Task63 live bus: spatial cues become stereo assets with wet
+            // send; 2-D cues keep the cached mono asset unchanged.
+            let played = spatialized(&mut pcm, &handle, source, camera, name);
+            let play_dur = pcm
+                .get(&played)
+                .map_or(dur, |p| p.0.total_duration().as_secs_f64());
+            let end = now + play_dur / speed;
             let e = commands
                 .spawn((
-                    AudioPlayer(handle.clone()),
+                    AudioPlayer(played),
                     PlaybackSettings::DESPAWN
                         .with_volume(Volume::Linear((volume * vols.sfx.value_at(now)) as f32))
                         .with_speed(speed as f32),
@@ -527,16 +633,18 @@ pub fn footstep_sfx(
     vols: Res<music::AudioVolumes>,
     time: Res<Time>,
     pc: Res<PlayerControls>,
+    cameras: Query<&Transform, With<MainCamera>>,
 ) {
     let events = bridge.take_footsteps();
     if events.is_empty() || snd.muted || pc.paused {
         return;
     }
     let now = time.elapsed_secs() as f64;
+    let camera = cameras.iter().next();
     for ev in events {
         // Reject non-finite touch-down positions (a corrupt bridge frame
-        // must never reach the synthesiser); `pos` will later feed the 3D
-        // panner / 18 m remote cull (D-T60-5).
+        // must never reach the synthesiser). Task 63 now feeds the pinned
+        // distance/pan/send model with this real foot position (D-T60-5).
         if !ev.pos.is_finite() {
             continue;
         }
@@ -567,10 +675,14 @@ pub fn footstep_sfx(
                 ent.despawn();
             }
         }
-        let end = now + dur / speed;
+        let played = spatialized(&mut pcm, &handle, Some(ev.pos.to_array()), camera, name);
+        let play_dur = pcm
+            .get(&played)
+            .map_or(dur, |p| p.0.total_duration().as_secs_f64());
+        let end = now + play_dur / speed;
         let e = commands
             .spawn((
-                AudioPlayer(handle.clone()),
+                AudioPlayer(played),
                 PlaybackSettings::DESPAWN
                     .with_volume(Volume::Linear((volume * vols.sfx.value_at(now)) as f32))
                     .with_speed(speed as f32),
@@ -1845,6 +1957,108 @@ mod tests {
                     volume: 1.0
                 },
             ]
+        );
+    }
+
+    // ---- Task 63 live bus -------------------------------------------------
+
+    /// TR-63.1: stereo assets report two channels and frame-based duration
+    /// (the mono Task50 path stays unchanged).
+    #[test]
+    fn task63_stereo_pcm_decoder_metadata() {
+        let pcm = Pcm::stereo(vec![0.0; 16], 800);
+        assert_eq!(pcm.frames(), 8);
+        let snd = PcmSound(pcm);
+        let mut decoder = snd.decoder();
+        assert_eq!(decoder.channels().get(), 2);
+        assert_eq!(
+            decoder.total_duration(),
+            Some(Duration::from_secs_f64(8.0 / 800.0))
+        );
+        assert_eq!(decoder.by_ref().count(), 16);
+    }
+
+    /// TR-63.1 P0 guard: with a real main camera, a world cue must PLAY a
+    /// two-channel asset with the wet tail, not just compute a dormant gain.
+    #[test]
+    fn task63_spatial_cue_plays_stereo_wet_voice() {
+        let mut app = audio_test_app();
+        app.world_mut().spawn((
+            MainCamera,
+            Transform::from_xyz(0.0, 2.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
+        ));
+        app.world_mut().resource_mut::<SoundState>().prev_last_fire = 100.0;
+        app.update();
+        let handles = spawned_handles(&mut app);
+        assert!(!handles.is_empty(), "shot cue must spawn");
+        let assets = app.world().resource::<Assets<PcmSound>>();
+        let stereo = handles
+            .iter()
+            .filter_map(|h| assets.get(h))
+            .filter(|p| p.0.channels == 2)
+            .collect::<Vec<_>>();
+        assert_eq!(stereo.len(), 1, "spatial shot is a stereo bus render");
+        let pcm = &stereo[0].0;
+        let mono_handle = app
+            .world()
+            .resource::<SfxAssets>()
+            .get("shoot_shooter")
+            .map(|(h, _)| h.clone())
+            .expect("cue cached");
+        let mono_len = assets
+            .get(&mono_handle)
+            .expect("mono cue asset")
+            .0
+            .data
+            .len();
+        assert!(pcm.data.len() / 2 > mono_len, "wet tail extends the voice");
+        assert!(pcm.data.iter().all(|v| v.is_finite()));
+    }
+
+    /// Review P1-1: a team-1 actor's spatial source must resolve by (team,slot)
+    /// identity, not a hard-coded 5+slot (which aliases slot0→index5 and makes
+    /// slot3 out of bounds → silent 2-D fall-back).
+    #[test]
+    fn task63_actor_position_resolves_team1_by_identity() {
+        let mut app = audio_test_app();
+        {
+            let mut demo = app.world_mut().resource_mut::<DemoSim>();
+            for (i, a) in demo.m.actors.iter_mut().enumerate() {
+                a.pos.x = (i as f32 + 1.0) * 10.0;
+                a.pos.y = i as f32;
+                a.pos.z = -(i as f32);
+            }
+        }
+        let demo = app.world().resource::<DemoSim>();
+        for team in 0..2 {
+            for slot in 0..4 {
+                let idx = inkwave_sim::match_::find_actor(&demo.m.actors, team, slot)
+                    .expect("every team/slot resolves");
+                let a = &demo.m.actors[idx];
+                assert_eq!(
+                    actor_position(demo, team, slot),
+                    Some([a.pos.x, a.pos.y, a.pos.z]),
+                    "team {team} slot {slot} must resolve to roster index {idx}"
+                );
+            }
+        }
+    }
+
+    /// M must still short-circuit BEFORE the bus render (no mute-only mixing).
+    #[test]
+    fn task63_mute_guard_blocks_spatial_bus() {
+        let mut app = audio_test_app();
+        app.world_mut().spawn((MainCamera, Transform::default()));
+        tap_key(&mut app, KeyCode::KeyM);
+        assert_eq!(
+            app.world().resource::<GlobalVolume>().volume,
+            Volume::SILENT
+        );
+        app.world_mut().resource_mut::<SoundState>().prev_last_fire = 100.0;
+        app.update();
+        assert!(
+            spawned_handles(&mut app).is_empty(),
+            "mute suppresses voices before spatial/wet processing"
         );
     }
 }

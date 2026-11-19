@@ -2584,10 +2584,7 @@ impl MusicAssets {
         let comp = get_song(id)?;
         let data = bake_song(&comp);
         let dur = data.len() as f64 / synth::SR;
-        let h = assets.add(PcmSound(Pcm {
-            sample_rate: super::SR,
-            data,
-        }));
+        let h = assets.add(PcmSound(Pcm::mono(data)));
         self.map.insert(id, h.clone());
         self.dur.insert(id, dur);
         Some((h, dur))

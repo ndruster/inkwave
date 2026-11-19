@@ -450,3 +450,15 @@ crosscheck；`sfx_kit.rs` 复用 `SfxGate`（元数据回退）、脚步消费�
 2 writer）全部限定 `MainCamera`；双相机 Bevy 冒烟测试锚定层位集/激活切换/主相机
 不变性。D-T61-1（层映射为 Rust 设计决策）、D-T61-4（双相机清屏/顺序为 GPU 复核项）
 登记于 M5 REVIEW_CHECKLIST。
+**Task 62（3D 大厅终稿）**完成：`SessionEvent::Emote` 在单一事件泵中按 relay id
+映射到 lineup slot，`emote_serial` 支持同名重放；per-slot layer1 预览实体消费提取的
+`dance/v/dur/hop/t0/trig`，名牌数据面给 8 站位投影（ready/host/you/free/emote）；
+low tier 保底与主相机不变性不回退。5 项 Task62 锚测 + 九段门禁 PASS（`task62-gates-
+20261119T174824Z.log`）；D-T62-1..4（预览非完整 rig、DOM 待 Task64、UI 安全区/
+kFront 回退、动态 rig 锚点缺失）登记为 GPU/浏览器复核项。
+**Task 63（音频总线终稿）**完成：`audio/bus.json` 从只读 JS 提取 11 边总线拓扑/
+压限参数/3D 曲线/IR 描述符；`audio/bus.rs` bit-exact 烘焙 IR 作确定性锚测、生产用
+提取 taps 派生的 O(n) plaza 尾音，`Pcm` 立体声化并让 sfx/脚步经 `MainCamera` listener
+做距离衰减+pan+湿声 voice 播放。8 项 Task63 锚测 + `audio-bus-crosscheck` 61 断言 +
+九段门禁 PASS（`task63-gates-20261119T192251Z.log`）；D-T63-1..4（HRTF→等功率 pan、
+完整 FIR→紧凑尾音、WebAudio 压限→静态软限幅、基础 cue 默认 reverb）登记听感复核。

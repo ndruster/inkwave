@@ -129,3 +129,54 @@ Evidence。以下为**待用户 GPU/浏览器机器复核**的视觉与载体项
   交互（D-T61-3）。
 - [ ] **D-T61-1 层映射**：上游无 THREE.Layers 层号，layer0/layer1 为 Rust
   设计决策，需确认实际画面与「独立 Scene + 第二相机 + renderTarget」等价。
+
+## Task 62 复核登记（2026-11-20）
+
+无头可测：5 项 Task62 锚测（emote `t0/trig` 提取、名牌投影 NDC/scale/behind/
+UI 安全区、8 站位 roster/ready/host/you 数据面、per-slot 预览增删与 hop 弧线、
+emote 事件按 relay id 映射 slot 与 serial 重放）
++ 既有 11 项 showcase 冒烟 + `lobbyset-crosscheck.mjs`（emote 全字段独立重解析）；
+门禁结论见 `tasks.md` Task 62 Completion Evidence。以下为**待用户 GPU/浏览器复核**：
+
+- [ ] **名牌可读性与遮挡**：projected x/y/s 来自原始提取相机位姿与 1920×1080
+  回退画布；实机不同分辨率下的字号、8 人重叠、背景霓虹上的对比度需复核。
+- [ ] **满房/空房与 DOM 叠层（D-T62-2）**：数据面始终给 8 行，占用行带姓名/
+  ready/host/you/emote，空位给 free 标记；真实 DOM 节点由 Task 64 接线后才出现。
+  名牌与 layer1 大厅的层级还要结合 D-T61-4 双相机清屏/顺序一起复核。
+- [ ] **emote→dance 流畅度（D-T62-1）**：Rust 仅以预览实体 facade 消费提取的
+  `dance/v/dur/hop/t0/trig`（hop 弧线 0.42 s、variant/t0 相位；`trig` 只按
+  存在性产生 squash 脉冲，`"hairflip"` 字符串语义未逐帧播放），不是完整
+  `CharAnim` 骨树逐帧 pose；满房四人同时 emote 的流畅度与骨树观感需实机对照。
+- [ ] **UI 安全区与 kFront（D-T62-3）**：系统层目前用 `None`/`1.0` 回退；上游
+  `_measureLobby` 的动态 DOM 安全矩形与 `_lobFrame` 的 `kFront` 缩放待 Task 64
+  通道接入后复核，投影纯函数已支持传入实测值。
+- [ ] **动态成员锚点（D-T62-4）**：占用行目前按 `member_anchor(spot.pos,0,1)`
+  与 `vis=true` 投影；JS `lobbyAnchor` 的 `M.y / M.plateH / M.sy / M.vis`
+  属于运行时角色 rig 状态，空位的 `M.dest / launchT` 也未提供给 Rust 状态层，
+  动态跳台/发射期间的跟随尚不完整，需 GPU/联网实机复核。
+- [ ] **双相机 clear/order**：承接 D-T61-4，名牌叠层在 bloom/后处理与 layer0
+  世界之上的相对顺序需在用户 GPU 机器确认。
+
+## Task 63 复核登记（2026-11-20）
+
+无头可测：8 项 Task63 锚测（总线图拓扑/IR 确定性烘焙逐值、湿/干与 sendScale/
+distanceCut 曲线、立体声 PCM 元数据、空间 cue 湿声发声、mute 守卫、team1 声源按
+(team,slot) 身份解析、wet 尾音双耳极性/低通前取样）+ `bus.json` 图/参数与
+`audio-bus-crosscheck.mjs` 独立重解析（61 断言）+ kit-sfx 交叉；门禁结论见
+`tasks.md` Task 63 Completion Evidence。独立评审首轮 P1（team1 声源索引 alias、
+wet 取样点/双耳尾音拓扑）已返工并复验。以下为**待用户听感/GPU 复核**：
+
+- [ ] **3D 空间感（D-T63-1）**：上游使用 WebAudio PannerNode HRTF + inverse
+  distance；Rust 离线总线用等功率 pan + 提取的 inverse distance gain 近似，
+  双耳定位/前后感与距离衰减听感需实机对照（headless 仅校验曲线数值）。
+- [ ] **混响尾音（D-T63-2）**：上游 1.5 s / decay 3.4 卷积 IR（含 5 组早反射）；
+  Rust 生产用提取早反射派生的紧凑反馈尾音（IR 烘焙仅作确定性锚测），
+  plaza 空间残响的时长/亮度/尾音密度与 wasm 尺寸需用户机复核。
+- [ ] **压限/限幅响度（D-T63-3）**：上游 DynamicsCompressor + limiter 为时域
+  动态处理；Rust 用提取参数（glue -12/3/8/0.003/0.18、lim -2/20/0/0.001/0.08）
+  驱动的静态软限幅近似，实际峰度/pumping 听感与响度一致性需实机复核。
+- [ ] **混响 send 默认值（D-T63-4）**：基础 148 cue 的 per-name `reverb` 未提取，
+  沿用上游默认 0.08；kit 53 名用已钉源 `kit-sfx.json` 的 per-cue reverb。
+  基础 cue 混响量的场景适配需听感复核。
+- [ ] **mute/low tier 保底**：静音开关与 low 档下空间湿声总线的旁通在 headless
+  有锚测，实际外放设备的静音瞬时性（无残响泄漏）需用户机确认。

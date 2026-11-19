@@ -80,6 +80,15 @@ Task 61（RenderLayers/第二相机）完成：layer0 关卡/FX/UI、layer1 3D l
 第二相机由提取位姿驱动并启停、主相机不再被覆盖；7 处相机消费者（5 reader +
 2 writer）限定 `MainCamera`；双相机冒烟测试锚定层位集/激活/主相机不变性。
 D-T61-1（层映射设计决策）/D-T61-4（清屏顺序 GPU 复核）登记于 M5 REVIEW_CHECKLIST。
+Task 62（3D 大厅终稿）完成：live emote 事件→lineup slot→per-slot layer1 preview 与
+8 站位名牌数据面全链接线，同名 emote 用 serial 重放；投影纯函数锚定 NDC/behind/
+scale/kFront/UI 安全区，`lobbyset-crosscheck` 独立核对 emote 全字段；5 项专项锚测
++ 九段门禁 PASS。D-T62-1..4（预览 facade、DOM 待 Task64、安全区/kFront 回退、
+动态 rig 锚点）登记 GPU/浏览器复核。
+Task 63（音频总线终稿）完成：`bus.json` 提取 JS 总线拓扑/压限/3D 曲线/IR 描述符，
+`audio/bus.rs` 烘焙 IR 锚测 + 提取 taps 派生紧凑尾音；`Pcm` 立体声化，sfx/脚步经
+`MainCamera` listener 做距离衰减+pan+湿声播放，kit 53 名 per-cue reverb。8 项锚测 +
+`audio-bus-crosscheck` 61 断言 + 九段门禁 PASS；D-T63-1..4 登记听感复核。
 
 ## 质量档位
 
