@@ -47,7 +47,10 @@ pub mod api;
 // numbers / minimap FX), consumed by the DOM overlay bridge.
 pub mod composite;
 pub mod hooks;
+// M5 Task 65: post-processing chain data plane (12-uniform grade / four-tier
+// pass switches / GTAO+denoise / SMAA gate / tilt-shift CSS), anchored to JS.
 pub mod particles;
+pub mod post_process;
 pub mod render;
 pub mod screen_fx;
 pub mod swim_wake;

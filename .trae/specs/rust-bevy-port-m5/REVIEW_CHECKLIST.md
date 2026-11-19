@@ -203,3 +203,21 @@ pass gate low 档强制关、伤害数字 combo/上限/退场、minimap 落地�
 - [ ] **jump/land/boom FX 生产者（D-T64-4）**：superjump 飞行态与 `bomb:explode`
   无 MatchEvent 承载，`land_jump()` 未按 actor 过滤（JS 按 `f.actor`）；这些 FX
   的生命周期状态机仅单测覆盖，实机点标动画需浏览器复核。
+
+## Task 65 复核登记（2026-11-20）
+
+无头可测：4 项 Task65 锚测（grade 12 uniform + hurt_color 跨模块比对、四档开关+low 全关、
+GTAO/SMAA/tilt 参数、pass order）+ `postprocess-crosscheck` 54 断言 + `environment-crosscheck`
+97 checks；门禁结论见 `tasks.md` Task 65 Completion Evidence。独立评审无 P0/P1。以下为
+**待用户 GPU/浏览器复核**：
+
+- [ ] **GTAO 强度与 AO 观感（D-T65-3）**：GTAO/denoise 参数（radius 1.1/samples 12/
+  blend 0.8）已钉测，GPU pass 本体未接；漏光/暗角/半分辨率效果需用户 GPU 机确认。
+- [ ] **grade 色彩链（D-T65-3）**：12 uniform（含 uHurtColor）数据层已锚测，实际色调/
+  对比度/主题 overlay 叠加效果需用户 GPU 机对照上游确认。
+- [ ] **SMAA 锯齿（D-T65-3）**：门控数据面已实现（数据面近似 `smaa⇔msaa>0`，JS 实为
+  Apple GPU 回退），无运行时消费者；实机抗锯齿质量需浏览器复核。
+- [ ] **tilt-shift 景深（D-T65-1）**：上游为 CSS 覆盖（blur 6px/saturate 1.12/上下 28%/22%）
+  而非 GPU pass，Rust 只持数据；diorama 观感需浏览器复核。
+- [ ] **逐档观感差异**：low/medium/high/ultra 开关组合数据面单测 + headless 四组合冒烟通过，
+  实际视觉差异与 low 全关保底的用户观感需逐档确认。

@@ -271,7 +271,7 @@
     登记于 M5 REVIEW_CHECKLIST，未在沙箱伪验收 GPU/DOM 观感。
 
 ## Task 65: 后处理链（GTAO/grade/SMAA/tilt-shift）
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: medium
 - **Depends On**: M4 Task 55
 - **Description**: GTAO、GradeShader 12 uniform（主题 overlay 链已有数据层）、SMAA、
@@ -283,6 +283,24 @@
   - `rule` TR-65.2: REVIEW_CHECKLIST 登记（逐档观感/GTAO 强度/SMAA 锯齿，用户机复核）。
 - **Notes**: 沙箱无 GPU，shader 正确性只能靠数据层锚测 + 用户机复核；实施设计需给
   Bevy 内建/自写 pass 的选型对比。
+- **Completion Evidence** (2026-11-20):
+  - 数据面：`extract-postprocess.mjs` 从只读 `core/renderer.js`/`config.js`/`styles/hud.css`
+    提取 GradeShader 12 uniform（含 `uHurtColor`，D-T65-2）、GTAO+denoise 参数、SMAA 门控、
+    tilt-shift CSS 数据、四档 QUALITY 开关与真实 `comp.addPass` 顺序，钉源
+    `assets/postprocess.json`（commit 0d7ab048）。`postprocess-crosscheck.mjs` 独立重解析 54 断言。
+  - `fx/post_process.rs`（新模块）消费提取表：12-uniform grade 链、四档 pass 派生
+    （gtao⇔ao、smaa⇔msaa>0、low 全关 `effective_combo`）、GTAO/SMAA/tilt 参数、pass order
+    （grade→screenfx→output）；`environment.rs::Grade` 补 `hurt_color` 与 postprocess 同源比对。
+    Bevy 内建 Bloom 已在 world.rs 接线，GTAO/SMAA/grade GPU pass 本体只做数据面（D-T65-3）。
+  - 锚测：4 项 Task65 专项（grade 12 uniform + hurt_color 跨模块比对、四档开关+low 全关、
+    GTAO/SMAA/tilt 参数、pass order）+ `postprocess-crosscheck` 54 断言 +
+    `environment-crosscheck` 97 checks（含 uHurtColor 扩展）+ headless 四组合 + wasm32 check。
+  - 九段门禁 `rust/tools/verify/logs/task65-gates-20261119T202624Z.log`：
+    `FMT/CLIPPY/TEST/WASM/TREE/DETERM/XCHK/TRUNK/RELEASE_BUILD/HEADLESS/
+    HEADLESS_BOSS_EXIT=0`，`DETERM=BYTE_IDENTICAL`，`JS_TREE_CLEAN`、`SIM_TREE_CLEAN`，
+    `GATE_VERDICT=PASS`（TRUNK 真实通过）。独立评审无 P0/P1，2 项 P2（spec 数字笔误、
+    SMAA 数据面近似）已修正/登记；D-T65-1..3 与选型对比登记于 spec/REVIEW_CHECKLIST，
+    未在沙箱伪验收 GPU 观感。
 
 ## Task 66: 环境终稿（云/PMREM/远景反射/海面）
 - **Status**: `pending`

@@ -474,3 +474,53 @@ GTAO/grade/SMAA/tilt-shift、云/PMREM/海面、alley 材质逐档落地且逐�
 - TR-64.2：REVIEW_CHECKLIST 登记（叠层观感、与 bloom 顺序、伤害数字可读性、小地图点标）。
 - 门禁 `gate-task64.sh`（模板 gate-task63.sh，DETERM 用 screenfx 双跑，
   XCHK 跑 `task64` 专项 + screenfx crosscheck + 既有 crosschecks）。
+
+---
+
+## Task65 实施设计（2026-11-20，开工实读定稿）
+
+### §0 锚点与保守范围
+- 上游 `src/core/renderer.js`（非 `src/render/`）L1-3 管线：MSAA HDR → optional
+  GTAO → bloom → grade/vignette → output；L120-153 pass 构造、L202-215 grade uniform
+  每帧覆盖。实读常量：
+  - GTAO L128-136：`blendIntensity=0.8`、gtao material `{radius 1.1, distanceExponent
+    1.6, thickness 1.0, scale 1.5, samples 12, distanceFallOff 1.0}`、pd material
+    `{lumaPhi 10, depthPhi 2, normalPhi 3, radius 6, rings 2, samples 16}`、Apple
+    GPU 半分辨率。
+  - Grade L17-32 12 uniform 默认：uSat 1.08/uVib 0.12/uContrast 1.07/uShadowTint
+    (0.975,0.99,1.035)/uHighTint(1.025,1.0,0.972)/uLift 0/uExposure 1.0/uVignette
+    0.22/uHurt 0/uHurtColor(1,0.2,0.3)/uFlash 0/uAspect 1.7。
+  - SMAA L148-149：`q.msaa>0 && !samples` 时替身，无数值参数。
+  - `src/config.js` L585-591 QUALITY 四档：`low{msaa0,bloom F,ao F}`、
+    `medium{2,T,F}`、`high/ultra{4,T,T}`；无 grade/SMAA/tilt-shift 独立档位字段。
+- **实读偏差**：tilt-shift 不在 renderer.js，而是 `src/ui/diorama.js` + `styles/hud.css`
+  L776-781 的 CSS 覆盖（blur 6px/saturate 1.12、上 28%/下 22% 渐变、暗角）；
+  GradeShader 的 `uHurtColor` 在 `environment.rs::Grade` 缺失（数据层 11 字段）。
+  两项登记 D-T65-1/2。
+- 新增 `extract-postprocess.mjs` + `assets/postprocess.json` 钉源 grade 12 uniform +
+  GTAO/SMAA/tilt-shift/CSS 参数 + 四档开关组合；`postprocess-crosscheck.mjs` 独立重解析。
+
+### §1 数据面与偏差
+- `fx/post_process.rs`（新模块）消费 `postprocess.json`：12-uniform grade 链
+  （含 `hurt_color` 补缺）、四档开关派生表（gtao⇔ao、smaa⇔msaa>0、grade⇔post_enabled、
+  tilt_shift⇔diorama）、GTAO 参数、tilt-shift CSS 数据。复用 `EnvParams.post_enabled`
+  低档保底与 `fx/composite.rs` 的 pass 顺序门控。
+- D-T65-1：tilt-shift 上游为 CSS/DOM 而非 GPU pass；D-T65-2：Grade `uHurtColor`
+  数据层补缺；D-T65-3：GTAO/SMAA/grade GPU pass 本体沙箱不可验，仅数据面 + 用户机复核。
+
+### §2 测试与门禁
+- TR-65.1：grade 12 uniform 锚测（含 hurt_color，扩展 environment-crosscheck 93→97）、
+  四档开关组合参数单测（low 全关）、GTAO/SMAA/tilt-shift 参数锚测、headless 四组合
+  冒烟、wasm32 check。
+- TR-65.2：REVIEW_CHECKLIST 登记（逐档观感/GTAO 强度/SMAA 锯齿/grade 色彩）。
+- 门禁 `gate-task65.sh`（模板 gate-task64.sh，DETERM 用 postprocess 双跑，
+  XCHK 跑 `task65` 专项 + postprocess/environment crosschecks + 既有 crosschecks）。
+
+### §3 Bevy pass 选型对比（TR-65 Notes）
+- Bloom：Bevy 内建 `bevy::post_process::bloom::Bloom` 已在 world.rs 接线，保留。
+- GTAO：Bevy 0.19 无内建，需自写 fullscreen pass（依赖 depth/normal，成本高）；
+  沙箱无 GPU，本任务只落参数/开关数据面，GPU pass 本体登记用户机复核。
+- Grade：自写 fullscreen 或并入 Task 64 的 `grade→screenfx→output` composite（推荐后者
+  省 pass）；当前仅数据面统一，渲染顺序以数据层锚测 + 用户机复核。
+- SMAA：无内建且需 area/search 纹理，门控数据面 + 用户机复核。
+- tilt-shift：维持 DOM/CSS 覆盖层，不做 GPU pass。

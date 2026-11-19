@@ -92,6 +92,9 @@ pub struct Grade {
     pub shadow_tint: [f32; 3],
     pub high_tint: [f32; 3],
     pub hurt: f32,
+    /// Task 65 D-T65-2: GradeShader's 12th uniform `uHurtColor`, previously
+    /// extracted into environment.json but missing from this data struct.
+    pub hurt_color: [f32; 3],
     pub flash: f32,
     pub aspect: f32,
     pub bloom: [f32; 3],
@@ -113,6 +116,7 @@ impl Grade {
             shadow_tint: triple(d, "uShadowTint"),
             high_tint: triple(d, "uHighTint"),
             hurt: f32_field(d, "uHurt"),
+            hurt_color: triple(d, "uHurtColor"),
             flash: f32_field(d, "uFlash"),
             aspect: f32_field(d, "uAspect"),
             bloom: [b[0], b[1], b[2]],

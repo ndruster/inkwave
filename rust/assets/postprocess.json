@@ -1,0 +1,97 @@
+{
+  "grade_defaults": {
+    "aspect": 1.7,
+    "contrast": 1.07,
+    "exposure": 1,
+    "flash": 0,
+    "high_tint": [
+      1.025,
+      1,
+      0.972
+    ],
+    "hurt": 0,
+    "hurt_color": [
+      1,
+      0.2,
+      0.3
+    ],
+    "lift": 0,
+    "sat": 1.08,
+    "shadow_tint": [
+      0.975,
+      0.99,
+      1.035
+    ],
+    "vib": 0.12,
+    "vignette": 0.22
+  },
+  "gtao": {
+    "blend_intensity": 0.8,
+    "denoise": {
+      "depth_phi": 2,
+      "luma_phi": 10,
+      "normal_phi": 3,
+      "radius": 6,
+      "rings": 2,
+      "samples": 16
+    },
+    "distance_exponent": 1.6,
+    "distance_falloff": 1,
+    "half_res_apple_gpu": true,
+    "radius": 1.1,
+    "samples": 12,
+    "scale": 1.5,
+    "thickness": 1
+  },
+  "pass_order": [
+    "render_hdr",
+    "gtao",
+    "bloom",
+    "grade_vignette",
+    "screenfx",
+    "output",
+    "smaa"
+  ],
+  "quality": {
+    "high": {
+      "ao": true,
+      "bloom": true,
+      "msaa": 4
+    },
+    "low": {
+      "ao": false,
+      "bloom": false,
+      "msaa": 0
+    },
+    "medium": {
+      "ao": false,
+      "bloom": true,
+      "msaa": 2
+    },
+    "ultra": {
+      "ao": true,
+      "bloom": true,
+      "msaa": 4
+    }
+  },
+  "schema": 1,
+  "smaa": {
+    "gate": "msaa>0 && !multisampled",
+    "pass": "SMAAPass"
+  },
+  "source": {
+    "commit": "0d7ab048e3ff3f44d07f999027e8e30e99130057",
+    "files": [
+      "src/core/renderer.js",
+      "src/config.js",
+      "styles/hud.css"
+    ]
+  },
+  "tilt_shift": {
+    "blur_px": 6,
+    "bottom_height_pct": 22,
+    "saturate": 1.12,
+    "top_height_pct": 28
+  }
+}
+

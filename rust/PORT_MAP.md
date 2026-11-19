@@ -93,6 +93,10 @@ Task 64（fx composite/DOM 叠层）完成：`screenfx.json` 提取 composite un
 阈值/decay/伤害数字池/小地图参数；`fx/composite.rs` pass gate 逐字段复刻 + 伤害数字 combo
 池 + minimap 相对年龄 FX，生产系统接 HitSend/Slam/Respawn 真实事件，low 档全关。
 7 项锚测 + `screenfx-crosscheck` 67 断言 + 九段门禁 PASS；D-T64-1..4 登记用户机复核。
+Task 65（后处理链）完成：`postprocess.json` 提取 grade 12 uniform（含 uHurtColor）/GTAO+denoise/
+四档开关/真实 addPass 顺序；`fx/post_process.rs` 四档 pass 派生（low 全关）+ 12-uniform grade
+链 + GTAO/SMAA/tilt 参数，`environment.rs::Grade` 补 hurt_color。4 项锚测 + `postprocess-crosscheck`
+54 断言 + `environment-crosscheck` 97 checks + 九段门禁 PASS；D-T65-1..3 登记用户机复核。
 
 ## 质量档位
 

@@ -152,18 +152,19 @@ Task 54 起脚本自动判定 `GATE_VERDICT`，41–53 用逐段 `*_EXIT=0` 口�
 TRUNK 段在本沙箱因 wasm-bindgen OOM `signal: 9` 判 DEGRADED（D-T40-1 环境性、非阻塞）。
 workspace 测试基线逐任务单调递增（554 → 1017+；精确数字见各任务 Completion Evidence）。
 
-## M5 同步状态（2026-11-20，Task 58–64）
+## M5 同步状态（2026-11-20，Task 58–65）
 
 M5 对照上游现存源码逐任务实施，`server/` 与上游 JS 树零改动，`inkwave_sim`
 依赖面未变（逐任务门禁 `JS_TREE_CLEAN`/`SIM_TREE_CLEAN` 实核）。Task 58
 bow/brolly 姿态（bowl 上游无入口）→ Task 59 设置屏/持久化 → Task 60 live 53 名
 kit SFX/脚步消费者 → Task 61 RenderLayers/第二相机 → Task 62 3D 大厅 preview/
-名牌/emote → Task 63 音频总线终稿 → Task 64 fx composite/DOM 叠层 均已完成并九段
-门禁 PASS；Task 62 的 emote 事件消费与 8 站位名牌投影、Task 63 的总线拓扑/压限/
-3D 曲线/IR 描述符、Task 64 的 composite uniform/20 项 pass 阈值/decay/伤害数字池/
-小地图参数均由独立 crosscheck 重解析上游 JS，D-T62-1..4、D-T63-1..4 与
-D-T64-1..4（heal 上游无 / GPU+DOM 仅数据面 / 名牌通道统一 / superjump FX 无事件
-生产者）登记于 M5 REVIEW_CHECKLIST，未做 GPU/浏览器/听感伪验收。
+名牌/emote → Task 63 音频总线终稿 → Task 64 fx composite/DOM 叠层 → Task 65 后处理链
+均已完成并九段门禁 PASS；Task 62 的 emote 事件消费与 8 站位名牌投影、Task 63 的总线
+拓扑/压限/3D 曲线/IR 描述符、Task 64 的 composite uniform/20 项 pass 阈值/decay/
+伤害数字池/小地图参数、Task 65 的 grade 12 uniform/GTAO/四档开关/真实 addPass 顺序
+均由独立 crosscheck 重解析上游 JS，D-T62-1..4、D-T63-1..4、D-T64-1..4 与
+D-T65-1..3（tilt-shift 是 CSS / GPU pass 仅数据面 / uHurtColor 补缺）登记于 M5
+REVIEW_CHECKLIST，未做 GPU/浏览器/听感伪验收。
 
 ## M4 后技术债批次（2026-11-11，M4 收尾后独立小批次）
 

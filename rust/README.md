@@ -468,3 +468,9 @@ kFront 回退、动态 rig 锚点缺失）登记为 GPU/浏览器复核项。
 SpecialSlam/Respawn 真实事件，low 档强制叠层全关。7 项锚测 + `screenfx-crosscheck`
 67 断言 + 九段门禁 PASS（`task64-gates-20261119T195857Z.log`）；D-T64-1..4（heal 上游无 /
 GPU+DOM 仅数据面 / 名牌通道统一 / superjump FX 无事件生产者）登记用户机复核。
+**Task 65（后处理链）**完成：`postprocess.json` 提取 GradeShader 12 uniform（含 uHurtColor）/
+GTAO+denoise/四档 QUALITY 开关/真实 addPass 顺序；`fx/post_process.rs` 数据面含 12-uniform
+grade 链、四档 pass 派生（low 全关）、GTAO/SMAA/tilt 参数，`environment.rs::Grade` 补
+hurt_color。4 项锚测 + `postprocess-crosscheck` 54 断言 + `environment-crosscheck` 97 checks
++ 九段门禁 PASS（`task65-gates-20261119T202624Z.log`）；D-T65-1..3（tilt-shift 是 CSS / GPU
+pass 仅数据面 / uHurtColor 补缺）登记用户机复核。

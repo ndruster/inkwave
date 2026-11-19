@@ -94,6 +94,15 @@ for (const k of ['uShadowTint', 'uHighTint']) {
   eq(got.length, 3, `gradeDefaults.${k} length`);
   for (let i = 0; i < 3; i++) near(got[i], want[i], `gradeDefaults.${k}[${i}]`);
 }
+// Task 65 D-T65-2: uHurtColor is a THREE.Color (not Vector3); extend the
+// 12th-uniform coverage that was previously skipped here.
+{
+  const m = matches(renderer, /uHurtColor:\s*\{\s*value:\s*new THREE\.Color\(([^)]*)\)\s*\}/, 'GradeShader.uHurtColor');
+  const want = m[0][1].split(',').map((s) => Number(s.trim()));
+  const got = doc.gradeDefaults.uHurtColor;
+  eq(got.length, 3, 'gradeDefaults.uHurtColor length');
+  for (let i = 0; i < 3; i++) near(got[i], want[i], `gradeDefaults.uHurtColor[${i}]`);
+}
 
 // ---- DEFAULT_SETTINGS + MAPS.times → mapThemes ---------------------------
 eq(doc.defaultSettings.quality, matches(config, /quality:\s*'(high|medium|low|ultra)'/, 'DEFAULT_SETTINGS.quality')[0][1], 'default quality');
