@@ -368,8 +368,8 @@ pub fn net_tick(
                     teardown_net_match(nms, demo, &mut st);
                 }
             }
-            // `State` / `Lobby` / `Error` / `Join` / `Emote` are consumed by
-            // the UI layer (`ui_state_machine` settle + `project` facts).
+            // `State` / `Lobby` / `Error` / `Join` are consumed by the UI
+            // layer; `Emote` is consumed there too (Task 62 lobbyEmote).
             _ => {}
         }
     }

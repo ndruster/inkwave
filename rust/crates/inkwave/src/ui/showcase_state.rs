@@ -14,7 +14,10 @@
 
 use std::sync::OnceLock;
 
+use bevy::math::{Mat4, Vec3, Vec4};
 use bevy::prelude::Resource;
+use inkwave_sim::net::SessionId;
+use inkwave_sim::net::session::{Lobby, TeamSel};
 use inkwave_sim::net::wire::{JVal, parse_json};
 
 use super::online::{OnlineScreen, OnlineView, RosterRow};
@@ -123,6 +126,11 @@ pub struct Emote {
     pub variant: f32,
     pub duration: f32,
     pub hop: f32,
+    /// `showcase.js` L74 `t0`: optional start offset (flex = 2.86 s).
+    pub t0: Option<f32>,
+    /// `showcase.js` L74 `trig`: optional one-shot (`flex` = `hairflip`,
+    /// handled by `CharAnim::trigger`).
+    pub trig: Option<String>,
 }
 
 #[must_use]
@@ -134,6 +142,8 @@ pub fn emote(name: &str) -> Option<Emote> {
         variant: f32_field(e, "v"),
         duration: f32_field(e, "dur"),
         hop: f32_field(e, "hop"),
+        t0: e.field("t0").and_then(JVal::as_f64).map(|v| v as f32),
+        trig: e.field("trig").and_then(JVal::as_str).map(str::to_string),
     })
 }
 
@@ -189,6 +199,173 @@ pub struct CameraPose {
     pub fov: f32,
     pub near: f32,
     pub far: f32,
+}
+
+/// Task 62: DOM nametag projection ≡ `showcase.js` L2056-2090
+/// `lobbyAnchor` / `lobbySlotAnchor` / `_lobProject`. Pure math (no GPU):
+/// `x/y` are pixel coordinates, `behind` is the WebGL NDC-z test, `s` is the
+/// right-vector projected scale, and `vis` is cleared when the tag falls
+/// outside the measured UI safe rect (inset 24/24/20/30 px, ≡ L2086-2088).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LobbyTag {
+    pub x: f32,
+    pub y: f32,
+    pub behind: bool,
+    pub s: f32,
+    pub vis: bool,
+    pub row: usize,
+    pub slot: usize,
+}
+
+/// Task 62: one projected DOM plate's DATA (Task 64 owns the actual DOM node).
+/// `free=true` is an empty lineup mark (`lobbySlotAnchor`, L2065-2073).
+#[derive(Clone, Debug, PartialEq)]
+pub struct LobbyNameplate {
+    pub tag: LobbyTag,
+    pub name: String,
+    pub team: u8,
+    pub ready: bool,
+    pub host: bool,
+    pub you: bool,
+    pub emote: Option<String>,
+    pub free: bool,
+}
+
+/// Bevy-side data plane consumed by the Task 64 DOM overlay bridge. Keeping
+/// it as a resource (not UI nodes) makes the whole projection headless-testable
+/// and never draws a second copy over the layer-1 lobby camera.
+#[derive(Resource, Default, Debug)]
+pub struct LobbyNameplates(pub Vec<LobbyNameplate>);
+
+fn project_ndc(p: Vec3, view: Mat4, proj: Mat4) -> Vec3 {
+    let clip = proj * view * Vec4::new(p.x, p.y, p.z, 1.0);
+    Vec3::new(clip.x, clip.y, clip.z) / clip.w
+}
+
+/// `ui` is `(l, r, t, b)` in pixels for the measured safe rect; `None` means
+/// no UI rect test.
+/// `k_front` ≡ `lob.kFront` (the lobby approach blend; callers pass the live
+/// value, the `max(1, …)` guard is ported verbatim).
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn project_lobby_tag(
+    p: Vec3,
+    pose: CameraPose,
+    width: f32,
+    height: f32,
+    ui: Option<(f32, f32, f32, f32)>,
+    k_front: f32,
+    vis: bool,
+    row: usize,
+    slot: usize,
+) -> LobbyTag {
+    let eye = Vec3::from_array(pose.pos);
+    let target = Vec3::from_array(pose.target);
+    // glam 0.30+ `look_to_rh` requires a normalized direction (it no longer
+    // normalizes internally); passing the raw eye→target vector scales the
+    // translation term and pushes every NDC z past the far plane.
+    let dir = (target - eye).normalize();
+    let view = Mat4::look_to_rh(eye, dir, Vec3::Y);
+    let proj = Mat4::perspective_rh(pose.fov.to_radians(), width / height, pose.near, pose.far);
+    let ndc = project_ndc(p, view, proj);
+    // `_d.setFromMatrixColumn(cam.matrixWorld, 0)` = camera right in world.
+    let right = dir.cross(Vec3::Y).normalize();
+    let shifted = project_ndc(p + right, view, proj);
+    let x = (ndc.x + 1.0) * 0.5 * width;
+    let y = (1.0 - ndc.y) * 0.5 * height;
+    let s = (shifted.x - ndc.x).abs() * 0.5 * width / k_front.max(1.0);
+    let inside =
+        ui.is_none_or(|(l, r, t, b)| x > l + 24.0 && x < r - 24.0 && y > t + 20.0 && y < b + 30.0);
+    LobbyTag {
+        x,
+        y,
+        behind: ndc.z > 1.0,
+        s,
+        vis: inside && vis,
+        row,
+        slot,
+    }
+}
+
+/// `lobbyAnchor` height ≡ showcase.js L2060:
+/// `pos.y + M.y + plateH * M.sy` (PLATE_H from the extracted pedestal table).
+#[must_use]
+pub fn member_anchor(pos: [f32; 3], y: f32, sy: f32) -> Vec3 {
+    let plate_h = pedestal().plate_h;
+    Vec3::new(pos[0], pos[1] + y + plate_h * sy, pos[2])
+}
+
+/// `lobbySlotAnchor` height ≡ showcase.js L2072: `S.pos.y + PLATE_H - 0.35`.
+#[must_use]
+pub fn slot_anchor(pos: [f32; 3]) -> Vec3 {
+    Vec3::new(pos[0], pos[1] + pedestal().plate_h - 0.35, pos[2])
+}
+
+/// Full lobby plate set: occupied marks project from the member anchor, empty
+/// marks from `lobbySlotAnchor` (`showcase.js` L2056-2073). The eight rows are
+/// always emitted in `spots()` order so a DOM consumer can key them by
+/// `(row, slot)` without rebuilding its nodes on roster refresh.
+#[must_use]
+pub fn project_lobby_nameplates(
+    state: &ShowcaseState,
+    width: f32,
+    height: f32,
+    ui: Option<(f32, f32, f32, f32)>,
+    k_front: f32,
+) -> Vec<LobbyNameplate> {
+    if state.mode != ShowcaseMode::Lobby || !state.full_frame {
+        return Vec::new();
+    }
+    let pose = camera_pose(state.mode);
+    spots()
+        .into_iter()
+        .enumerate()
+        .map(|(slot, spot)| {
+            let row = spot.team as usize;
+            match state.members.iter().find(|m| m.slot == slot) {
+                Some(m) => LobbyNameplate {
+                    tag: project_lobby_tag(
+                        member_anchor(spot.pos, 0.0, 1.0),
+                        pose,
+                        width,
+                        height,
+                        ui,
+                        k_front,
+                        true,
+                        row,
+                        slot % 4,
+                    ),
+                    name: m.name.clone(),
+                    team: m.team,
+                    ready: m.ready,
+                    host: m.host,
+                    you: m.you,
+                    emote: m.emote.clone(),
+                    free: false,
+                },
+                None => LobbyNameplate {
+                    tag: project_lobby_tag(
+                        slot_anchor(spot.pos),
+                        pose,
+                        width,
+                        height,
+                        ui,
+                        k_front,
+                        true,
+                        row,
+                        slot % 4,
+                    ),
+                    name: String::new(),
+                    team: spot.team,
+                    ready: false,
+                    host: false,
+                    you: false,
+                    emote: None,
+                    free: true,
+                },
+            }
+        })
+        .collect()
 }
 
 #[must_use]
@@ -307,6 +484,9 @@ pub struct ShowcaseMember {
     pub host: bool,
     pub you: bool,
     pub emote: Option<String>,
+    /// Incremented by every `lobbyEmote` delivery so replaying the same name
+    /// remains a new one-shot (JS `showcase.js` L2002-2005 pre-empts the old queue).
+    pub emote_serial: u32,
 }
 
 /// Runtime showcase state. `reduced` = low quality tier, where the 3D LobbySet
@@ -423,6 +603,7 @@ impl ShowcaseState {
         for m in &mut rows {
             if let Some(old) = prev.iter().find(|p| p.slot == m.slot && p.name == m.name) {
                 m.emote = old.emote.clone();
+                m.emote_serial = old.emote_serial;
             }
         }
         self.members = rows;
@@ -475,8 +656,22 @@ impl ShowcaseState {
         let e = emote(name)?;
         if let Some(m) = self.members.iter_mut().find(|m| m.slot == slot) {
             m.emote = Some(name.to_string());
+            m.emote_serial = m.emote_serial.wrapping_add(1);
         }
         Some(e)
+    }
+
+    /// Consume a live `SessionEvent::Emote` (session.js L263/L372). The relay
+    /// id is mapped to the SAME team-ordered slot `rows_to_members` produced,
+    /// so the 3D preview and DOM plate both follow the player who sent it.
+    pub fn apply_emote_event(&mut self, lobby: &Lobby, id: &SessionId, name: &str) -> bool {
+        if self.mode != ShowcaseMode::Lobby || !self.full_frame {
+            return false;
+        }
+        let Some(slot) = slot_for_player(lobby, id) else {
+            return false;
+        };
+        self.emote(slot, name).is_some()
     }
 
     fn refresh_frame(&mut self) {
@@ -509,15 +704,253 @@ pub fn rows_to_members(rows: &[RosterRow]) -> Vec<ShowcaseMember> {
                 host: r.host,
                 you: r.you,
                 emote: None,
+                emote_serial: 0,
             }
         })
         .collect()
+}
+
+/// Team-ordered lobby-player → lineup slot, identical to `rows_to_members`
+/// (project() preserves lobby player order). Kept here so a network emote event
+/// can target the same slot without mutating `inkwave_sim`.
+#[must_use]
+pub fn slot_for_player(lobby: &Lobby, id: &SessionId) -> Option<usize> {
+    let mut front = 0usize;
+    let mut back = 4usize;
+    for p in &lobby.players {
+        let slot = if p.team == TeamSel::One {
+            let s = back.min(7);
+            back = back.saturating_add(1);
+            s
+        } else {
+            let s = front.min(3);
+            front = front.saturating_add(1);
+            s
+        };
+        if &p.id == id {
+            return Some(slot);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ui::online::{HubView, LobbyView};
+
+    /// TR-62.1: `flex` is the only emote with a start offset and a trigger
+    /// (`lobbyset.json` ← showcase.js L74). Both must survive extraction.
+    #[test]
+    fn task62_emote_t0_and_trigger_are_extracted() {
+        let flex = emote("flex").expect("flex emote");
+        assert_eq!(flex.dance, "victory");
+        assert_eq!(flex.t0, Some(2.86));
+        assert_eq!(flex.trig.as_deref(), Some("hairflip"));
+        assert_eq!(flex.hop, 0.12);
+        let wave = emote("wave").expect("wave emote");
+        assert_eq!(wave.t0, None);
+        assert_eq!(wave.trig, None);
+        assert_eq!(wave.variant, 2.0);
+    }
+
+    /// The anchor heights are JS literals (`PLATE_H - 0.35` / `plateH*sy`),
+    /// and the projection is checked against the camera's own look-at target:
+    /// it must land at screen centre, with the right-shifted point to its
+    /// right, a behind-camera point flagged, and UI occlusion honoured.
+    #[test]
+    fn task62_nametag_projection_matches_js_rules() {
+        let pose = camera_pose(ShowcaseMode::Lobby);
+        let target = Vec3::from_array(pose.target);
+        let center = project_lobby_tag(target, pose, 1920.0, 1080.0, None, 1.0, true, 1, 2);
+        assert!((center.x - 960.0).abs() < 0.5, "look-at target → centre x");
+        assert!((center.y - 540.0).abs() < 0.5, "look-at target → centre y");
+        assert!(!center.behind && center.vis);
+        assert_eq!((center.row, center.slot), (1, 2));
+        let shifted = project_lobby_tag(
+            target + Vec3::X,
+            pose,
+            1920.0,
+            1080.0,
+            None,
+            1.0,
+            true,
+            0,
+            0,
+        );
+        assert!(
+            shifted.x > center.x,
+            "camera-right shift increases screen x"
+        );
+        assert!(shifted.s > 0.0, "scale is derived from the right vector");
+        let scaled = project_lobby_tag(
+            target + Vec3::X,
+            pose,
+            1920.0,
+            1080.0,
+            None,
+            2.0,
+            true,
+            0,
+            0,
+        );
+        assert!(
+            (scaled.s - shifted.s * 0.5).abs() < 1e-3,
+            "kFront divides the projected scale (JS max(1, kFront))"
+        );
+        // A point behind the eye is flagged (WebGL NDC z > 1).
+        let behind = project_lobby_tag(
+            Vec3::from_array(pose.pos) + (Vec3::from_array(pose.pos) - target),
+            pose,
+            1920.0,
+            1080.0,
+            None,
+            1.0,
+            true,
+            0,
+            0,
+        );
+        assert!(behind.behind);
+        // The measured UI rect is a SAFE area (l+24,r-24,t+20,b+30): the
+        // centre stays visible inside it and is hidden outside it.
+        let safe = project_lobby_tag(
+            target,
+            pose,
+            1920.0,
+            1080.0,
+            Some((900.0, 1020.0, 500.0, 580.0)),
+            1.0,
+            true,
+            0,
+            0,
+        );
+        assert!(safe.vis, "centre falls inside the inset UI safe rect");
+        let outside = project_lobby_tag(
+            target,
+            pose,
+            1920.0,
+            1080.0,
+            Some((0.0, 100.0, 0.0, 100.0)),
+            1.0,
+            true,
+            0,
+            0,
+        );
+        assert!(!outside.vis, "centre outside the UI safe rect is hidden");
+        // Anchors use the extracted plate height.
+        let ph = pedestal().plate_h;
+        assert_eq!(
+            slot_anchor([1.0, 2.0, 3.0]),
+            Vec3::new(1.0, 2.0 + ph - 0.35, 3.0)
+        );
+        assert_eq!(
+            member_anchor([1.0, 2.0, 3.0], 0.5, 2.0),
+            Vec3::new(1.0, 2.5 + ph * 2.0, 3.0)
+        );
+    }
+
+    /// TR-62.1: the plate data plane follows the roster, keeps ready/host/you
+    /// flags and always emits all eight marks (empty slots are free markers).
+    #[test]
+    fn task62_nameplates_follow_roster_and_flags() {
+        let mut v = view(
+            OnlineScreen::Lobby,
+            "AB3CD",
+            vec![row("me", 0, true), row("rival", 1, false)],
+            true,
+        );
+        v.lobby.rows[0].host = true;
+        let mut s = ShowcaseState::from_online_view(&v, "high");
+        assert!(s.emote(0, "wave").is_some());
+        let plates = project_lobby_nameplates(&s, 1920.0, 1080.0, None, 1.0);
+        assert_eq!(plates.len(), 8);
+        assert_eq!(plates[0].name, "me");
+        assert!(plates[0].ready && plates[0].host && plates[0].you && !plates[0].free);
+        assert_eq!(plates[0].emote.as_deref(), Some("wave"));
+        assert_eq!((plates[0].tag.row, plates[0].tag.slot), (0, 0));
+        assert!(plates[1].free && plates[1].name.is_empty());
+        assert_eq!((plates[1].tag.row, plates[1].tag.slot), (0, 1));
+        assert_eq!(plates[4].name, "rival");
+        assert_eq!((plates[4].tag.row, plates[4].tag.slot), (1, 0));
+        assert!(
+            plates
+                .iter()
+                .all(|p| p.tag.x.is_finite() && p.tag.y.is_finite())
+        );
+
+        let empty = ShowcaseState::from_online_view(
+            &view(OnlineScreen::Lobby, "AB3CD", vec![], false),
+            "high",
+        );
+        let empty_plates = project_lobby_nameplates(&empty, 1920.0, 1080.0, None, 1.0);
+        assert_eq!(empty_plates.len(), 8);
+        assert!(empty_plates.iter().all(|p| p.free));
+
+        // Overlay/low-tier modes never leak stale plates to the DOM bridge.
+        let mut overlay = s.clone();
+        overlay.mode = ShowcaseMode::Loadout;
+        overlay.refresh_frame();
+        assert!(project_lobby_nameplates(&overlay, 1920.0, 1080.0, None, 1.0).is_empty());
+    }
+
+    /// TR-62.1 P0 guard: a real `SessionEvent::Emote { id, name }` must reach
+    /// the same team-ordered slot the roster projected, and a repeat delivery
+    /// must produce a new serial (same-name replay).
+    #[test]
+    fn task62_emote_event_maps_peer_id_to_slot_and_replays() {
+        let player = |id: &str, team: TeamSel, you: bool| inkwave_sim::net::session::LobbyPlayer {
+            id: id.to_string(),
+            name: id.to_string(),
+            team,
+            weapon: "shooter".to_string(),
+            sub: None,
+            special: None,
+            style: None,
+            ready: false,
+            ping: 0,
+            host: false,
+            you,
+        };
+        let lobby = Lobby {
+            players: vec![
+                player("p0", TeamSel::Zero, true),
+                player("p1", TeamSel::One, false),
+            ],
+            ..Lobby::default()
+        };
+        let v = view(
+            OnlineScreen::Lobby,
+            "AB3CD",
+            vec![row("p0", 0, true), row("p1", 1, false)],
+            true,
+        );
+        let mut s = ShowcaseState::from_online_view(&v, "high");
+        assert!(s.apply_emote_event(&lobby, &"p1".to_string(), "wave"));
+        assert_eq!(
+            s.members
+                .iter()
+                .find(|m| m.slot == 4)
+                .unwrap()
+                .emote
+                .as_deref(),
+            Some("wave")
+        );
+        assert_eq!(
+            s.members.iter().find(|m| m.slot == 4).unwrap().emote_serial,
+            1
+        );
+        assert!(s.apply_emote_event(&lobby, &"p1".to_string(), "wave"));
+        assert_eq!(
+            s.members.iter().find(|m| m.slot == 4).unwrap().emote_serial,
+            2
+        );
+        assert!(!s.apply_emote_event(&lobby, &"ghost".to_string(), "wave"));
+        assert!(!s.apply_emote_event(&lobby, &"p1".to_string(), "unknown"));
+
+        s.mode = ShowcaseMode::Hub;
+        s.refresh_frame();
+        assert!(!s.apply_emote_event(&lobby, &"p1".to_string(), "wave"));
+    }
 
     fn row(name: &str, team: u8, ready: bool) -> RosterRow {
         RosterRow {

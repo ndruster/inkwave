@@ -689,6 +689,8 @@ impl Plugin for WorldPlugin {
         // Task 56 batch C: showcase state machine + build-once lobby set.
         .init_resource::<crate::ui::showcase_state::ShowcaseState>()
         .init_resource::<crate::ui::showcase_scene::ShowcaseScene>()
+        // Task 62: projected lobby plate data plane (Task 64 owns the DOM).
+        .init_resource::<crate::ui::showcase_state::LobbyNameplates>()
         // Task 59: environment refresh signal from the settings screen.
         .init_resource::<EnvRefresh>();
         // Task 24: the online session. Stored as a *non-send* resource — the
@@ -777,6 +779,10 @@ impl Plugin for WorldPlugin {
                     // build/gate the placeholder alley set from it.
                     crate::ui::showcase_scene::showcase_sync,
                     crate::ui::showcase_scene::showcase_scene_update,
+                    // Task 62: per-slot preview facade + projected plate data
+                    // plane; both read the same state the 2D lobby panel uses.
+                    crate::ui::showcase_scene::showcase_members_update,
+                    crate::ui::showcase_scene::showcase_nameplates_update,
                     // Task 50 batch D: plays the cues `ui_update` recorded this
                     // frame (runs after the director, before the voice GC).
                     crate::audio::boss_audio::boss_audio_playback,

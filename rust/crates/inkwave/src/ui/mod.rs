@@ -1534,6 +1534,10 @@ pub fn ui_state_machine(
     time: Res<Time>,
     mut os: NonSendMut<OnlineSession>,
     mut net_ev: ResMut<NetEvents>,
+    // Task 62: lobbyEmote events are consumed here (the single poll_events
+    // drain) before `net_tick` takes the staged event vec. Optional so the
+    // existing UI-only test apps (which never build a showcase) stay valid.
+    mut showcase: Option<ResMut<showcase_state::ShowcaseState>>,
     mut boss: ResMut<BossHudRes>,
     mut shake: ResMut<crate::boss_render::BossShake>,
 ) {
@@ -1553,6 +1557,14 @@ pub fn ui_state_machine(
         // match-driving events are staged for `net_tick`, which runs later
         // in the chain and owns the replication controller + transport.
         for ev in os.sess.poll_events() {
+            if let SessionEvent::Emote { id, name } = &ev
+                && let Some(showcase) = &mut showcase
+            {
+                // JS session.js L263/L372 → showcase.js `lobbyEmote`; the
+                // emote is assigned before `showcase_sync` re-projects roster
+                // rows, and `sync_from_online_view` preserves it by slot.
+                showcase.apply_emote_event(os.sess.lobby(), id, name);
+            }
             if let SessionEvent::State { state } = ev
                 && state != SessionState::Connecting
             {

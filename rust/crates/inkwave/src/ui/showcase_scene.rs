@@ -13,6 +13,9 @@
 //!     the extracted hub/line-up pose while the set is full-frame, instead of
 //!     overriding the main camera (Task 61 removes the D-T56-⑦ placeholder).
 //!     Every single-camera consumer now targets `MainCamera` explicitly.
+//!   * Task 62 adds per-slot preview entities (emote hop/dance-variant facade)
+//!     and a projected eight-mark nameplate data plane for the Task 64 DOM
+//!     overlay; no full `CharAnim` rig or DOM node is faked here.
 //!
 //! Upstream has no THREE.Layers numbers: the split is a separate Scene +
 //! camera + render target (`showcase.js` L3042-3085). The Rust layer mapping
@@ -20,15 +23,19 @@
 //! Materials, neon, steam, planar reflections, PMREM, nameplate anchors,
 //! cross-dissolves and the character preview rig are GPU review items.
 
+use std::collections::BTreeMap;
+
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
+use bevy::window::{PrimaryWindow, Window};
 
 use crate::environment::EnvState;
 use crate::net::OnlineSession;
 use crate::world::{MainCamera, SHOWCASE_LAYER, ShowcaseCamera};
 
 use super::showcase_state::{
-    ShowcaseCue, ShowcaseState, alley_dims, camera_pose, hub_spot, pedestal, spots,
+    LobbyNameplates, ShowcaseCue, ShowcaseMember, ShowcaseState, alley_dims, camera_pose, emote,
+    hub_spot, pedestal, project_lobby_nameplates, spots,
 };
 use super::{Screen, UiState, online, online_facts};
 
@@ -53,6 +60,27 @@ pub struct ShowcaseSetRoot;
 #[derive(Component)]
 pub struct ShowcasePedestal;
 
+/// Task 62: one roster slot's placeholder kid. The real bone tree remains the
+/// pinned replay rig (D-T62-1); this facade owns slot/flag state and the
+/// emote hop/dance-variant transform surface.
+#[derive(Component, Debug)]
+#[allow(dead_code)] // ECS data plane: identity fields are asserted by Task62 tests.
+pub struct ShowcasePreview {
+    pub slot: usize,
+    pub name: String,
+    pub team: u8,
+    pub ready: bool,
+    pub host: bool,
+    pub you: bool,
+    /// Last emote name (for the data-plane facade).
+    pub emote: Option<String>,
+    /// Identity last seen on `ShowcaseMember::emote_serial`; a name replay has
+    /// a new serial and must restart the one-shot (JS L2002-2005 preempts).
+    pub emote_serial: u32,
+    /// Start timestamp (seconds); `None` means the one-shot already ended.
+    pub started: Option<f64>,
+}
+
 /// Build-once handles + the runtime latches consumed by the render layer.
 #[derive(Resource, Default)]
 pub struct ShowcaseScene {
@@ -60,6 +88,8 @@ pub struct ShowcaseScene {
     /// The layer-1 camera, spawned once with the set and toggled by
     /// `showcase_camera_update` (Task 61).
     pub camera: Option<Entity>,
+    /// Task 62: live roster preview roots, keyed by lineup slot.
+    pub previews: BTreeMap<usize, Entity>,
     pub cue_serial: u32,
     /// First frame on an online screen seeds the state from the whole view
     /// instead of diffing against the default weapon (review P1-2).
@@ -165,6 +195,214 @@ pub fn showcase_scene_update(
             tf.rotation = Quat::from_rotation_y(yaw);
         }
     }
+}
+
+/// JS `LOB_EMOTES` hop arc runs over 0.42 s (`showcase.js` L2477).
+const EMOTE_HOP_T: f32 = 0.42;
+const PREVIEW_BODY_HALF: f32 = 0.52;
+
+fn preview_color(member: &ShowcaseMember) -> Color {
+    let (r, g, b) = if member.team == 0 {
+        (0.25, 0.85, 0.55)
+    } else {
+        (0.95, 0.42, 0.35)
+    };
+    if member.you {
+        Color::srgb(r, g, b)
+    } else if member.ready {
+        Color::srgb(r * 0.72, g * 0.88, b * 0.76)
+    } else {
+        Color::srgb(r * 0.48, g * 0.6, b * 0.56)
+    }
+}
+
+/// Advance one slot's emote facade. Only the extracted `dance`/`v`/`dur`/
+/// `hop`/`t0`/`trig` fields drive the transform; the real bone poses stay in
+/// the pinned replay rig (D-T62-1).
+fn advance_preview(
+    prev: &mut ShowcasePreview,
+    member: &ShowcaseMember,
+    base_yaw: f32,
+    now: f64,
+) -> (f32, f32, f32) {
+    if prev.emote_serial != member.emote_serial || prev.emote.as_deref() != member.emote.as_deref()
+    {
+        prev.emote = member.emote.clone();
+        prev.emote_serial = member.emote_serial;
+        prev.started = member.emote.as_ref().map(|_| now);
+    }
+    prev.ready = member.ready;
+    prev.host = member.host;
+    prev.you = member.you;
+
+    let mut rise = 0.0;
+    let mut yaw = base_yaw;
+    let mut squash = 1.0;
+    if let (Some(name), Some(start)) = (prev.emote.as_deref(), prev.started) {
+        if let Some(e) = emote(name) {
+            let at = now - start;
+            if !(0.0..=e.duration as f64).contains(&at) {
+                prev.started = None;
+            } else {
+                let t = at as f32;
+                // `danceVar` and `t0` choose the extracted three-variant pose
+                // phase; a real skeleton consumes these through `CharAnim`.
+                let phase =
+                    (t + e.t0.unwrap_or(0.0)) / e.duration.max(0.001) * std::f32::consts::TAU;
+                yaw += (e.variant - 1.0) * 0.35 + 0.12 * phase.sin();
+                if e.trig.is_some() {
+                    squash = 1.0 + 0.08 * (phase * 2.0).sin();
+                }
+                if e.hop > 0.0 && t < EMOTE_HOP_T {
+                    let x = t / EMOTE_HOP_T;
+                    rise = 4.0 * e.hop * x * (1.0 - x);
+                }
+            }
+        } else {
+            prev.started = None;
+        }
+    }
+    (rise, yaw, squash)
+}
+
+fn apply_preview_transform(tf: &mut Transform, pos: [f32; 3], rise: f32, yaw: f32, squash: f32) {
+    tf.translation = Vec3::new(pos[0], pos[1] + PREVIEW_BODY_HALF + rise, pos[2]);
+    tf.rotation = Quat::from_rotation_y(yaw);
+    tf.scale = Vec3::new(1.0 / squash.sqrt(), squash, 1.0 / squash.sqrt());
+}
+
+#[allow(clippy::too_many_arguments)] // Bevy system injection
+fn spawn_preview(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    mats: &mut Assets<StandardMaterial>,
+    root: Entity,
+    spot: super::showcase_state::Spot,
+    member: &ShowcaseMember,
+    rise: f32,
+    yaw: f32,
+    squash: f32,
+    started: Option<f64>,
+) -> Entity {
+    let body = meshes.add(Cylinder::new(0.22, PREVIEW_BODY_HALF));
+    let head = meshes.add(Sphere::new(0.2));
+    let mat = mats.add(StandardMaterial {
+        base_color: preview_color(member),
+        ..default()
+    });
+    let mut tf = Transform::default();
+    apply_preview_transform(&mut tf, spot.pos, rise, yaw, squash);
+    let entity = commands
+        .spawn((
+            ShowcasePreview {
+                slot: member.slot,
+                name: member.name.clone(),
+                team: member.team,
+                ready: member.ready,
+                host: member.host,
+                you: member.you,
+                emote: member.emote.clone(),
+                emote_serial: member.emote_serial,
+                started,
+            },
+            Visibility::Visible,
+            RenderLayers::layer(SHOWCASE_LAYER),
+            tf,
+            ChildOf(root),
+        ))
+        .id();
+    for (mesh, y) in [(body, 0.0), (head, 0.82)] {
+        commands.spawn((
+            Mesh3d(mesh),
+            MeshMaterial3d(mat.clone()),
+            RenderLayers::layer(SHOWCASE_LAYER),
+            Transform::from_xyz(0.0, y, 0.0),
+            ChildOf(entity),
+        ));
+    }
+    entity
+}
+
+/// TR-62.1: create/despawn previews as the roster changes and drive the
+/// extracted emote facade. Low tier never reaches this system with
+/// `full_frame=true`, so no set/body entities are built there.
+#[allow(clippy::too_many_arguments)] // Bevy system injection
+pub fn showcase_members_update(
+    state: Res<ShowcaseState>,
+    time: Res<Time>,
+    mut scene: ResMut<ShowcaseScene>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
+    mut previews: Query<(&mut Transform, &mut ShowcasePreview)>,
+) {
+    let Some(root) = scene.root else {
+        return;
+    };
+    if !state.full_frame {
+        for entity in scene.previews.values().copied().collect::<Vec<_>>() {
+            commands.entity(entity).despawn();
+        }
+        scene.previews.clear();
+        return;
+    }
+
+    let spots = spots();
+    let stale: Vec<usize> = scene
+        .previews
+        .keys()
+        .copied()
+        .filter(|slot| !state.members.iter().any(|m| m.slot == *slot))
+        .collect();
+    for slot in stale {
+        if let Some(entity) = scene.previews.remove(&slot) {
+            commands.entity(entity).despawn();
+        }
+    }
+
+    let now = time.elapsed_secs_f64();
+    for member in &state.members {
+        let Some(spot) = spots.get(member.slot) else {
+            continue;
+        };
+        if let Some(&entity) = scene.previews.get(&member.slot) {
+            if let Ok((mut tf, mut prev)) = previews.get_mut(entity) {
+                let (rise, yaw, squash) = advance_preview(&mut prev, member, spot.yaw, now);
+                apply_preview_transform(&mut tf, spot.pos, rise, yaw, squash);
+            }
+            continue;
+        }
+        // Commands are deferred: write `started` into the spawned component,
+        // never try to query the entity in the same system (review P1-2).
+        let started = member.emote.as_ref().map(|_| now);
+        let entity = spawn_preview(
+            &mut commands,
+            &mut meshes,
+            &mut mats,
+            root,
+            *spot,
+            member,
+            0.0,
+            spot.yaw,
+            1.0,
+            started,
+        );
+        scene.previews.insert(member.slot, entity);
+    }
+}
+
+/// Refresh the DOM-plate data plane from the same projected 3D spots. The
+/// measured UI safe rect and live `kFront` arrive with Task 64; until then
+/// `None`/`1.0` is the honest fallback (D-T62-2).
+pub fn showcase_nameplates_update(
+    state: Res<ShowcaseState>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut plates: ResMut<LobbyNameplates>,
+) {
+    let (width, height) = windows.iter().next().map_or((1920.0, 1080.0), |w| {
+        (w.width().max(1.0), w.height().max(1.0))
+    });
+    *plates = LobbyNameplates(project_lobby_nameplates(&state, width, height, None, 1.0));
 }
 
 /// Task 61: drive the layer-1 showcase camera (never the main camera). While
@@ -479,5 +717,150 @@ mod tests {
         assert_eq!(p.near, crate::world::CAM_NEAR);
         assert_eq!(p.far, crate::world::CAM_FAR);
         assert!(!app.world().resource::<ShowcaseScene>().camera_overridden);
+    }
+
+    /// TR-62.1: roster changes create/despawn preview roots, emote metadata
+    /// drives the extracted hop arc, and the eight plate slots stay in sync.
+    #[test]
+    fn task62_previews_and_nameplates_follow_roster() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()));
+        app.init_asset::<Mesh>().init_asset::<StandardMaterial>();
+        app.init_resource::<ShowcaseScene>();
+        app.init_resource::<LobbyNameplates>();
+        let member = |slot, name: &str, team: u8, ready: bool| ShowcaseMember {
+            slot,
+            name: name.to_string(),
+            team,
+            ready,
+            host: slot == 0,
+            you: name == "me",
+            emote: None,
+            emote_serial: 0,
+        };
+        app.insert_resource(ShowcaseState {
+            mode: ShowcaseMode::Lobby,
+            full_frame: true,
+            members: vec![member(0, "me", 0, true), member(4, "rival", 1, false)],
+            ..Default::default()
+        });
+        app.add_systems(
+            Update,
+            (
+                showcase_scene_update,
+                showcase_members_update,
+                showcase_nameplates_update,
+                showcase_camera_update,
+            )
+                .chain(),
+        );
+        for _ in 0..3 {
+            app.update(); // build → spawn → transform/layout
+        }
+
+        let slot0 = app.world().resource::<ShowcaseScene>().previews[&0];
+        let slot4 = app.world().resource::<ShowcaseScene>().previews[&4];
+        assert_eq!(app.world().resource::<ShowcaseScene>().previews.len(), 2);
+        let prev = app.world().get::<ShowcasePreview>(slot0).unwrap();
+        assert_eq!((prev.name.as_str(), prev.slot, prev.team), ("me", 0, 0));
+        assert!(prev.ready && prev.host && prev.you);
+        let spot0 = spots()[0];
+        let tf = app.world().get::<Transform>(slot0).unwrap();
+        assert!(
+            (tf.translation
+                - Vec3::new(spot0.pos[0], spot0.pos[1] + PREVIEW_BODY_HALF, spot0.pos[2]))
+            .length()
+                < 1e-4
+        );
+        let plates = &app.world().resource::<LobbyNameplates>().0;
+        assert_eq!(plates.len(), 8);
+        assert_eq!(plates.iter().filter(|p| !p.free).count(), 2);
+        assert!(plates[0].ready && plates[0].host && plates[0].you);
+        assert_eq!(plates[4].name, "rival");
+
+        assert!(
+            app.world_mut()
+                .resource_mut::<ShowcaseState>()
+                .emote(0, "booyah")
+                .is_some()
+        );
+        app.update(); // latch the emote start through the real serial path
+        assert_eq!(
+            app.world()
+                .get::<ShowcasePreview>(slot0)
+                .unwrap()
+                .emote_serial,
+            1
+        );
+        assert!(
+            app.world()
+                .get::<ShowcasePreview>(slot0)
+                .unwrap()
+                .started
+                .is_some()
+        );
+        // Bevy's TimePlugin owns `Time` in every update; seed the one-shot
+        // start directly so the 0.42 s arc is deterministically halfway.
+        let now = app.world().resource::<Time>().elapsed_secs_f64();
+        app.world_mut()
+            .get_mut::<ShowcasePreview>(slot0)
+            .unwrap()
+            .started = Some(now - 0.21);
+        app.update(); // rise == extracted E.hop
+        let tf = app.world().get::<Transform>(slot0).unwrap();
+        assert!(
+            tf.translation.y > spot0.pos[1] + PREVIEW_BODY_HALF + 0.30,
+            "extracted booyah hop drives the preview rise"
+        );
+        assert!(
+            tf.rotation
+                .angle_between(Quat::from_rotation_y(spot0.yaw))
+                .abs()
+                > 1e-3,
+            "dance variant changes the preview yaw"
+        );
+        assert_eq!(
+            app.world().resource::<LobbyNameplates>().0[0]
+                .emote
+                .as_deref(),
+            Some("booyah")
+        );
+
+        // Same name, new `lobbyEmote` delivery ⇒ serial 2 restarts the
+        // one-shot instead of being swallowed as "no identity change".
+        assert!(
+            app.world_mut()
+                .resource_mut::<ShowcaseState>()
+                .emote(0, "booyah")
+                .is_some()
+        );
+        app.update();
+        let replay = app.world().get::<ShowcasePreview>(slot0).unwrap();
+        assert_eq!(replay.emote_serial, 2);
+        assert!(replay.started.is_some());
+
+        app.world_mut()
+            .resource_mut::<ShowcaseState>()
+            .members
+            .retain(|m| m.slot == 0);
+        app.update();
+        assert_eq!(app.world().resource::<ShowcaseScene>().previews.len(), 1);
+        assert!(app.world().get::<ShowcasePreview>(slot4).is_none());
+        assert_eq!(
+            app.world().resource::<LobbyNameplates>().0.len(),
+            8,
+            "empty marks become free plates, not missing DOM rows"
+        );
+        assert_eq!(
+            app.world().resource::<LobbyNameplates>().0[4].name,
+            "",
+            "removed rival leaves a free marker"
+        );
+
+        app.world_mut().resource_mut::<ShowcaseState>().full_frame = false;
+        app.update();
+        assert!(app.world().resource::<ShowcaseScene>().previews.is_empty());
+        assert!(app.world().get::<ShowcasePreview>(slot0).is_none());
+        assert!(app.world().resource::<LobbyNameplates>().0.is_empty());
     }
 }
