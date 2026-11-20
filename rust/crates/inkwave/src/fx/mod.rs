@@ -50,6 +50,9 @@ pub mod hooks;
 // M5 Task 65: post-processing chain data plane (12-uniform grade / four-tier
 // pass switches / GTAO+denoise / SMAA gate / tilt-shift CSS), anchored to JS.
 pub mod particles;
+// M6 Task 71: fullscreen grade + screenfx composite render pass (the first
+// render-app code in the port); data planes stay in post_process/composite.
+pub mod post_pass;
 pub mod post_process;
 pub mod render;
 pub mod screen_fx;

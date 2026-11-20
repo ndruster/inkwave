@@ -235,7 +235,14 @@ fn main() {
             .add_plugins(props::PropsPlugin)
             // Task 46 C1: the boss presentation tier (silhouette / telegraph
             // markers / crablets), driven off DemoSim.bm.
-            .add_plugins(boss_render::BossRenderPlugin);
+            .add_plugins(boss_render::BossRenderPlugin)
+            // M6 Task 71: the fullscreen grade + composite pass. Headless
+            // builds never reach this branch, so no RenderApp is required.
+            .add_plugins(fx::post_pass::PostFxPlugin)
+            .add_systems(
+                Update,
+                fx::post_pass::post_fx_uniform_sync.after(fx::composite::composite_overlay_update),
+            );
         #[cfg(not(target_arch = "wasm32"))]
         if bench_mode {
             app.insert_resource(bench::Bench {

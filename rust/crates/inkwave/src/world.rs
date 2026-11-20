@@ -1029,6 +1029,9 @@ fn build_level_world(
         .spawn((
             Camera3d::default(),
             MainCamera,
+            // M6 Task 71: only the main camera carries the post-process
+            // uniform; the layer-1 showcase camera stays unfiltered (D-T61-4).
+            crate::fx::post_pass::PostFxUniforms::default(),
             RenderLayers::layer(WORLD_LAYER),
             Projection::from(PerspectiveProjection {
                 // cameraRig.js L188: vertical FOV from the horizontal 82° at
