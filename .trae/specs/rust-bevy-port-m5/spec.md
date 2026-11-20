@@ -683,3 +683,27 @@ GTAO/grade/SMAA/tilt-shift、云/PMREM/海面、alley 材质逐档落地且逐�
 - TR-69.2：REVIEW_CHECKLIST 登记（预览观感/切换流畅度/与 loadout 联动）。
 - 门禁 `gate-task69.sh`（模板 gate68，DETERM 用 extract-locker 双跑，XCHK 跑 task69 专项 +
   locker/environment/lobbyset/boss crosschecks）。
+
+---
+
+## Task70 实施设计（2026-11-20，M5 收尾）
+
+### §0 范围
+- 收尾四件套：① 文档台账（SYNC_LEDGER M5 段、PORT_MAP「M5 完成核对」+ 图例、README
+  M5 章节 + 九段矩阵）；② M5 收尾矩阵门禁 `gate-task70.sh`；③ M5 总评审（独立只读
+  评审员对 58-69 全量 P0/P1 + 偏差登记闭环）；④ REVIEW_CHECKLIST 汇总。
+- `extract/run-all.sh` 补齐 M5 后期提取器（audio-bus/screenfx/postprocess/boss/locker），
+  双跑全量重提取资产字节一致（TR-70.1）。
+
+### §1 矩阵门禁口径
+- `gate-task70.sh`（模板 gate57）：九段 + 全 10 crosscheck + run-all 双跑 DETERM +
+  headless 4 组合 + boss 600 帧 + 上游/sim 守卫 + **M5 gate-log verdict 审计**
+  （task58-69 每份最终日志必须 `GATE_VERDICT=PASS`，缺/FAIL 即判 FAIL）。
+  最终口径 `M5_MATRIX_VERDICT`（不复用 GATE_VERDICT 以免与单任务混淆）。
+- TRUNK：M5 全部任务 TRUNK_EXIT=0（环境 OOM 已清），矩阵如真遇 SIGKILL 按 D-T40-1
+  登记 DEGRADED 非阻塞，但不无差别吞错（无 SIGKILL 的失败判 FAIL）。
+
+### §2 偏差与验收
+- TR-70.1：文档命令实跑留退出码、门禁日志落盘、全 crosscheck 通过、M5 verdict 审计全 PASS。
+- TR-70.2：M5 总评审 P0/P1 全闭环；GPU/浏览器/听感项只登记 REVIEW_CHECKLIST 不伪验收
+  （沿用各任务 D-Txx 偏差，M5 汇总清单）。

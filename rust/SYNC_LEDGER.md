@@ -152,7 +152,14 @@ Task 54 起脚本自动判定 `GATE_VERDICT`，41–53 用逐段 `*_EXIT=0` 口�
 TRUNK 段在本沙箱因 wasm-bindgen OOM `signal: 9` 判 DEGRADED（D-T40-1 环境性、非阻塞）。
 workspace 测试基线逐任务单调递增（554 → 1017+；精确数字见各任务 Completion Evidence）。
 
-## M5 同步状态（2026-11-20，Task 58–69）
+## M5 同步状态（2026-11-20，Task 58–70，M5 完成）
+
+M5 收尾矩阵 `logs/task70-m5-matrix-20261120T062621Z.log`：
+`M5_MATRIX_VERDICT=PASS`——九段 + 10 独立 crosscheck + run-all.sh 双跑全量重提取
+`DETERM=BYTE_IDENTICAL` + task58-69 共 12/12 `GATE_VERDICT=PASS` 审计 + `JS_TREE_CLEAN`/
+`SIM_TREE_CLEAN` + headless 4 组合与 boss 600 帧全 EXIT=0。Task 70 总评审无 P0，1 项 P1
+（收尾文档未闭环）已返工（PORT_MAP M5 完成核对/图例、REVIEW_CHECKLIST M5 汇总清单、
+README 矩阵口径、本节），无伪验收。
 
 M5 对照上游现存源码逐任务实施，`server/` 与上游 JS 树零改动，`inkwave_sim`
 依赖面未变（逐任务门禁 `JS_TREE_CLEAN`/`SIM_TREE_CLEAN` 实核）。Task 58

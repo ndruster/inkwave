@@ -406,6 +406,8 @@ trunk build --release                        # 本沙箱常 OOM SIGKILL；用户
 | 55 | `logs/task55-gates-20261111T050724Z.log` | `GATE_VERDICT=PASS`（首轮 `source.commit` 戳刷新致 DETERM MISMATCH → FAIL，复跑 BYTE_IDENTICAL；**TRUNK=DEGRADED**） |
 | 56 | `logs/task56-gates-20261111T060902Z.log` | `GATE_VERDICT=PASS`（独立评审 P1 全处置后复跑；**TRUNK=DEGRADED**） |
 | 57 | `logs/task57-m4-matrix-*.log` | 收尾矩阵：文档命令实跑、41–56 日志汇总、上游树守卫；**以日志内 `M4_MATRIX_VERDICT` 为最终口径**，总评审 P0/P1 处置记录见 `tasks.md` Task 57 |
+| 58–69 | `logs/task58..69-gates-*.log` | 逐任务 `GATE_VERDICT=PASS`（12/12）；数值经独立 crosscheck 钉源，GPU/听感项登记复核 |
+| 70 | `logs/task70-m5-matrix-20261120T062621Z.log` | **M5 收尾矩阵 `M5_MATRIX_VERDICT=PASS`**：九段 + 10 crosscheck + run-all 双跑确定性 + 12 任务 verdict 审计 + 上游/sim 守卫；总评审 P0/P1 处置见 `tasks.md` Task 70 |
 
 矩阵口径如实披露：41–56 共 **9 个任务的 TRUNK 段 DEGRADED**（41/42/43/44/45/49/54/55/56，
 均为 wasm-bindgen `signal: 9` OOM，D-T40-1 环境性非阻塞），41–53 的
@@ -420,7 +422,16 @@ Rust 侧提交不再刷新 provenance 戳（D-T37-3 消除，见 `SYNC_LEDGER.md
 九段 = FMT / CLIPPY / TEST / WASM / TREE / DETERM / XCHK / TRUNK / HEADLESS，
 外加 `JS_TREE_CLEAN` + `SIM_TREE_CLEAN` 守卫（NFR-M4-1/4：上游 JS 树与 sim 依赖面零改动）。
 
-## 8. M5 与后续（已立项）
+## 8. M5（表现终稿与内容收尾，Task 58–70 已完成）
+
+**M5 结论**：12 个实施任务（58–69）全部 `GATE_VERDICT=PASS`，收尾矩阵
+`logs/task70-m5-matrix-20261120T062621Z.log` 判 `M5_MATRIX_VERDICT=PASS`（九段 + 10 独立
+crosscheck + run-all 双跑字节一致 + 12 任务 verdict 审计 + 上游/sim 守卫 + headless 4 组合与
+boss 600 帧）。上游 JS/server 与 `inkwave_sim` 依赖面零改动。逐任务证据与偏差见
+`.trae/specs/rust-bevy-port-m5/tasks.md` 各 Completion Evidence、`REVIEW_CHECKLIST.md`
+M5 汇总复核清单。**沙箱口径**：M5 高保真交付的是数值钉源 + 数据面 + 无头可测行为；蒙皮/
+材质/混响听感/名牌 DOM 叠层等 GPU 观感以 `M5 visual-review` 双轨登记，待用户 GPU 机复核，
+未伪验收（NFR-M5-4）。以下为立项范围与逐任务摘要（历史记录）：
 
 **M5 = 表现终稿与内容收尾（Task 58–70）**：kit 武器几何/姿态（bow/brolly/bowl +
 goldens）、Rust 设置屏与持久化、kit SFX 与音频消费者、RenderLayers 多相机分层与

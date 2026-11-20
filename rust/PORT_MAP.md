@@ -10,6 +10,12 @@ M4 扩档图例（Task 57）：`M4 Tn done`（第 n 任务全量移植，含锚�
 `M4 wontport`（M4 Non-Goal；其中 locker 更衣室、高保真 Boss 模型、Rust 设置屏、
 DOM 名牌叠层已转入 **M5** 立项范围，见 `.trae/specs/rust-bevy-port-m5/`）。
 
+M5 扩档图例（Task 70）：`M5 Tn done`（第 n 任务全量落地，含提取锚测/独立 crosscheck/九段门禁）·
+`M5 visual-review`（沙箱无头数据面已闭环、GPU/浏览器/听感观感待用户机复核，双轨验收 NFR-M4-5）·
+`M5 wontport`（上游不存在或 Rust 不适用，已作为事实登记，如 bowl 武器）·
+所有 M5 任务数值均从 `assets/*.json` + 10 个独立 crosscheck 钉源（NFR-M5-6，无手抄），
+最终矩阵口径为 `M5_MATRIX_VERDICT`，见下方「M5 完成核对」。
+
 ## 技术栈基线
 
 | 项 | 选型 | 备注 |
@@ -110,6 +116,29 @@ hitShapes/sim 几何不变。
 Task 69（locker 更衣室）完成：全 style 表 + resolve/random/swatch 提取（`locker.json`），
 `locker.rs` 状态机 + 独立键持久化 + 6 键 style JVal 同步 + 5 锚测（带符号右移/P1 回归）。
 `locker-crosscheck` 299 checks + 九段门禁 PASS；D-T69-1/2 登记；wire/sim 不变。
+
+## M5 完成核对（Task 70）
+
+Task 58–70 收尾（表现终稿与内容收尾）：kit 武器几何/姿态 → 设置屏 → kit SFX →
+RenderLayers 分层 → 3D 大厅 → 音频总线 → fx composite/DOM 叠层 → 后处理链 →
+环境终稿 → alley 材质 → Boss 高保真模型 → locker 更衣室 → 收尾矩阵。上表 M5 相关行按本节
+判读，逐任务证据见 `.trae/specs/rust-bevy-port-m5/tasks.md` 各 Completion Evidence，
+偏差定案见同目录 `REVIEW_CHECKLIST.md` 汇总清单。
+
+| 核对项 | 结论 | 证据 |
+|---|---|---|
+| 12 任务状态/证据 | 全 `completed` + Completion Evidence | `tasks.md` Task 58–70 |
+| 九段门禁（每任务） | 12/12 `GATE_VERDICT=PASS` | `logs/task58..69-gates-*.log` |
+| M5 收尾矩阵 | `M5_MATRIX_VERDICT=PASS` | `logs/task70-m5-matrix-20261120T062621Z.log` |
+| 交叉校验 | 10 个独立 crosscheck 全绿（无自证/无手抄） | `tools/*crosscheck.mjs` |
+| 全量重提取确定性 | `DETERM=BYTE_IDENTICAL`（run-all.sh 双跑） | 矩阵日志 |
+| 上游/sim 守卫 | `JS_TREE_CLEAN` + `SIM_TREE_CLEAN` | 矩阵日志 |
+| headless 保底 | 4 主题/档位组合 + boss 600 帧全 `EXIT=0` | 矩阵日志 |
+| GPU/浏览器/听感 | 双轨登记复核，未伪验收 | `REVIEW_CHECKLIST.md` M5 汇总清单 |
+
+口径说明：M5「高保真」在沙箱完成的是**数值钉源 + 数据面 + 无头可测行为**；蒙皮/材质/混响
+听感/名牌投影等 GPU 观感以 `M5 visual-review` 登记，待用户 GPU 机复核（NFR-M4-5 双轨）。
+`low` 保底路径（NFR-M5-5）在每任务 headless 冒烟中验证不破坏。
 
 ## 质量档位
 

@@ -18,7 +18,7 @@ M5 TaskNN 取代」或「M4 项与 M5 无关、维持原状」。
 |---|---|
 | 58 | bow 持握/开镜姿态、brolly 伞面、bowl 形态；kit 姿态手感 |
 | 59 | 设置屏 UI 布局/焦点/与 online 屏共存；持久化在 wasm 与 native 双载体生效 |
-| 60 | 42 名 kit SFX 触发时机/音量平衡；footstep 节奏；射击原点与 FX 对位 |
+| 60 | 53 名 kit SFX 触发时机/音量平衡；footstep 节奏；射击原点与 FX 对位 |
 | 61 | hub/lobby 无世界叠加、切换过渡、双相机下 UI target 正确 |
 | 62 | 名牌可读性/遮挡、满房/空房、emote→dance 流畅度 |
 | 63 | 混响空间感/尾音、压限响度、3D panner 方位感 |
@@ -38,6 +38,30 @@ M5 TaskNN 取代」或「M4 项与 M5 无关、维持原状」。
 
 > 本清单不构成「已通过」；收尾结论以 `tasks.md` Task 70 的 Completion Evidence
 > 与 M5 总评审为准。
+
+## M5 汇总复核清单（Task 70 定稿，2026-11-20）
+
+沙箱无头可测部分已全部闭环（12 任务九段门禁 PASS + `M5_MATRIX_VERDICT=PASS` +
+10 独立 crosscheck + run-all 双跑字节一致 + headless 4 组合/boss 600 帧），上游 JS/server
+与 `inkwave_sim` 依赖面零改动。**以下为待用户 GPU/浏览器/听感机复核的汇总项**（双轨 NFR-M5-4，
+按任务索引到下方逐任务登记段的 D-T 偏差，本汇总不构成「已通过」）：
+
+| 复核组 | 任务 | 关键待复核面 | 偏差登记 |
+|---|---|---|---|
+| 武器/姿态 | 58 | bow 持握开镜、brolly 伞面手感（bowl 上游不存在，事实登记） | Task 58 登记 |
+| 设置/持久化 | 59 | 设置屏 UI 布局/焦点、wasm/native 双载体生效 | D-T59-* |
+| 音频听感 | 60/63 | 53 名 kit SFX 触发/音量、混响空间感/尾音、压限响度、3D panner | D-T60-*/D-T63-1..4 |
+| 分层/大厅 | 61/62 | 双相机 clear/order、名牌投影/遮挡、emote 流畅度、DOM 叠层 | D-T61-4/D-T62-1..4 |
+| 后处理 | 64/65 | 叠层顺序、伤害数字可读性、GTAO/grade/SMAA/tilt-shift 逐档观感 | D-T64-1..4/D-T65-1..3 |
+| 环境/材质 | 66/67 | 三主题云/PMREM/海面、alley 反射/霓虹/蒸汽、两套 PMREM 独立 | D-T66-1/2/D-T67-1/2 |
+| Boss/locker | 68/69 | 六招动画手感、weak 点可读性、telegraph、locker 预览/切换/联动 | D-T68-1/2/D-T69-1/2 |
+
+**M4 项转档说明**：M4 wontport 的 locker、高保真 Boss、Rust 设置屏、DOM 名牌叠层已由
+M5 Task 59/62/68/69 转正式档（数据面 + 观感复核分离），M4 汇总清单对应项标记「已被 M5
+TaskNN 取代」；M4 其余 GPU 项与 M5 无关，维持原状。
+**沙箱口径诚实声明**：M5「高保真」在沙箱交付的是数值钉源 + 数据面 + 无头可测行为；蒙皮、
+材质、混响 FIR/HRTF、名牌 DOM 叠层等 GPU/听感本体未接或未完整 port，均以 `M5 visual-review`
+登记，**未伪验收**。用户机复核结论回填后，本清单方可整体勾选。
 
 ## Task 58 复核登记（2026-11-12）
 

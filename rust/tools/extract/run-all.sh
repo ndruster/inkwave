@@ -27,3 +27,9 @@ node extract-environment.mjs
 node extract-lobbyset.mjs
 # kit weapon SFX cue table (Task 60: 53 live self-registered cues)
 node extract-kit-sfx.mjs
+# M5 后期新增产物（Task 63/64/65/68/69，收尾 Task 70 统一纳入 run-all）
+node extract-audio-bus.mjs
+node extract-screenfx.mjs
+node extract-postprocess.mjs
+node extract-boss.mjs
+node extract-locker.mjs

@@ -424,7 +424,7 @@
     shader/切换动画 GPU 观感。
 
 ## Task 70: M5 收尾——台账/文档/门禁矩阵/总评审
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 58–69
 - **Description**: SYNC_LEDGER M5 段；PORT_MAP「M5 完成核对」+ 图例再扩档；
@@ -435,6 +435,22 @@
   - `rule` TR-70.1: 文档内命令全部实跑留退出码；门禁日志落盘；总评审 P0/P1 闭环；
     TRUNK DEGRADED 按 D-T40-1 登记。
 - **Notes**: 沿用 Task 57/27/40 收尾流程；预写结论一律以落盘日志 `*_VERDICT` 为准。
+- **Completion Evidence** (2026-11-20):
+  - 文档四件套齐备：SYNC_LEDGER M5 段（含矩阵 verdict）、PORT_MAP「M5 完成核对」章节 +
+    M5 扩档图例、README §8 改为「M5 已完成」+ 九段矩阵 58–69/70 行与最终口径、
+    REVIEW_CHECKLIST「M5 汇总复核清单」（7 组复核 + M4 转档说明 + 沙箱口径声明）。
+  - `extract/run-all.sh` 补齐 M5 后期 5 个提取器（audio-bus/screenfx/postprocess/boss/locker），
+    双跑全量重提取 `assets/*.json` 字节一致。
+  - M5 收尾矩阵 `rust/tools/verify/logs/task70-m5-matrix-20261120T062621Z.log`：
+    `FMT/CLIPPY/TEST/WASM/TREE/DETERM/XCHK(全10 crosscheck)/HEADLESS/HEADLESS_BOSS/
+    RELEASE_BUILD_EXIT=0`，`DETERM=BYTE_IDENTICAL`（P2-1 内容 hash），`TRUNK_EXIT=0`，
+    `JS_TREE_CLEAN`、`SIM_TREE_CLEAN`（P2-4 含未追踪），task58-69 共 12/12 最新日志
+    `GATE_VERDICT=PASS`（P2-2 只取末次），`M5_AUDIT_EXIT=0`，`M5_MATRIX_VERDICT=PASS`。
+  - M5 总评审（独立只读评审员）：**无 P0**；1 项 P1（Task 70 收尾文档未闭环）已返工
+    （上述四件套 + 台账 status）；4 项 P2（矩阵 DETERM 弱校验、verdict 审计放行漏洞、
+    REVIEW_CHECKLIST 42→53 名 kit SFX 口径、SIM 守卫未覆盖 untracked）全部修复。
+    已知偏差（D-T62/63/65/66/67/68/69 等 GPU/听感观感）均登记 REVIEW_CHECKLIST，
+    未在沙箱伪验收，`low` 保底与 headless 路径每任务验证不破坏。
 
 ---
 
