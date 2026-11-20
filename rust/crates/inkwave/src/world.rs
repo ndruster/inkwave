@@ -291,7 +291,9 @@ impl BatchKey {
             flags_x: (normal_y.abs() < 0.3) as u32 as f32,
             flags_y: self.orient.grounded as u32 as f32,
             mur: -1.0,
-            pad: [0.0; 3],
+            pad0: 0.0,
+            pad1: 0.0,
+            pad2: 0.0,
             fsz: Vec4::new(
                 f32::from_bits(self.orient.su),
                 f32::from_bits(self.orient.sv),

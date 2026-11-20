@@ -65,8 +65,12 @@ pub struct LevelParams {
     pub see_a2c: f32,
     /// ≡ GRATE define (L715) as a runtime flag (default 0).
     pub grate: f32,
-    /// WGSL `_pad0..2` (keeps the vec3 block at offset 64).
-    pub pad: [f32; 3],
+    /// WGSL `_pad0..2` (keeps the vec3 block at offset 64). Three separate
+    /// scalars, NOT `[f32; 3]`: encase's uniform-compat const assert on wasm
+    /// requires array stride to be a multiple of 16, which `[f32; 3]` is not.
+    pub pad0: f32,
+    pub pad1: f32,
+    pub pad2: f32,
     /// ≡ uTeamA (L47).
     pub team_a: Vec4,
     /// ≡ uTeamB (L48).
@@ -95,8 +99,11 @@ pub struct BatchParams {
     pub flags_y: f32,
     /// ≡ vFaceFlags.z (mural id, < 0 = none; ⑤ default -1).
     pub mur: f32,
-    /// WGSL `_pad0..2`.
-    pub pad: [f32; 3],
+    /// WGSL `_pad0..2` — separate scalars (see LevelParams: `[f32; 3]` breaks
+    /// encase's wasm uniform-stride const assert).
+    pub pad0: f32,
+    pub pad1: f32,
+    pub pad2: f32,
     /// ≡ vFaceData.zw (face size in metres) + pad.
     pub fsz: Vec4,
     /// ≡ vFaceTan (frame-space u axis) + pad.
@@ -111,7 +118,9 @@ impl Default for BatchParams {
             flags_x: 0.0,
             flags_y: 0.0,
             mur: -1.0,
-            pad: [0.0; 3],
+            pad0: 0.0,
+            pad1: 0.0,
+            pad2: 0.0,
             fsz: Vec4::ZERO,
             tan: Vec4::ZERO,
         }
@@ -140,7 +149,9 @@ impl LevelParams {
             see_feet: 0.0,
             see_a2c: 0.0,
             grate: 0.0,
-            pad: [0.0; 3],
+            pad0: 0.0,
+            pad1: 0.0,
+            pad2: 0.0,
             team_a: hex_vec4(&doc.ink.team_a, 1.0),
             team_b: hex_vec4(&doc.ink.team_b, 1.0),
             lamp_col: hex_vec4(&doc.lamps.hex, doc.lamps.intensity),

@@ -310,21 +310,43 @@ pub fn minimap_update(
 
 /// The box spring + layout and the dot writes (≡ `hud.js` `_updMap`
 /// L1714-1766).
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn minimap_ui(
     time: Res<Time>,
     input: Res<ButtonInput<KeyCode>>,
     st: Res<UiState>,
     demo: Res<DemoSim>,
     mut res: ResMut<MinimapRes>,
-    mut root_q: Query<&mut Node, With<MinimapRoot>>,
-    mut dots: Query<(
+    // P0 (windowed startup B0001): three &mut Node queries must be provably
+    // disjoint. MinimapRoot / MinimapDot / MinimapBossDot are three disjoint
+    // entity sets (see minimap_startup), but Bevy cannot infer that without
+    // explicit Without<> filters; headless never registered this system, so
+    // the conflict only surfaced in the real browser/windowed run.
+    mut root_q: Query<
         &mut Node,
-        &mut BackgroundColor,
-        &mut UiTransform,
-        &MinimapDot,
-    )>,
-    mut boss_q: Query<(&mut Node, &mut BackgroundColor), With<MinimapBossDot>>,
+        (
+            With<MinimapRoot>,
+            Without<MinimapDot>,
+            Without<MinimapBossDot>,
+        ),
+    >,
+    mut dots: Query<
+        (
+            &mut Node,
+            &mut BackgroundColor,
+            &mut UiTransform,
+            &MinimapDot,
+        ),
+        (Without<MinimapRoot>, Without<MinimapBossDot>),
+    >,
+    mut boss_q: Query<
+        (&mut Node, &mut BackgroundColor),
+        (
+            With<MinimapBossDot>,
+            Without<MinimapRoot>,
+            Without<MinimapDot>,
+        ),
+    >,
     windows: Query<&Window>,
 ) {
     let m = &mut *res;
@@ -391,5 +413,38 @@ pub fn minimap_ui(
             }
             None => node.display = Display::None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::input::ButtonInput;
+    use inkwave_sim::collision::CollisionWorld;
+
+    /// P0 regression: `minimap_ui` holds three `&mut Node` queries. Without
+    /// explicit `Without<>` disjointness filters, Bevy raises B0001 at system
+    /// initialization — which only happens in the WINDOWED build (headless
+    /// never registers UI systems), so the real browser boot panicked while
+    /// all 478 headless tests stayed green. Registering the system and running
+    /// one app.update() reproduces the exact startup path: this test panics
+    /// with B0001 if the filters are ever removed.
+    #[test]
+    fn minimap_ui_queries_are_disjoint_no_b0001() {
+        let layout = inkwave_sim::embedded_tidewater();
+        let world = CollisionWorld::from_layout(&layout);
+        let demo = DemoSim::new(layout, world, 20261121);
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Time>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<crate::ui::UiState>()
+            .insert_resource(demo)
+            .init_resource::<MinimapRes>()
+            .add_systems(Update, minimap_ui);
+
+        // System initialization (where B0001 fires) happens on first update.
+        app.update();
     }
 }
