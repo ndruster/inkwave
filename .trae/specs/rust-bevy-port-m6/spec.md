@@ -203,3 +203,93 @@ M6 收尾矩阵全绿；上游树/sim 依赖面守卫通过；独立只读总评
   - 上游 JS/sim 树零改动守卫照旧。
   - 沙箱无 GPU，WGSL 只做结构锚测（binding/struct/字段顺序），完整 naga 编译 +
     像素观感登记 D-M6-4 用户机复核，不伪验收。
+
+---
+
+## Task72 实施设计（2026-11-21，开工时实读定稿）
+
+### §0 范围（实读结论：AC-M6-2 的「接线 + 逐项登记」双口径）
+- **DOM 桥**：实读确认零 DOM 节点操作（`Document`/`Element` feature 都未开）；`CompositeOverlay`/
+  `LobbyNameplates` 数据面已就绪。上游 `showcase.js _measureLobby`(L2677-2694) 的 UI 安全矩形
+  与 `_lobFrame`(L2670) 的 `kFront` 都是**运行时 DOM 测量**，非 JSON 字段。本任务接一个
+  平台中立的 **DOM 操作序列桥**：`DomSink` trait（create/set_text/set_style/append/remove）
+  + native `RecordingDomSink`（headless 锚测节点操作序列）+ wasm `web-sys` sink（真实节点，
+  用户机复核）。native 侧以操作序列断言替代真实 DOM（AC-M6-2 明确口径）。
+- **安全区/kFront**：新增 `LobbyMeasure` 资源（safe rect + kFront），native 默认 =(0,0,W,H)/
+  150（≡ JS `kFront:150` 初始），wasm 侧按 `_measureLobby` 从 DOM 实测。`showcase_nameplates_update`
+  从硬编码 `None/1.0`(showcase_scene.rs L405) 改为读此资源 → 消除 D-T62-2 缺口。
+- **CharAnim 预览**：实读确认完整 `CharAnim` 骨树为**纯数据、零 GPU 句柄**
+  （`Tables::load()` include_str! → `CharAnim::new` → `update(dt,&AnimState)` → 写 `bones`/`kid`），
+  pinned fixture 已证明 headless 可比。facade `ShowcasePreview`(showcase_scene.rs L63-82) 不碰
+  CharAnim。本任务给预览实体挂 `PreviewAnim`（持有 CharAnim + 确定性 style/seed），
+  在 `showcase_members_update` 里逐帧 `update` 并把 `kid`/body 的 pose 变换写到 `Transform`
+  （emote hop/dance 仍由 `advance_preview` 的弧线叠加），逐帧 pose 可 headless 锚测。
+- **cross-dissolve/covered**：实读 `_updateSet`(showcase.js L2093-2121) 与 render()(L3055-3071)：
+  `k += dt/SET_FADE`(SET_FADE=0.45 从 lobbyset.json 提取)，on=mode∈{hub,lobby}&&ready，
+  `covered`=全帧无下层绘制→透明度直接 1。新增纯数据 `SetFade` 状态机（k/gone/ready/on/
+  covered + `eInOut`），headless 锚测；Bevy 侧合成不透明度接线为数据面（真实 GPU 混合
+  观感登记用户机复核）。
+- **GTAO/SMAA 选型裁决（G-4）**：实读 Bevy 0.19.1 registry——**SMAA 已内建**
+  （`bevy_anti_alias::Smaa`+`SmaaPlugin`，`smaa_luts` feature 内嵌 area/search LUT，
+  `AntiAliasPlugin` 默认注册）；GTAO 无内建（仅 SSAO）。裁决：SMAA 用 Bevy 内建 `Smaa`
+  组件按档接线（`msaa>0&&!multisampled` 由 `postprocess.json` 门控，`low` 不挂）；GTAO
+  维持数据面 + 用户机复核（需 depth/normal prepass，无内建，沙箱不可验观感）。
+
+### §1 DOM 桥数据面（NFR-M6-6，零手抄）
+- 新增 `ui/dom_bridge.rs`：`DomSink` trait + `DomOp` 枚举（文本/样式/子节点操作，携带
+  stable key `slot`/`kind`）；`build_overlay_ops(&CompositeOverlay, &LobbyNameplates) -> Vec<DomOp>`
+  纯函数把名牌/伤害数字/minimap FX 映射为幂等操作序列（按 key diff 上一帧）。
+- native：`RecordingDomSink` 记录每帧 ops 到 `Vec<Vec<DomOp>>`，锚测「roster 变化→ops 序列」、
+  「low 档→全空 ops」、伤害数字合并只更新文本不重建节点。
+- wasm：`WebDomSink` 用 `web-sys`（需给 Cargo.toml 加 `Document`/`Element`/`Node`/`HtmlElement`
+  feature，`#[cfg(target_arch="wasm32")]` 门控）按 key 维护 `#iw-overlay` 下的节点。观感用户机复核。
+
+### §2 安全区/kFront 接线
+- `LobbyMeasure { safe: (f32,f32,f32,f32), k_front: f32 }` Resource；native 默认 `k_front=150`
+  （≡ JS 初始）、safe=(0,0,W,H)（无实测 DOM，等价于当前 None 行为）。lambda 入参替换
+  `showcase_nameplates_update` L405 的 `None/1.0` → `Some(measure.safe)/measure.k_front`。
+
+### §3 CharAnim 预览接线
+- `PreviewAnim<'static>` 不能作 Component（生命周期）——改为 `PreviewAnim` 持 `Tables` 的
+  `'static` 引用（`Tables::load()` 可用 `OnceLock<Tables>` 提升为静态）+ 内部 `CharAnim<'static>`、
+  style[6]、seed。`Tables` 由 `include_str!` 解析，`OnceLock` 模式沿用 `level_render`/`post_pass`
+  的静态资源先例。
+- 在 `spawn_preview` 挂 `PreviewAnim`，`showcase_members_update` 每帧：`c.update(dt,&AnimState::from(member))`
+  → 用 `c.kid.pos/quat/scale` 写预览 root 的 `Transform`（body/头由 facade 几何承担，骨树 pose
+  驱动 root 的位移/旋转/缩放 + emote 弧线）。逐帧锚测：同一 `(name,style,seed)` 序列两次运行 pose
+  数值逐帧相同；`low` 档无预览实体。
+
+### §4 cross-dissolve 状态机
+- `SetFade { k: f32, gone: f32, ready: bool, covered: bool }` + `fn advance(&mut self, dt, on: bool)`：
+  `k = if on&&ready { min(1,k+dt/set_fade) } else { max(0,k-dt/set_fade) }`；`set_fade` 从
+  `pedestal().set_fade`(lobbyset.json) 读取，零手抄。
+- `fn opacity(&self) -> f32`：`covered ? 1.0 : eInOut(k)`（eInOut ≡ JS `eInOut` smoothstep）。
+  挂到 `ShowcaseState` 或独立 Resource；`showcase_scene_update` 每帧 advance。
+
+### §5 G-4 SMAA/SMAA 选型裁决（开工实读更正 → 继续登记）
+- 开工实读 Bevy 0.19.1 registry：**SMAA 确有内建**（`bevy_anti_alias::smaa::{Smaa,
+  SmaaPlugin}`，`AntiAliasPlugin` 默认注册，area/search LUT 内嵌于 `smaa_luts` feature）；
+  GTAO 无内建（仅 SSAO）。初稿 §5 拟按档挂 `Smaa` 组件。
+- **实读裁决改为「继续登记」（G-4 允许分支，见 `fx/aa_decision.rs`）**：本相机管线已有
+  Bloom + Task 71 自写 post-pass，沙箱无 GPU 无法验证再叠加一个内建全屏 pass 的观感；
+  且默认 `lut_placeholder` 与 JS 真实 area/search 纹理不同，不能声称像素等价。G-4 的
+  SMAA 门（`msaa>0 && !multisampled`）以纯函数锚定，接线待用户机裁决（D-M6-10）。
+
+### §6 偏差登记（写入 REVIEW_CHECKLIST Task 72 段）
+- D-M6-6：native DOM 桥是**操作序列锚测**；wasm web-sys sink 挂到 `index.html` 的
+  `#iw-overlay`（已补真实 mount），节点渲染观感用户机复核。
+- D-M6-7：安全区/kFront 在 native 无 DOM 实测 → `safe_opt()=None`（≡ JS `!U`，无边缘剔除，
+  与 M5 行为一致）；wasm 分支目前也未做 `_measureLobby` 实测，沿用默认 kFront=150，
+  实测接入与观感用户机复核。
+- D-M6-8：CharAnim 预览由 member 的 ready/emote 状态驱动骨树 root pose（body/头仍是 facade
+  几何），emote 首帧触发一次性 `CharAnim::trigger`；完整骨树 mesh 渲染观感用户机复核。
+- D-M6-9：cross-dissolve 的 `covered = on && full_frame && k>=1`（≡ JS `_ffFrame`），淡入期
+  `opacity = eInOut(k)`；GPU 混合/清屏观感用户机复核，数据面 k/opacity 已锚测。
+- D-M6-10：GTAO 保持未接（无内建+需 depth/normal prepass）；SMAA 虽有 Bevy 内建但按 G-4
+  裁决**继续登记、暂不接线**（沙箱不可验观感 + placeholder LUT 差异），两项用户机复核。
+
+### §7 门禁与锚测
+- `gate-task72.sh`（模板 gate-task69.sh）：DETERM 加 lobbyset 双跑；XCHK task72 专项
+  （≥6 锚测：DOM ops/安全区/CharAnim pose/cross-dissolve/SMAA 门控/low 全关）+ 8 组 crosscheck。
+- headless 四组合 + boss 600 帧不 panic；wasm32 check；九段全绿；上游 JS/sim 零改动。
+

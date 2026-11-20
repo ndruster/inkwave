@@ -52,7 +52,7 @@
     `REVIEW_CHECKLIST.md`；GPU 观感/完整 naga 编译为用户机复核，未伪验收。
 
 ## Task 72: DOM/UI 桥与大厅呈现收口
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 71（pass 顺序结论是 DOM 叠层顺序前提）；M5 Task 61/62/64
 - **Description**: `CompositeOverlay`（名牌/伤害数字/小地图 FX）经 wasm `web-sys` DOM 桥
@@ -65,6 +65,33 @@
     替代真实 DOM）+ 完整 `CharAnim` 预览逐帧比对 + `low` 档全关回归。
   - `rule` TR-72.2: REVIEW_CHECKLIST 登记（名牌遮挡/安全区/cross-dissolve 过渡观感）。
 - **Notes**: wasm DOM 节点操作无法在沙箱验证观感，登记用户机复核，不伪验收。
+- **Completion Evidence（2026-11-21）**：
+  - **DOM 桥本体**：新增 `ui/dom_bridge.rs`——平台中立 `DomKey`/`DomOp`、`build_overlay_ops()`
+    纯函数（名牌/伤害数字/minimap FX → 幂等节点操作序列，按 key diff）、`RecordingDomSink`
+    （native headless 锚测）、`#[cfg(wasm32)]` web-sys sink（真实节点，扩 Cargo.toml 的
+    Document/Element/Node/HtmlElement feature）；`index.html` 补 `#iw-overlay` 真实 mount。
+  - **安全区/kFront**：新增 `LobbyMeasure` 资源（`safe_opt()`：native 未测量 → None ≡ JS
+    `!U` 无剔除，与 M5 行为一致；kFront 默认 150 ≡ JS 初始），`showcase_nameplates_update`
+    从硬编码 `None/1.0` 改读此资源，D-T62-2 数据面闭环。
+  - **CharAnim 预览**：新增 `ui/preview_anim.rs`（`OnceLock<Tables>` 提升 'static、
+    `step_preview_pose` 纯函数、`PreviewAnim` 组件）；`showcase_members_update` 用
+    `member_anim_terms`+`preview_anim_state`+emote 首帧 trigger 驱动真实骨树替代恒定 idle。
+  - **cross-dissolve**：新增 `SetFade` 状态机（k 按 dt/SET_FADE 升降、`eInOut` quintic 曲线、
+    `covered=on&&full_frame&&k>=1` ≡ JS `_ffFrame`），`set_fade_update` 每帧 advance。
+  - **G-4 裁决**：新增 `fx/aa_decision.rs`——实读 Bevy 0.19.1（SMAA 内建存在、GTAO 无内建），
+    裁决两者「继续登记、暂不接线」（G-4 允许分支），门控纯函数已锚测。
+  - **独立评审闭环**：首轮 **2×P0 + 4×P1 + 6×P2**；P0-1（covered 钉死 opacity=1 杀淡入）
+    已修为 advance 后算 `covered=k>=1` 并加系统级锚测；P0-2（wasm `#iw-overlay` 根节点缺失
+    → sink 静默空操作）已补 index.html mount；P1-1（D-M6-6..10 未登记）已落 REVIEW_CHECKLIST；
+    P1-2（safe=(0,0,0,0) 全剔除回归）已改 `safe_opt()=None`；P1-3（CharAnim 恒定 idle 伪接线）
+    已改 member 状态驱动 + emote trigger + bone_hash 锚测；P1-4（SMAA 设计/登记冲突）已统一
+    "继续登记"。P2（稳定 key/帧上限/冗余注释/文案）亦全部修复。复验无新 P0/P1。
+  - **确定性/门禁**：`gate-task72.sh` → `tools/verify/logs/task72-gates-20261120T175933Z.log`：
+    `FMT/CLIPLY/TEST/WASM/TREE/DETERM(三提取器 re-run 字节一致)/XCHK(8 组含 task72×16)/
+    TRUNK_EXIT=0/RELEASE_BUILD/HEADLESS(四组合)/HEADLESS_BOSS` 全绿，`GATE_VERDICT=PASS`；
+    `JS_TREE_CLEAN`/`SIM_TREE_CLEAN`。workspace 单测 452 → **470**（+18），wasm32 check 通过。
+  - **已知偏差**：D-M6-6..10 全登记 `REVIEW_CHECKLIST.md`「Task 72 复核登记」；DOM 观感/
+    安全区实测/CharAnim mesh/cross-dissolve GPU 混合/SMAA-GTAO 接线均用户机复核，未伪验收。
 
 ## Task 73: 剩余消费者收敛（零 sim 改动）
 - **Status**: `pending`

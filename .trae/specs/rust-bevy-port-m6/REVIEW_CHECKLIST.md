@@ -59,6 +59,31 @@ M5 汇总 7 组复核项（`.trae/specs/rust-bevy-port-m5/REVIEW_CHECKLIST.md`�
 > 沙箱未做 naga 编译（无 GPU / Bevy `#import` 需运行时预处理）；WGSL 接口只做结构锚测，
 > 完整 shader 编译与像素结果是用户机复核项，不构成伪验收。
 
+## Task 72 复核登记（2026-11-21，DOM/UI 桥与大厅呈现收口）
+
+无头可测已锚定：14+ 项 task72 专项测试（DOM 操作序列 create/update/remove/behind/damage/
+low-idle/reconcile、LobbyMeasure.safe_opt、SetFade 淡入淡出、set_fade_update 真系统、
+CharAnim pose 确定性/全骨树/emote 改变姿态、G-4 AA 裁决）+ 九段门禁 PASS。以下为待用户
+GPU/浏览器机器复核项与明确偏差：
+
+- [ ] **D-M6-6 DOM 桥观感**：native 是操作序列锚测；wasm `web-sys` sink 挂 `index.html`
+  的 `#iw-overlay`（已补真实 mount），名牌定位（`kFront` px/metre）、伤害数字 scale、
+  minimap FX 落点的实际 DOM 观感待浏览器复核。
+- [ ] **D-M6-7 安全区/kFront 实测**：native 无 DOM → `safe_opt()=None`（≡ JS `!U`，边缘不
+  剔除，与 M5 一致）；wasm 分支当前也未做 `_measureLobby` 实测，沿用 kFront=150 默认值。
+  实测测量接入 + 遮挡/安全区观感待复核。
+- [ ] **D-M6-8 CharAnim 预览**：骨树由 member 的 ready/emote 状态驱动（emote 首帧触发
+  `CharAnim::trigger`），body/头仍是 facade 几何，完整骨树 mesh/skeleton 未生成；预览逐帧
+  姿态与 upstream 对照待复核。
+- [ ] **D-M6-9 cross-dissolve**：`covered = on && full_frame && k≥1`（≡ JS `_ffFrame`），
+  淡入期 `opacity=eInOut(k)`（首轮评审 P0 已修，系统级锚测守此）；GPU 混合/黑屏清屏观感
+  待复核。
+- [ ] **D-M6-10 GTAO/SMAA 选型**：GTAO 无 Bevy 内建且需 depth/normal prepass → 保持未接；
+  SMAA 虽有 Bevy 内建（`SmaaPlugin`+内嵌 LUT），但沙箱无 GPU + placeholder LUT 与 JS 真实
+  area/search 纹理有差异 → 按 G-4「继续登记」分支暂不接线；两项待用户机裁决是否接线。
+- [ ] **名牌遮挡/过渡观感**：8 名牌的 behind/safe 判定、hub⇄room 淡入淡出曲线在四档 +
+  三主题下的实际画面。
+
 ## M6 汇总复核清单（Task 74 定稿时填写）
 
 _待 Task 74 收尾时按实际实施结果填写。_

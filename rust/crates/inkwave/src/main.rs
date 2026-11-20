@@ -239,6 +239,9 @@ fn main() {
             // M6 Task 71: the fullscreen grade + composite pass. Headless
             // builds never reach this branch, so no RenderApp is required.
             .add_plugins(fx::post_pass::PostFxPlugin)
+            // M6 Task 72: wasm real-DOM overlay bridge (native: no-op plugin;
+            // the recording sink already runs in world.rs for headless anchors).
+            .add_plugins(ui::dom_bridge::DomBridgePlugin)
             .add_systems(
                 Update,
                 fx::post_pass::post_fx_uniform_sync.after(fx::composite::composite_overlay_update),

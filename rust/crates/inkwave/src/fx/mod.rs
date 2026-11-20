@@ -61,6 +61,9 @@ pub mod zone_marks;
 
 use bevy::prelude::Resource;
 
+// M6 Task 72 / G-4: SMAA/GTAO written 选型裁决 (continue-register branch).
+pub mod aa_decision;
+
 use hooks::HooksRuntime;
 use particles::{DEFAULT_SEED, Fx, FxOptions};
 

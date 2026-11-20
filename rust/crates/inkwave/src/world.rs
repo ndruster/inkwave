@@ -694,6 +694,12 @@ impl Plugin for WorldPlugin {
         .init_resource::<crate::ui::showcase_scene::ShowcaseScene>()
         // Task 62: projected lobby plate data plane (Task 64 owns the DOM).
         .init_resource::<crate::ui::showcase_state::LobbyNameplates>()
+        // M6 Task 72: DOM bridge sink + runtime-measured lobby inputs +
+        // cross-dissolve state (all native-headless data planes; real DOM/GPU
+        // visuals are user-machine review items).
+        .init_resource::<crate::ui::dom_bridge::RecordingDomSink>()
+        .insert_resource(crate::ui::showcase_state::LobbyMeasure::default())
+        .insert_resource(crate::ui::showcase_state::SetFade::default())
         // Task 59: environment refresh signal from the settings screen.
         .init_resource::<EnvRefresh>();
         // Task 24: the online session. Stored as a *non-send* resource — the
@@ -789,6 +795,10 @@ impl Plugin for WorldPlugin {
                     // plane; both read the same state the 2D lobby panel uses.
                     crate::ui::showcase_scene::showcase_members_update,
                     crate::ui::showcase_scene::showcase_nameplates_update,
+                    // M6 Task 72: cross-dissolve k/opacity + DOM op-sequence
+                    // bridge (after nameplates so it sees this frame's plates).
+                    crate::ui::showcase_scene::set_fade_update,
+                    crate::ui::dom_bridge::overlay_dom_sync,
                     // Task 50 batch D: plays the cues `ui_update` recorded this
                     // frame (runs after the director, before the voice GC).
                     crate::audio::boss_audio::boss_audio_playback,

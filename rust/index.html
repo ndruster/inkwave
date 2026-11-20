@@ -7,9 +7,17 @@
     <style>
       html, body { margin: 0; height: 100%; overflow: hidden; background: #9fd8f0; }
       canvas { display: block; }
+      /* M6 Task 72: the wasm DOM overlay bridge mounts nameplate / damage
+         number / minimap FX nodes here (data-iw-key). Position:absolute so
+         projected plates can be placed with CSS transform (px/metre=kFront). */
+      #iw-overlay { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+      #iw-overlay [data-iw-key] { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
     </style>
   </head>
   <body>
+    <!-- M6 Task 72 / G-2: real DOM overlay mount for the wasm sink. The native
+         headless build uses the recording sink instead (visual review item). -->
+    <div id="iw-overlay"></div>
     <!-- Build the Bevy app crate and inject the WASM loader here. -->
     <link data-trunk rel="rust" href="crates/inkwave/Cargo.toml" data-wasm-opt="0" />
   </body>

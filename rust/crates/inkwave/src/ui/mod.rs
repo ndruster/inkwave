@@ -37,6 +37,9 @@ pub mod boss_hud;
 pub mod minimap;
 pub mod minimap_ui;
 pub mod online;
+// M6 Task 72: platform-neutral DOM overlay bridge + real CharAnim preview.
+pub mod dom_bridge;
+pub mod preview_anim;
 // Task 56 batch C: 3D showcase lobby state + placeholder Bevy set.
 pub mod showcase_scene;
 pub mod showcase_state;

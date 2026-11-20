@@ -265,6 +265,29 @@ fn advance_preview(
     (rise, yaw, squash)
 }
 
+/// M6 Task 72 / P1-3: derive CharAnim `speed`/`charge` drive terms from the
+/// member's live emote state (extracted `dance v` + duration → a 0..1 phase
+/// envelope). Idle (no emote) ⇒ (0,0) which still lets the spring rig settle
+/// to its neutral pose; an emote ⇒ non-zero, so the bone tree visibly moves.
+fn member_anim_terms(member: &ShowcaseMember, started: Option<f64>, now: f64) -> (f64, f64) {
+    let Some((name, start)) = member.emote.as_deref().zip(started) else {
+        return (0.0, 0.0);
+    };
+    let Some(e) = emote(name) else {
+        return (0.0, 0.0);
+    };
+    let t = (now - start).max(0.0);
+    if t > e.duration as f64 {
+        return (0.0, 0.0);
+    }
+    let phase = (t / e.duration.max(0.001) as f64).clamp(0.0, 1.0);
+    let envelope = 4.0 * phase * (1.0 - phase); // 0→1→0 across the emote
+    (
+        (e.variant as f64).abs().clamp(0.0, 2.0) * envelope * 0.5,
+        envelope,
+    )
+}
+
 fn apply_preview_transform(tf: &mut Transform, pos: [f32; 3], rise: f32, yaw: f32, squash: f32) {
     tf.translation = Vec3::new(pos[0], pos[1] + PREVIEW_BODY_HALF + rise, pos[2]);
     tf.rotation = Quat::from_rotation_y(yaw);
@@ -292,6 +315,15 @@ fn spawn_preview(
     });
     let mut tf = Transform::default();
     apply_preview_transform(&mut tf, spot.pos, rise, yaw, squash);
+    // M6 Task 72: real CharAnim bone-tree pose (pure data, headless-anchorable)
+    // alongside the M5 facade. The facade mesh stays; the bone pose drives the
+    // root transform delta each frame (D-M6-8).
+    let preview_anim = super::preview_anim::PreviewAnim::new(
+        member.slot,
+        &member.name,
+        [0, 1, 2, 3, 4, 5],
+        super::preview_anim::slot_seed(&member.name),
+    );
     let entity = commands
         .spawn((
             ShowcasePreview {
@@ -305,6 +337,7 @@ fn spawn_preview(
                 emote_serial: member.emote_serial,
                 started,
             },
+            preview_anim,
             Visibility::Visible,
             RenderLayers::layer(SHOWCASE_LAYER),
             tf,
@@ -334,7 +367,11 @@ pub fn showcase_members_update(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut mats: ResMut<Assets<StandardMaterial>>,
-    mut previews: Query<(&mut Transform, &mut ShowcasePreview)>,
+    mut previews: Query<(
+        &mut Transform,
+        &mut ShowcasePreview,
+        &mut super::preview_anim::PreviewAnim,
+    )>,
 ) {
     let Some(root) = scene.root else {
         return;
@@ -366,9 +403,31 @@ pub fn showcase_members_update(
             continue;
         };
         if let Some(&entity) = scene.previews.get(&member.slot) {
-            if let Ok((mut tf, mut prev)) = previews.get_mut(entity) {
+            if let Ok((mut tf, mut prev, mut anim)) = previews.get_mut(entity) {
                 let (rise, yaw, squash) = advance_preview(&mut prev, member, spot.yaw, now);
-                apply_preview_transform(&mut tf, spot.pos, rise, yaw, squash);
+                // M6 Task 72 / review P1-3: drive the real CharAnim bone tree
+                // from the member's live flags + emote progress (NOT a constant
+                // idle), so the visible pose actually changes. The full bone
+                // mesh stays a user-machine review item (D-M6-8).
+                let (speed, charge) = member_anim_terms(member, prev.started, now);
+                let st = crate::ui::preview_anim::preview_anim_state(member.ready, speed, charge);
+                if member.emote.is_some() && anim.fired_emote_serial != member.emote_serial {
+                    if let Some((name, arg)) = crate::ui::preview_anim::emote_trigger(
+                        member.emote.as_deref().unwrap_or(""),
+                    ) {
+                        anim.anim.trigger(name, arg);
+                    }
+                    anim.fired_emote_serial = member.emote_serial;
+                }
+                let _ = anim.step(time.delta_secs_f64(), &st);
+                let (root_dy, root_yaw, root_squash) = anim.root_delta();
+                apply_preview_transform(
+                    &mut tf,
+                    spot.pos,
+                    rise + root_dy.max(0.0) * 0.01,
+                    yaw + root_yaw * 0.05,
+                    squash * root_squash.max(0.5),
+                );
             }
             continue;
         }
@@ -391,18 +450,54 @@ pub fn showcase_members_update(
     }
 }
 
-/// Refresh the DOM-plate data plane from the same projected 3D spots. The
-/// measured UI safe rect and live `kFront` arrive with Task 64; until then
-/// `None`/`1.0` is the honest fallback (D-T62-2).
+/// Refresh the DOM-plate data plane from the same projected 3D spots. M6
+/// Task 72 reads the runtime [`LobbyMeasure`] (safe rect + kFront) instead of
+/// the old hardcoded `None`/`1.0` (D-T62-2 closed on the data plane; the wasm
+/// DOM measurement itself stays user-machine review, D-M6-7).
 pub fn showcase_nameplates_update(
     state: Res<ShowcaseState>,
     windows: Query<&Window, With<PrimaryWindow>>,
+    measure: Res<super::showcase_state::LobbyMeasure>,
     mut plates: ResMut<LobbyNameplates>,
 ) {
     let (width, height) = windows.iter().next().map_or((1920.0, 1080.0), |w| {
         (w.width().max(1.0), w.height().max(1.0))
     });
-    *plates = LobbyNameplates(project_lobby_nameplates(&state, width, height, None, 1.0));
+    // Review P1-2: unmeasured native default → safe_opt()=None (≡ JS `!U`,
+    // no edge culling), preserving the pre-Task72 `None` behaviour exactly.
+    *plates = LobbyNameplates(project_lobby_nameplates(
+        &state,
+        width,
+        height,
+        measure.safe_opt(),
+        measure.k_front,
+    ));
+}
+
+/// M6 Task 72: advance the hub⇄room cross-dissolve `k` every frame from the
+/// live `ShowcaseState`. `on` = mode ∈ {hub, lobby} (JS SET_MODES); `ready`
+/// follows the lobby set being built. The eInOut opacity + covered bypass are
+/// pure data (showcase.js L2093-2121 / L3055-3071, D-M6-9).
+pub fn set_fade_update(
+    state: Res<ShowcaseState>,
+    time: Res<Time>,
+    mut fade: ResMut<super::showcase_state::SetFade>,
+) {
+    use super::showcase_state::ShowcaseMode;
+    let on = matches!(state.mode, ShowcaseMode::Hub | ShowcaseMode::Lobby);
+    fade.ready = state.full_frame;
+    fade.advance(
+        time.delta_secs_f64(),
+        on,
+        super::showcase_state::pedestal().set_fade,
+    );
+    // Review P0-1: JS `covered = this._ffFrame = L.ready && L.k >= 1 &&
+    // SET_MODES.has(mode)` (showcase.js L1570-1572 / L1256 / L3066). During
+    // the 0.45s fade-in (k<1) covered MUST stay false so `uOpacity=eInOut(k)`
+    // drives the cross-dissolve; gating covered on full_frame alone would pin
+    // opacity to 1 and kill the fade. Computed AFTER advance so the frame k
+    // crosses 1 is the first fully-opaque one.
+    fade.covered = on && state.full_frame && fade.k >= 1.0;
 }
 
 /// Task 61: drive the layer-1 showcase camera (never the main camera). While
@@ -567,6 +662,52 @@ fn build_set(
 mod tests {
     use super::*;
 
+    /// TR-72.1 / review P0-1: drive the real `set_fade_update` system and
+    /// assert covered stays false + eInOut opacity drives the fade-in until
+    /// k reaches 1 (then covered=1, opacity=1). Guards the cross-dissolve.
+    #[test]
+    fn task72_set_fade_update_dissolves_in_before_covered() {
+        // Review P0-1: the system must keep `covered=false` while k<1 (so the
+        // eInOut opacity drives the fade-in) and flip to covered once k==1.
+        // k integration itself is separately anchored in SetFade::advance;
+        // here we seed k and verify the SYSTEM's covered assignment.
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.insert_resource(ShowcaseState {
+            mode: ShowcaseMode::Lobby,
+            full_frame: true,
+            ..Default::default()
+        });
+        app.add_systems(Update, set_fade_update);
+
+        // k=0.5 (mid fade-in), on+full_frame → covered stays false,
+        // opacity = eInOut(0.5) = 0.5.
+        app.insert_resource(crate::ui::showcase_state::SetFade {
+            k: 0.5,
+            ready: true,
+            ..Default::default()
+        });
+        app.update();
+        let f = app.world().resource::<crate::ui::showcase_state::SetFade>();
+        assert!(!f.covered, "fade-in must not be covered while k<1");
+        assert!(
+            (f.opacity() - 0.5).abs() < 0.05,
+            "eInOut must drive the dissolve, got {}",
+            f.opacity()
+        );
+
+        // k fully faded in → covered=true, opacity=1 (bypass eInOut).
+        app.insert_resource(crate::ui::showcase_state::SetFade {
+            k: 1.0,
+            ready: true,
+            ..Default::default()
+        });
+        app.update();
+        let f = app.world().resource::<crate::ui::showcase_state::SetFade>();
+        assert!(f.covered, "fully faded-in set becomes covered");
+        assert_eq!(f.opacity(), 1.0);
+    }
+
     /// Bevy 0.19 `RenderLayers::bits()` is a `&[u64]` bitset, not an integer.
     fn has_layer(app: &App, e: Entity, bit: u64) -> bool {
         app.world()
@@ -728,6 +869,8 @@ mod tests {
         app.init_asset::<Mesh>().init_asset::<StandardMaterial>();
         app.init_resource::<ShowcaseScene>();
         app.init_resource::<LobbyNameplates>();
+        // M6 Task 72: showcase_nameplates_update now reads the measured inputs.
+        app.insert_resource(crate::ui::showcase_state::LobbyMeasure::default());
         let member = |slot, name: &str, team: u8, ready: bool| ShowcaseMember {
             slot,
             name: name.to_string(),

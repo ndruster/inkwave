@@ -299,6 +299,13 @@ impl DamageNumber {
             })
         .clamp(0.85, 1.6)
     }
+
+    /// M6 Task 72: the display scale for the DOM bridge (public form of the
+    /// pool-internal [`Self::scale`], same pinned hud-boss.js L416 formula).
+    #[must_use]
+    pub fn display_scale(&self) -> f64 {
+        self.scale(&damage_number_spec())
+    }
 }
 
 /// Pool of boss damage numbers with combo merge + expiry (all pure data).
@@ -358,7 +365,7 @@ impl DamageNumberPool {
 
 // --- Minimap transient FX lane (minimap.js L19-24) -------------------------
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MapFxKind {
     Slam,
     Boom,

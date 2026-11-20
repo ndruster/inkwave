@@ -335,6 +335,124 @@ pub fn pedestal() -> Pedestal {
     }
 }
 
+// ------------------------------------------------- M6 Task 72: live inputs
+
+/// M6 Task 72 — runtime-measured lobby projection inputs (D-T62-2 / D-M6-7).
+/// Upstream `showcase.js` measures these from the DOM every frame:
+/// `_measureLobby`(L2677-2694) → `R.l/r/t/b` safe rect, and `_lobFrame`(L2670)
+/// → `L.kFront = |sx - vx| * 0.5 * W` (px/metre at your mark). Neither is a
+/// JSON field, so the native sandbox uses the honest defaults below (which
+/// reproduce the previous `None` / `1.0` fallback); wasm overwrites them with
+/// measured values in the DOM sink. Kept as a Resource for headless anchoring.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct LobbyMeasure {
+    /// Safe rectangle (left, right, top, bottom) in CSS px.
+    pub safe: (f32, f32, f32, f32),
+    /// Pixels per metre at your mark; JS initial `kFront: 150` (L1596).
+    pub k_front: f32,
+}
+
+impl Default for LobbyMeasure {
+    fn default() -> Self {
+        // Review P1-2: a degenerate rect (0,0,0,0) would cull EVERY plate
+        // (x>24 && x<-24). Native has no measured DOM, so default to the
+        // "unmeasured" sentinel → projection passes `None` (≡ JS `!U`, no
+        // culling). See `safe_opt()`.
+        Self {
+            safe: (0.0, 0.0, 0.0, 0.0),
+            k_front: 150.0,
+        }
+    }
+}
+
+impl LobbyMeasure {
+    /// The safe rect for projection. `None` (≡ JS `!U`, no culling) when the
+    /// native sandbox has no measured DOM — the degenerate default sentinel.
+    /// Wasm overwrites `safe` with the real `_measureLobby` rectangle.
+    #[must_use]
+    pub fn safe_opt(&self) -> Option<(f32, f32, f32, f32)> {
+        let (l, r, t, b) = self.safe;
+        if r > l && b > t {
+            Some((l, r, t, b))
+        } else {
+            None
+        }
+    }
+
+    /// Build a full-window safe rect from a window size (explicit measurement
+    /// fallback; edge insets 24/20/30 then apply, matching JS `U` present).
+    #[must_use]
+    pub fn full_window(width: f32, height: f32) -> Self {
+        Self {
+            safe: (0.0, width, 0.0, height),
+            k_front: 150.0,
+        }
+    }
+}
+
+/// M6 Task 72 — the hub⇄room cross-dissolve state machine, ported from
+/// `showcase.js` `_updateSet`(L2093-2121) + `render()`(L3055-3071). `k` ramps
+/// 0↔1 at `dt / SET_FADE`; `covered` forces the composite opacity to 1 (skip
+/// the eInOut fade) when nothing was drawn under the full-frame set. Pure
+/// data (no GPU / no DOM), headless-testable.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct SetFade {
+    /// Cross-dissolve progress in [0, 1] (JS `L.k`).
+    pub k: f32,
+    /// Time since the set went off-screen (JS `L.gone`, release after 1.5 s).
+    pub gone: f32,
+    /// LobbySet resources/prewarm finished (JS `L.ready`).
+    pub ready: bool,
+    /// True when nothing was drawn under the full-frame set this frame.
+    pub covered: bool,
+}
+
+impl Default for SetFade {
+    fn default() -> Self {
+        Self {
+            k: 0.0,
+            gone: 0.0,
+            ready: false,
+            covered: false,
+        }
+    }
+}
+
+impl SetFade {
+    /// Advance the dissolve by `dt` seconds. `on` = mode ∈ {hub, lobby}.
+    /// SET_FADE comes from `pedestal().set_fade` (lobbyset.json, zero hand-copy).
+    pub fn advance(&mut self, dt: f64, on: bool, set_fade: f32) {
+        let step = (dt.max(0.0) / set_fade.max(1e-4) as f64) as f32;
+        self.k = if on && self.ready {
+            (self.k + step).min(1.0)
+        } else {
+            (self.k - step).max(0.0)
+        };
+        if !on && self.k <= 0.0 {
+            self.gone += dt as f32;
+        } else {
+            self.gone = 0.0;
+        }
+    }
+
+    /// Composition opacity ≡ `covered ? 1 : eInOut(k)` (showcase.js L3069).
+    /// `eInOut`(L37) is the quintic smoothstep `t³(t(6t−15)+10)`.
+    #[must_use]
+    pub fn opacity(&self) -> f32 {
+        if self.covered {
+            return 1.0;
+        }
+        let t = self.k.clamp(0.0, 1.0) as f64;
+        (t * t * t * (t * (t * 6.0 - 15.0) + 10.0)) as f32
+    }
+
+    /// Whether the LobbySet can be released (JS `L.gone > 1.5`, L2103).
+    #[must_use]
+    pub fn should_release(&self) -> bool {
+        self.gone > 1.5
+    }
+}
+
 /// Mode sets (showcase.js L60-63).
 #[must_use]
 pub fn mode_set(name: &str) -> Vec<&'static str> {
@@ -892,6 +1010,55 @@ pub fn slot_for_player(lobby: &Lobby, id: &SessionId) -> Option<usize> {
 mod tests {
     use super::*;
     use crate::ui::online::{HubView, LobbyView};
+
+    /// TR-72.1: cross-dissolve k ramps at dt/SET_FADE (showcase.js L2097),
+    /// eInOut is the quintic smoothstep (L37), covered bypasses the fade (L3069).
+    #[test]
+    fn task72_set_fade_ramp_and_covered() {
+        let sf = pedestal().set_fade;
+        let mut f = SetFade {
+            ready: true,
+            ..Default::default()
+        };
+        // on + ready → k rises to 1 over exactly set_fade seconds.
+        f.advance(sf as f64, true, sf);
+        assert!((f.k - 1.0).abs() < 1e-5, "one SET_FADE step reaches k=1");
+        assert!((f.opacity() - 1.0).abs() < 1e-5);
+        // off → k falls back to 0, then gone accumulates for release.
+        f.advance(sf as f64, false, sf);
+        assert!(f.k.abs() < 1e-5);
+        f.advance(1.6, false, sf);
+        assert!(f.should_release(), "gone > 1.5 releases the LobbySet");
+        // covered forces opacity 1 regardless of k.
+        let c = SetFade {
+            covered: true,
+            ..Default::default()
+        };
+        assert_eq!(c.opacity(), 1.0);
+        // eInOut(0.5) == 0.5 (quintic smoothstep is symmetric).
+        let h = SetFade {
+            k: 0.5,
+            ..Default::default()
+        };
+        assert!((h.opacity() - 0.5).abs() < 1e-5);
+    }
+
+    /// TR-72.1: LobbyMeasure defaults mirror the JS initial kFront:150 and a
+    /// full-window safe rect; the measured struct feeds pure projection.
+    #[test]
+    fn task72_lobby_measure_defaults_match_js() {
+        let m = LobbyMeasure::default();
+        assert_eq!(m.k_front, 150.0, "JS kFront initial (showcase.js L1596)");
+        // Review P1-2: unmeasured default must mean "no culling" (≡ JS !U).
+        assert_eq!(
+            m.safe_opt(),
+            None,
+            "native unmeasured → no safe-rect culling"
+        );
+        let full = LobbyMeasure::full_window(1920.0, 1080.0);
+        assert_eq!(full.safe, (0.0, 1920.0, 0.0, 1080.0));
+        assert_eq!(full.safe_opt(), Some((0.0, 1920.0, 0.0, 1080.0)));
+    }
 
     /// TR-62.1: `flex` is the only emote with a start offset and a trigger
     /// (`lobbyset.json` ← showcase.js L74). Both must survive extraction.
