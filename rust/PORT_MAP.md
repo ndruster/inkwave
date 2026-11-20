@@ -100,6 +100,9 @@ Task 65（后处理链）完成：`postprocess.json` 提取 grade 12 uniform（�
 Task 66（环境终稿）完成：`environment.json` 扩展提取云/PMREM/远景 cube/反射四档/海面 44 波/
 三组 swell；`env_bake.rs` mulberry32 波纹理跨语言 SHA256 golden（JS 生成/Rust 比对）。
 6 项锚测 + `environment-crosscheck` 139 checks + 九段门禁 PASS；D-T66-1/2 登记用户机复核。
+Task 67（3D alley 材质终稿）完成：`lobbyset.json` 扩展提取湿地面反射/霓虹/蒸汽/lobby PMREM
+材质段；`showcase_state.rs` 数据面 + 2 项锚测。`lobbyset-crosscheck` 242 checks（+51）+
+九段门禁 PASS；D-T67-1/2 登记用户机复核。
 
 ## 质量档位
 

@@ -118,6 +118,160 @@ pub fn lobby_quality(name: &str) -> Option<LobbyQuality> {
     })
 }
 
+// ------------------------------------------------------------------ Task 67 materials
+
+/// `groundMaterial()` planar-reflection constants (lobbySet-mats.js L175/L290-292).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WetReflectionSpec {
+    pub env_map_intensity: f32,
+    pub fresnel_f0: f32,
+    pub fresnel_scale: f32,
+    pub fresnel_pow: f32,
+    pub k_damp: f32,
+    pub k_ink: f32,
+    pub water_mix: [f32; 2],
+}
+
+#[must_use]
+pub fn wet_reflection() -> WetReflectionSpec {
+    let r = field(doc(), "materials");
+    let r = field(r, "reflection");
+    let wm = array(r, "water_mix");
+    WetReflectionSpec {
+        env_map_intensity: f32_field(r, "env_map_intensity"),
+        fresnel_f0: f32_field(r, "fresnel_f0"),
+        fresnel_scale: f32_field(r, "fresnel_scale"),
+        fresnel_pow: f32_field(r, "fresnel_pow"),
+        k_damp: f32_field(r, "k_damp"),
+        k_ink: f32_field(r, "k_ink"),
+        water_mix: [
+            wm[0].as_f64().unwrap() as f32,
+            wm[1].as_f64().unwrap() as f32,
+        ],
+    }
+}
+
+/// `neonMaterial()` constants (lobbySet-mats.js L17/L321): hot-core color,
+/// intensity vec4 (team / sign / buzz / halo) and the two team hex colors.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NeonSpec {
+    pub core_color: [f32; 3],
+    pub intensity: [f32; 4],
+    pub team_a: &'static str,
+    pub team_b: &'static str,
+}
+
+#[must_use]
+pub fn neon() -> NeonSpec {
+    let n = field(field(doc(), "materials"), "neon");
+    let c = array(n, "core_color");
+    let i = array(n, "intensity");
+    NeonSpec {
+        core_color: [
+            c[0].as_f64().unwrap() as f32,
+            c[1].as_f64().unwrap() as f32,
+            c[2].as_f64().unwrap() as f32,
+        ],
+        intensity: [
+            i[0].as_f64().unwrap() as f32,
+            i[1].as_f64().unwrap() as f32,
+            i[2].as_f64().unwrap() as f32,
+            i[3].as_f64().unwrap() as f32,
+        ],
+        team_a: str_field(n, "team_a"),
+        team_b: str_field(n, "team_b"),
+    }
+}
+
+/// `steamMaterial()` / `_fx()` constants (lobbySet-mats.js L424-441,
+/// lobbySet.js L589-591): crossed cards, color, scrolling noise and alpha.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SteamSpec {
+    pub cards: u32,
+    pub card_height: f32,
+    pub x: f32,
+    pub z: f32,
+    pub seed_step: f32,
+    pub color: [f32; 3],
+    pub time_scale: f32,
+    pub noise_scale: [f32; 2],
+    pub alpha_edge: [f32; 2],
+    pub alpha_scale: f32,
+}
+
+#[must_use]
+pub fn steam() -> SteamSpec {
+    let s = field(field(doc(), "materials"), "steam");
+    let col = array(s, "color");
+    let ns = array(s, "noise_scale");
+    let ae = array(s, "alpha_edge");
+    SteamSpec {
+        cards: f32_field(s, "cards") as u32,
+        card_height: f32_field(s, "card_height"),
+        x: f32_field(s, "x"),
+        z: f32_field(s, "z"),
+        seed_step: f32_field(s, "seed_step"),
+        color: [
+            col[0].as_f64().unwrap() as f32,
+            col[1].as_f64().unwrap() as f32,
+            col[2].as_f64().unwrap() as f32,
+        ],
+        time_scale: f32_field(s, "time_scale"),
+        noise_scale: [
+            ns[0].as_f64().unwrap() as f32,
+            ns[1].as_f64().unwrap() as f32,
+        ],
+        alpha_edge: [
+            ae[0].as_f64().unwrap() as f32,
+            ae[1].as_f64().unwrap() as f32,
+        ],
+        alpha_scale: f32_field(s, "alpha_scale"),
+    }
+}
+
+/// Lobby-local PMREM `_bakeEnv()/_rebakeEnv()` constants (lobbySet.js L156/L160/L73).
+/// Distinct from the world PMREM (env_bake.rs): size 128 / envIntensity 0.6.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LobbyPmremSpec {
+    pub sigma: f32,
+    pub near: f32,
+    pub far: f32,
+    pub size: u32,
+    pub position: [f32; 3],
+    pub team_normalize: f32,
+    pub environment_intensity: f32,
+    pub env_card_k: EnvCardK,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EnvCardK {
+    pub door: f32,
+    pub neon: f32,
+    pub bulbs: f32,
+    pub vending: f32,
+}
+
+#[must_use]
+pub fn lobby_pmrem() -> LobbyPmremSpec {
+    let p = field(field(doc(), "materials"), "pmrem");
+    let k = field(p, "env_card_k");
+    LobbyPmremSpec {
+        sigma: f32_field(p, "sigma"),
+        near: f32_field(p, "near"),
+        far: f32_field(p, "far"),
+        size: f32_field(p, "size") as u32,
+        position: pos3(p, "position"),
+        team_normalize: f32_field(p, "team_normalize"),
+        environment_intensity: f32_field(p, "environment_intensity"),
+        env_card_k: EnvCardK {
+            door: f32_field(k, "door"),
+            neon: f32_field(k, "neon"),
+            bulbs: f32_field(k, "bulbs"),
+            vending: f32_field(k, "vending"),
+        },
+    }
+}
+
 /// `LOB_EMOTES` row (showcase.js L73-77) → dance clip + variant/hop.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Emote {
@@ -1159,6 +1313,70 @@ mod tests {
         let p = pedestal();
         assert_eq!((p.slot_r, p.slot_top), (0.7, 0.72));
         assert_eq!(hub_spot(), ([1.7, 0.0, 0.9], -0.45));
+    }
+
+    #[test]
+    fn task67_material_params_match_upstream_literals() {
+        // Values pinned from the READ-ONLY lobbySet-mats.js / lobbySet.js; the
+        // crosscheck re-parses them independently (242 checks).
+        let r = wet_reflection();
+        assert_eq!(
+            (
+                r.env_map_intensity,
+                r.fresnel_f0,
+                r.fresnel_scale,
+                r.fresnel_pow
+            ),
+            (1.0, 0.02, 0.98, 5.0)
+        );
+        assert_eq!((r.k_damp, r.k_ink, r.water_mix), (0.5, 0.5, [0.8, 1.0]));
+
+        let n = neon();
+        assert_eq!(n.core_color, [0.1, 1.0, 0.35]);
+        assert_eq!(n.intensity, [7.0, 7.0, 1.0, 5.0]);
+        assert_eq!((n.team_a, n.team_b), ("#ff8a14", "#2f5bff"));
+
+        let s = steam();
+        assert_eq!((s.cards, s.card_height, s.seed_step), (3, 3.4, 1.7));
+        assert_eq!((s.x, s.z), (-2.8, -6.0));
+        assert_eq!(s.color, [0.2, 0.19, 0.21]);
+        assert_eq!(s.time_scale, 0.35);
+        assert_eq!(
+            (s.noise_scale, s.alpha_edge, s.alpha_scale),
+            ([1.6, 3.0], [0.4, 0.85], 0.6)
+        );
+
+        let p = lobby_pmrem();
+        assert_eq!((p.sigma, p.near, p.far, p.size), (0.04, 0.1, 100.0, 128));
+        assert_eq!(p.position, [0.8, 1.4, -1.2]);
+        assert_eq!((p.team_normalize, p.environment_intensity), (4.0, 0.6));
+        assert_eq!(
+            (
+                p.env_card_k.door,
+                p.env_card_k.neon,
+                p.env_card_k.bulbs,
+                p.env_card_k.vending
+            ),
+            (5.0, 4.0, 3.0, 2.5)
+        );
+    }
+
+    #[test]
+    fn task67_low_tier_keeps_reflection_and_steam_off() {
+        // D-T67-1 / Task 61 low保底: reflection=0 and steam=false must hold so
+        // the headless / low GPU path never pays for the reflection pass.
+        let low = lobby_quality("low").unwrap();
+        assert_eq!(low.reflection, 0.0);
+        assert!(!low.steam);
+        let medium = lobby_quality("medium").unwrap();
+        assert_eq!(medium.reflection, 0.34);
+        assert!(medium.steam);
+        let high = lobby_quality("high").unwrap();
+        assert_eq!(high.reflection, 0.5);
+        assert!(high.steam);
+        // Lobby PMREM is distinct from the world PMREM (D-T67-2).
+        assert_eq!(lobby_pmrem().size, 128);
+        assert_eq!(crate::env_bake::pmrem().size, 256);
     }
 
     #[test]

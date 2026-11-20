@@ -152,19 +152,20 @@ Task 54 起脚本自动判定 `GATE_VERDICT`，41–53 用逐段 `*_EXIT=0` 口�
 TRUNK 段在本沙箱因 wasm-bindgen OOM `signal: 9` 判 DEGRADED（D-T40-1 环境性、非阻塞）。
 workspace 测试基线逐任务单调递增（554 → 1017+；精确数字见各任务 Completion Evidence）。
 
-## M5 同步状态（2026-11-20，Task 58–66）
+## M5 同步状态（2026-11-20，Task 58–67）
 
 M5 对照上游现存源码逐任务实施，`server/` 与上游 JS 树零改动，`inkwave_sim`
 依赖面未变（逐任务门禁 `JS_TREE_CLEAN`/`SIM_TREE_CLEAN` 实核）。Task 58
 bow/brolly 姿态（bowl 上游无入口）→ Task 59 设置屏/持久化 → Task 60 live 53 名
 kit SFX/脚步消费者 → Task 61 RenderLayers/第二相机 → Task 62 3D 大厅 preview/
 名牌/emote → Task 63 音频总线终稿 → Task 64 fx composite/DOM 叠层 → Task 65 后处理链
-→ Task 66 环境终稿 均已完成并九段门禁 PASS；Task 62 的 emote 事件消费与 8 站位名牌投影、
+→ Task 66 环境终稿 → Task 67 3D alley 材质终稿 均已完成并九段门禁 PASS；Task 62 的 emote 事件消费与 8 站位名牌投影、
 Task 63 的总线拓扑/压限/3D 曲线/IR 描述符、Task 64 的 composite uniform/20 项 pass 阈值/
 decay/伤害数字池/小地图参数、Task 65 的 grade 12 uniform/GTAO/四档开关/真实 addPass 顺序、
 Task 66 的云/PMREM/反射四档/海面 44 波/三组 swell 均由独立 crosscheck 重解析上游 JS，
-D-T62-1..4、D-T63-1..4、D-T64-1..4、D-T65-1..3 与 D-T66-1/2（GPU 观感用户机复核 /
-烘焙运行期生成）登记于 M5 REVIEW_CHECKLIST，未做 GPU/浏览器/听感伪验收。
+D-T62-1..4、D-T63-1..4、D-T64-1..4、D-T65-1..3、D-T66-1/2（GPU 观感用户机复核 /
+烘焙运行期生成）与 D-T67-1/2（材质观感用户机复核 / lobby 与世界 PMREM 独立）登记于 M5
+REVIEW_CHECKLIST，未做 GPU/浏览器/听感伪验收。
 
 ## M4 后技术债批次（2026-11-11，M4 收尾后独立小批次）
 

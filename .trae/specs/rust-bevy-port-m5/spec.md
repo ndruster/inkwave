@@ -560,3 +560,36 @@ GTAO/grade/SMAA/tilt-shift、云/PMREM/海面、alley 材质逐档落地且逐�
 - TR-66.2：REVIEW_CHECKLIST 登记（黄昏/金色/白天三主题云/海面/反射观感、low 降级）。
 - 门禁 `gate-task66.sh`（模板 gate-task65.sh，DETERM 用 extract-environment 双跑，
   XCHK 用扩展后的 environment-crosscheck）。
+
+---
+
+## Task67 实施设计（2026-11-20，开工实读定稿）
+
+### §0 锚点与保守范围
+- 上游 `src/game/lobbySet-mats.js`：湿地面 `groundMaterial()` L174-296（Fresnel `F=0.02+
+  0.98·pow(1-NdV,5)`、`k=clamp(gWater+gDamp·0.5+gInk·0.5)`、`mix(0.8,1.0,gWater)`、
+  envMapIntensity 1）；霓虹 `neonMaterial()` L319-338（`uColC=(0.1,1,0.35)`、`uI=(7,7,1,5)`、
+  teamA `#ff8a14`/teamB `#2f5bff`）；蒸汽 `steamMaterial()` L422-441（3 交叉卡、卡高 3.4、
+  x=-2.8/z=-6.0、`aSeed=i·1.7`、`uCol=(0.2,0.19,0.21)`、时间 ·0.35、噪声 (1.6,3.0)、
+  alpha smoothstep(0.4,0.85)·0.6）；PMREM `_bakeEnv/_rebakeEnv` L134-165（`fromScene(…,
+  0.04,0.1,100,{size:128,position:(0.8,1.4,-1.2)})`、env 卡 k 门 5/霓虹 4/串灯 3/
+  售货机 2.5、队伍色归一化 `4/max`）、`environmentIntensity=0.6` L73。
+- 分档 QUALITY `lobbySet.js` L53-57（refl 0/.34/.5、steam false/true）已在 lobbyset.json
+  （LobbyQuality），不重复提取。
+- 扩展 `extract-lobbyset.mjs` 增读 `lobbySet-mats.js`，加 JSON 段 `materials`（reflection/
+  neon/steam/pmrem）；`lobbyset-crosscheck.mjs` 独立重解析。**占位几何保留、主相机 layer0
+  零改动**（沿用 Task 61 RenderLayers，D-T61-4/D-T62-1 偏差沿用）。
+
+### §1 数据面与偏差
+- `showcase_state.rs` 增 `WetReflectionSpec/NeonSpec/SteamSpec/LobbyPmremSpec` 数据面消费
+  materials 段；Task 56 占位 `build_set()` 不替换几何，只登记材质升级目标。
+- D-T67-1：shader/planar reflection/霓虹辉光/蒸汽/PMREM 的 GPU 观感不可沙箱验，仅数据面
+  + 用户机复核；D-T67-2：lobby PMREM（size 128/envIntensity 0.6）与世界 PMREM（Task 66
+  size 256/envK 0.66）是两套独立参数，不混用。
+
+### §2 测试与门禁
+- TR-67.1：materials 段逐值锚测（crosscheck 扩展）、4 类 spec 单测、low 档 reflection=0/
+  steam=false 保底、headless 四组合冒烟、layer0/layer1 隔离回归延续。
+- TR-67.2：REVIEW_CHECKLIST 登记 Task67 复核项（反射清晰度/霓虹 buzz/蒸汽密度/PMREM 光照）。
+- 门禁 `gate-task67.sh`（模板 gate66，DETERM 用 extract-lobbyset 双跑，
+  XCHK 跑 task67 专项 + lobbyset/environment crosschecks）。

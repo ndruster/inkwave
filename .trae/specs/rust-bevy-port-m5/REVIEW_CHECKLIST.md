@@ -25,7 +25,7 @@ M5 TaskNN 取代」或「M4 项与 M5 无关、维持原状」。
 | 64 | 叠层观感、与 bloom/后处理顺序、伤害数字可读性 |
 | 65 | GTAO 强度、grade 色彩、SMAA 锯齿、tilt-shift 景深；逐档差异 |
 | 66 | 三主题下云/PMREM/海面观感；`low` 档降级可接受度 |
-| 67 | alley 反射清晰度/霓虹发光/蒸汽密度 |
+| 67 | alley 反射清晰度/霓虹发光/蒸汽密度/lobby PMREM 光照 |
 | 68 | Boss 六招动画、weak 点可读性、telegraph 清晰度、`low` 档剪影降级 |
 | 69 | locker 预览观感/切换流畅度/与 loadout 联动 |
 
@@ -241,3 +241,26 @@ GTAO/SMAA/tilt 参数、pass order）+ `postprocess-crosscheck` 54 断言 + `env
   泡沫阈值与 marina 焦散/湿润观感需用户机复核。
 - [ ] **烘焙产物策略（D-T66-2）**：运行期确定性生成、仅描述符/种子入库（不内嵌 ~10 MB
   云 RT），wasm 尺寸与主题切换时烘焙延迟需实机确认。
+
+## Task 67 复核登记（2026-11-20）
+
+无头可测：2 项 Task67 锚测（材质参数逐值对照上游、low 档 reflection=0/steam=false 保底 +
+lobby PMREM 128 ≠ world PMREM 256）+ `lobbyset-crosscheck` 242 checks（+51 Task67
+materials）；门禁结论见 `tasks.md` Task 67 Completion Evidence。独立评审首轮 1 项 P1
+（复核登记/台账未收口）已返工复验。以下为**待用户 GPU 复核**（D-T67-1）：
+
+- [ ] **湿地面 planar reflection（D-T67-1）**：Fresnel `0.02+0.98·pow(1-NdV,5)`、`k=clamp
+  (gWater+gDamp·0.5+gInk·0.5)`、`mix(0.8,1.0,gWater)`、envMapIntensity=1 已钉测；
+  实际反射清晰度、站立水的锐利 vs 潮湿膜的模糊条带需用户 GPU 机确认。
+- [ ] **霓虹辉光与 buzz（D-T67-1）**：core color (0.1,1,0.35)、uI=(7,7,1,5)、队色
+  #ff8a14/#2f5bff 已锚测；辉光强度、near-white 核心、shimmer/buzz 动态需实机确认。
+- [ ] **蒸汽密度（D-T67-1）**：3 交叉卡（高 3.4/x=-2.8/z=-6/seed 1.7）、颜色
+  (0.2,0.19,0.21)、noise(1.6,3.0)、alpha smoothstep(0.4,0.85)·0.6 已钉测；蒸汽体积感
+  与密度需用户机复核（low 档 steam=false 保底已验证）。
+- [ ] **lobby PMREM 光照（D-T67-1）**：fromScene(0.04,0.1,100,size128,pos(0.8,1.4,-1.2))、
+  队伍归一化 4/max、environmentIntensity=0.6、env 卡 k 门5/霓虹4/串灯3/售货机2.5 已锚测；
+  实际反射光照观感需用户机确认。
+- [ ] **两套 PMREM 独立（D-T67-2）**：lobby PMREM（size128/envIntensity0.6）与世界 PMREM
+  （Task66 size256/envK0.66）数据面已隔离并断言不混用，运行时切换观感需实机确认。
+- [ ] **双相机 clear/order（沿用 D-T61-4）**：占位几何保留于 layer1、主相机 layer0 零改动
+  （测试守门）；反射 pass 与大厅 set 的清屏/绘制顺序需用户 GPU 机复核。

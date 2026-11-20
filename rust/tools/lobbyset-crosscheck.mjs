@@ -14,6 +14,7 @@ const here = dirname(fileURLToPath(import.meta.url));       // rust/tools
 const repoRoot = resolve(here, '../..');                   // repository root
 const doc = JSON.parse(readFileSync(resolve(here, '../assets/lobbyset.json'), 'utf8'));
 const set = readFileSync(resolve(repoRoot, 'src/game/lobbySet.js'), 'utf8');
+const mats = readFileSync(resolve(repoRoot, 'src/game/lobbySet-mats.js'), 'utf8');
 const show = readFileSync(resolve(repoRoot, 'src/game/showcase.js'), 'utf8');
 
 let checks = 0;
@@ -195,13 +196,79 @@ for (const [, name, dance, v, t0, dur, hop, trig] of emoteRows) {
   eq(e.trig ?? null, trig ?? null, `emotes.${name}.trig`);
 }
 
+// ---- Task 67 materials: independent re-parse (different regex path) -------
+const M = doc.materials;
+if (!M) throw new Error('materials section missing from lobbyset.json');
+// Reflection: ground material line + Fresnel/k/mix GLSL lines.
+const gLine = mats.split('\n').find((l) => l.includes('envMapIntensity: 1'));
+near(M.reflection.env_map_intensity, num(gLine, /envMapIntensity:\s*([\d.]+)/, 'refl.envI'), 'materials.reflection.env_map_intensity');
+const fLine = mats.split('\n').find((l) => l.includes('float F = 0.02'));
+near(M.reflection.fresnel_f0, num(fLine, /float F =\s*([\d.]+)/, 'refl.F0'), 'materials.reflection.fresnel_f0');
+near(M.reflection.fresnel_scale, num(fLine, /\+\s*([\d.]+)\s*\*\s*pow/, 'refl.Fscale'), 'materials.reflection.fresnel_scale');
+near(M.reflection.fresnel_pow, num(fLine, /NdV,\s*([\d.]+)\)/, 'refl.Fpow'), 'materials.reflection.fresnel_pow');
+const kLine = mats.split('\n').find((l) => l.includes('float k = clamp'));
+near(M.reflection.k_damp, num(kLine, /gDamp\s*\*\s*([\d.]+)/, 'refl.kDamp'), 'materials.reflection.k_damp');
+near(M.reflection.k_ink, num(kLine, /gInk\s*\*\s*([\d.]+)/, 'refl.kInk'), 'materials.reflection.k_ink');
+const wm = (one(mats, /F \* mix\(([^)]*)\)/, 'refl.waterMix')[1].match(/-?[\d.]+/g) || []).map(Number);
+eq(M.reflection.water_mix.length, wm.length, 'materials.reflection.water_mix length');
+for (let i = 0; i < wm.length; i++) near(M.reflection.water_mix[i], wm[i], `materials.reflection.water_mix[${i}]`);
+// Neon: team colors from makeUniforms line, core color + intensity vec4.
+const teamLine = mats.split('\n').find((l) => l.includes('uTeamA:'));
+eq(M.neon.team_a, one(teamLine, /uTeamA:[^']*'([^']+)'/, 'teamA')[1], 'materials.neon.team_a');
+eq(M.neon.team_b, one(teamLine, /uTeamB:[^']*'([^']+)'/, 'teamB')[1], 'materials.neon.team_b');
+const core = one(mats, /uColC: \{ value: new THREE\.Color\(([^)]*)\)/, 'neon core')[1].split(',').map(Number);
+const inten = one(mats, /uI: \{ value: new THREE\.Vector4\(([^)]*)\)/, 'neon I')[1].split(',').map(Number);
+eq(M.neon.core_color.length, core.length, 'materials.neon.core_color length');
+eq(M.neon.intensity.length, inten.length, 'materials.neon.intensity length');
+for (let i = 0; i < core.length; i++) near(M.neon.core_color[i], core[i], `materials.neon.core_color[${i}]`);
+for (let i = 0; i < inten.length; i++) near(M.neon.intensity[i], inten[i], `materials.neon.intensity[${i}]`);
+// Steam: cards/geo from lobbySet.js, uniforms/GLSL from mats.
+const fxBody = one(set, /_fx\(\)\s*\{[\s\S]*?steam: three crossed cards[\s\S]*?(pos\.push\([^\n]*seed\.push\(i \* [\d.]+[^\n]*\n)/, 'steam fx')[1];
+const sGeo = fxBody;
+near(M.steam.cards, num(set, /for \(let i = 0; i < (\d+); i\+\+\) \{\s*\n\s*const a = \(i \/ \d+\)/, 'steam cards'), 'materials.steam.cards');
+near(M.steam.x, num(sGeo, /pos\.push\(([-\d.]+)/, 'steam x'), 'materials.steam.x');
+near(M.steam.card_height, num(sGeo, /,\s*v \*\s*([\d.]+),/, 'steam H'), 'materials.steam.card_height');
+near(M.steam.z, num(sGeo, /v \*\s*[\d.]+,\s*([-\d.]+)\s*\+/, 'steam z'), 'materials.steam.z');
+near(M.steam.seed_step, num(sGeo, /seed\.push\(i \*\s*([\d.]+)/, 'steam seed step'), 'materials.steam.seed_step');
+const sCol = one(mats, /uCol: \{ value: new THREE\.Color\(([^)]*)\)/, 'steam color')[1].split(',').map(Number);
+const sNoise = one(mats, /vec2 p = vUv \* vec2\(([^)]*)\)/, 'steam noise')[1].split(',').map(Number);
+const sEdge = (one(mats, /float a = smoothstep\(([^)]*)\)/, 'steam edge')[1].match(/[\d.]+/g) || []).map(Number);
+near(M.steam.time_scale, num(mats, /float t = uTime \*\s*([\d.]+)/, 'steam time'), 'materials.steam.time_scale');
+near(M.steam.alpha_scale, num(mats, /\*\s*([\d.]+)\s*;\s*\n\s*vec3 c = mix\(uCol/, 'steam alpha'), 'materials.steam.alpha_scale');
+eq(M.steam.color.length, sCol.length, 'materials.steam.color length');
+for (let i = 0; i < sCol.length; i++) near(M.steam.color[i], sCol[i], `materials.steam.color[${i}]`);
+eq(M.steam.noise_scale.length, sNoise.length, 'materials.steam.noise_scale length');
+for (let i = 0; i < sNoise.length; i++) near(M.steam.noise_scale[i], sNoise[i], `materials.steam.noise_scale[${i}]`);
+eq(M.steam.alpha_edge.length, sEdge.length, 'materials.steam.alpha_edge length');
+for (let i = 0; i < sEdge.length; i++) near(M.steam.alpha_edge[i], sEdge[i], `materials.steam.alpha_edge[${i}]`);
+// Lobby PMREM: fromScene args + normalize + envIntensity + env card k.
+const fsArgs = one(set, /fromScene\(this\._envScene,\s*([\d.]+,\s*[\d.]+,\s*[\d.]+,\s*\{ size:\s*[\d.]+,\s*position: V\([^)]*\))\s*\}\)/, 'pmrem args')[1]
+  .match(/-?[\d.]+/g).map(Number);
+near(M.pmrem.sigma, fsArgs[0], 'materials.pmrem.sigma');
+near(M.pmrem.near, fsArgs[1], 'materials.pmrem.near');
+near(M.pmrem.far, fsArgs[2], 'materials.pmrem.far');
+near(M.pmrem.size, fsArgs[3], 'materials.pmrem.size');
+eq(M.pmrem.position.length, 3, 'materials.pmrem.position length');
+for (let i = 0; i < 3; i++) near(M.pmrem.position[i], fsArgs[4 + i], `materials.pmrem.position[${i}]`);
+near(M.pmrem.team_normalize, num(set, /multiplyScalar\(\s*([\d.]+)\s*\/\s*Math\.max/, 'pmrem norm'), 'materials.pmrem.team_normalize');
+near(M.pmrem.environment_intensity, num(set, /this\.environmentIntensity =\s*([\d.]+)/, 'envIntensity'), 'materials.pmrem.environment_intensity');
+for (const [key, needle] of [
+  ['door', "'#ffb366',"],
+  ['neon', "'#ffffff', 4);"],
+  ['bulbs', "'#ffcf8a',"],
+  ['vending', "'#cfefff',"],
+]) {
+  const l = set.split('\n').find((x) => x.includes(needle));
+  near(M.pmrem.env_card_k[key], num(l, /'(?:[^']*)',\s*([\d.]+)\)/, `env k ${key}`), `materials.pmrem.env_card_k.${key}`);
+}
+
 // ---- upstream pin ---------------------------------------------------------
 const pinned = execSync(
-  'git log -1 --format=%H -- src/game/lobbySet.js src/game/showcase.js',
+  'git log -1 --format=%H -- src/game/lobbySet.js src/game/lobbySet-mats.js src/game/showcase.js',
   { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'] },
 ).toString().trim();
 eq(doc.source.commit, pinned, 'source.commit');
-eq(doc.source.files.length, 2, 'source.files length');
+eq(doc.source.files.length, 3, 'source.files length');
 eq(doc.schema, 1, 'schema');
 
-console.log(`lobbyset-crosscheck: ${checks} checks OK (ALLEY/CAM/3 quality rows/8 bearing spots/hub + showcase constants/SLOTS/PED/DRUM/SWIM/mode sets/emotes)`);
+console.log(`lobbyset-crosscheck: ${checks} checks OK (ALLEY/CAM/3 quality rows/8 bearing spots/hub + showcase constants/SLOTS/PED/DRUM/SWIM/mode sets/emotes + Task67 materials)`);

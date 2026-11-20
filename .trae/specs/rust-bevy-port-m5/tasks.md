@@ -334,7 +334,7 @@
     伪验收 GPU 云/PMREM/反射/海面观感。
 
 ## Task 67: 3D alley 材质终稿
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: medium
 - **Depends On**: Task 61
 - **Description**: 3D 大厅湿地面 planar reflection、霓虹、蒸汽、PMREM（lobbySet*，
@@ -342,8 +342,24 @@
 - **Acceptance Criteria Addressed**: AC-M5-3/AC-M5-4
 - **Test Requirements**:
   - `rule` TR-67.1: 材质参数提取锚测（ lobbyset.json 已有 QUALITY 三档）+ headless 冒烟。
-  - `rule` TR-67.2: REVIEW_CHECKLIST 登记（反射清晰度/霓虹发光/蒸汽密度，用户机复核）。
+  - `rule` TR-67.2: REVIEW_CHECKLIST 登记（反射清晰度/霓虹发光/蒸汽密度/lobby PMREM 光照，用户机复核）。
 - **Notes**: planar reflection 的额外相机与 Task 61 分层交互需一并设计。
+- **Completion Evidence** (2026-11-20):
+  - `extract-lobbyset.mjs` 新增读 `lobbySet-mats.js`，正则提取 `materials` 段（无手抄）：
+    reflection（envMapIntensity 1、Fresnel 0.02+0.98·pow(1-NdV,5)、k gDamp/gInk×0.5、
+    mix(0.8,1.0,gWater)）、neon（core (0.1,1,0.35)、uI (7,7,1,5)、队色）、
+    steam（3 卡/高 3.4/x-2.8/z-6/seed1.7/颜色/noise(1.6,3.0)/alpha smoothstep(0.4,0.85)·0.6）、
+    lobby PMREM（fromScene 0.04/0.1/100/size128/pos、归一化 4/max、envIntensity 0.6、
+    env 卡 k 5/4/3/2.5）。`lobbyset-crosscheck.mjs` 独立重解析 242 checks（+51）。
+  - `showcase_state.rs` 新增 `WetReflectionSpec/NeonSpec/SteamSpec/LobbyPmremSpec/EnvCardK`
+    数据面 + 2 项锚测（材质逐值、low reflection=0/steam=false 保底 + lobby PMREM 128 ≠
+    world PMREM 256）；占位几何保留、主相机 layer0 零改动（Task61 守门测试通过）。
+  - 九段门禁 `rust/tools/verify/logs/task67-gates-20261120T035622Z.log`：
+    `FMT/CLIPPY/TEST/WASM/TREE/DETERM/XCHK/TRUNK/RELEASE_BUILD/HEADLESS/
+    HEADLESS_BOSS_EXIT=0`，`DETERM=BYTE_IDENTICAL`（extract-lobbyset 双跑），
+    `JS_TREE_CLEAN`、`SIM_TREE_CLEAN`，`GATE_VERDICT=PASS`（TRUNK 真实通过）。
+    独立评审首轮 1 项 P1（复核登记/台账未收口）已返工，D-T67-1/2 登记于 REVIEW_CHECKLIST，
+    未在沙箱伪验收 GPU 材质/反射/霓虹/蒸汽/PMREM 观感。
 
 ## Task 68: Boss 高保真模型
 - **Status**: `pending`

@@ -479,3 +479,8 @@ pass 仅数据面 / uHurtColor 补缺）登记用户机复核。
 SHA256 golden（JS 生成/Rust 比对）。6 项锚测 + `environment-crosscheck` 139 checks + 九段
 门禁 PASS（`task66-gates-20261119T205957Z.log`）；D-T66-1/2（GPU 观感用户机复核 / 烘焙
 运行期生成不入库）已登记，独立评审 2 项 P1 返工闭环。
+**Task 67（3D alley 材质终稿）**完成：`lobbyset.json` 扩展提取湿地面反射/霓虹/蒸汽/lobby
+PMREM 材质段（正则无手抄）；`showcase_state.rs` 数据面 + 2 项锚测（low 档保底 + lobby PMREM
+128 ≠ world 256）。`lobbyset-crosscheck` 242 checks（+51）+ 九段门禁 PASS
+（`task67-gates-20261120T035622Z.log`）；D-T67-1/2（GPU 观感用户机复核 / 两套 PMREM 独立）
+已登记，独立评审 1 项 P1 返工闭环。

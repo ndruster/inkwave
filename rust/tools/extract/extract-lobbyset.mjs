@@ -17,6 +17,7 @@ const repoRoot = resolve(here, '../../..');
 const outPath = resolve(here, '../../assets/lobbyset.json');
 const commit = upstreamCommit(repoRoot, [
   'src/game/lobbySet.js',
+  'src/game/lobbySet-mats.js',
   'src/game/showcase.js',
 ]);
 
@@ -38,6 +39,7 @@ function assertContains(src, needle, where) {
 }
 
 const setSrc = readFileSync(resolve(repoRoot, 'src/game/lobbySet.js'), 'utf8');
+const matsSrc = readFileSync(resolve(repoRoot, 'src/game/lobbySet-mats.js'), 'utf8');
 const showSrc = readFileSync(resolve(repoRoot, 'src/game/showcase.js'), 'utf8');
 
 // ---- ALLEY (lobbySet.js L38-43) -----------------------------------------
@@ -95,9 +97,112 @@ const setToArray = (s) => [...s].sort();
 const srcEmotes = sliceBlock(showSrc, 'showcase.js', 'LOB_EMOTES', 'const LOB_EMOTES = {', '\n};');
 const LOB_EMOTES = new Function(`${srcEmotes}\nreturn LOB_EMOTES;`)();
 
+// ---- Task 67: lobby material parameters (lobbySet-mats.js / lobbySet.js) --
+// Every number below is parsed from the actual JS source via regex. No
+// hand-copied constants; assertContains needles pin the surrounding literals.
+function lineOf(src, needle, where) {
+  const hit = src.split('\n').find((l) => l.includes(needle));
+  if (!hit) throw new Error(`${where}: no line with ${needle}`);
+  return hit;
+}
+function nums(s) {
+  return (s.match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+}
+function grabNums(src, re, where) {
+  const m = src.match(re);
+  if (!m) throw new Error(`${where}: regex failed for ${re}`);
+  return nums(m[1]);
+}
+function one(src, re, where) {
+  const a = grabNums(src, re, where);
+  if (a.length !== 1) throw new Error(`${where}: expected 1 number, got ${a.length}`);
+  return a[0];
+}
+
+// Wet ground planar reflection — lobbySet-mats.js L175 / L290-292.
+const groundLine = lineOf(matsSrc, 'envMapIntensity: 1 })', 'ground mat');
+const fresnelLine = lineOf(matsSrc, 'float F = 0.02 + 0.98 * pow', 'ground Fresnel');
+const kLine = lineOf(matsSrc, 'float k = clamp(gWater', 'ground k');
+const mixLine = lineOf(matsSrc, 'mix(reflectedLight.indirectSpecular', 'ground mix');
+const reflection = {
+  env_map_intensity: one(groundLine, /envMapIntensity:\s*([\d.]+)/, 'ground envIntensity'),
+  fresnel_f0: one(fresnelLine, /float F =\s*([\d.]+)/, 'ground Fresnel F0'),
+  fresnel_scale: one(fresnelLine, /\+\s*([\d.]+)\s*\*\s*pow/, 'ground Fresnel scale'),
+  fresnel_pow: one(fresnelLine, /pow\(1\.0 - NdV,\s*([\d.]+)\)/, 'ground Fresnel pow'),
+  k_damp: one(kLine, /gDamp\s*\*\s*([\d.]+)/, 'ground k damp'),
+  k_ink: one(kLine, /gInk\s*\*\s*([\d.]+)/, 'ground k ink'),
+  water_mix: grabNums(mixLine, /F \* mix\(([^)]*)\)/, 'ground water mix'),
+};
+assertContains(matsSrc, 'float F = 0.02 + 0.98 * pow(1.0 - NdV, 5.0);', 'ground Fresnel literal');
+assertContains(matsSrc, 'float k = clamp(gWater + gDamp * 0.5 + gInk * 0.5, 0.0, 1.0);', 'ground k literal');
+if (reflection.water_mix.length !== 2) throw new Error('ground water mix must be 2 numbers');
+
+// Neon — lobbySet-mats.js L17 (team colors), L321 (core color + intensity).
+const neonULine = lineOf(matsSrc, 'uTeamA:', 'neon team uniforms');
+const teamHexA = neonULine.match(/uTeamA:[^']*'([^']+)'/)[1];
+const teamHexB = neonULine.match(/uTeamB:[^']*'([^']+)'/)[1];
+const neonLine = lineOf(matsSrc, 'uColC: { value: new THREE.Color', 'neon uniforms');
+const neon = {
+  core_color: grabNums(neonLine, /uColC: \{ value: new THREE\.Color\(([^)]*)\)/, 'neon core color'),
+  intensity: grabNums(neonLine, /uI: \{ value: new THREE\.Vector4\(([^)]*)\)/, 'neon intensity vector'),
+  team_a: teamHexA,
+  team_b: teamHexB,
+};
+if (neon.core_color.length !== 3 || neon.intensity.length !== 4) throw new Error('neon vec size');
+
+// Steam — lobbySet-mats.js L424/L433/L437 + lobbySet.js L589-591.
+const steamU = lineOf(matsSrc, 'uCol: { value: new THREE.Color', 'steam uniforms');
+const steamP = lineOf(matsSrc, 'vec2 p = vUv * vec2', 'steam noise');
+const steamA = lineOf(matsSrc, 'float a = smoothstep(0.4, 0.85', 'steam alpha');
+const steamCards = lineOf(setSrc, 'for (let i = 0; i < 3', 'steam cards');
+const steamGeo = lineOf(setSrc, 'seed.push(i *', 'steam geo');
+const steam = {
+  cards: one(steamCards, /for \(let i = 0; i <\s*(\d+)/, 'steam card count'),
+  card_height: one(steamGeo, /,\s*v \*\s*([\d.]+),/, 'steam card height'),
+  x: one(steamGeo, /pos\.push\(([-\d.]+)/, 'steam x'),
+  z: one(steamGeo, /v \*\s*[\d.]+,\s*([-\d.]+)\s*\+/, 'steam z'),
+  seed_step: one(steamGeo, /seed\.push\(i \*\s*([\d.]+)/, 'steam seed step'),
+  color: grabNums(steamU, /uCol: \{ value: new THREE\.Color\(([^)]*)\)/, 'steam color'),
+  time_scale: one(lineOf(matsSrc, 'float t = uTime * 0.35', 'steam time'), /uTime \*\s*([\d.]+)/, 'steam time scale'),
+  noise_scale: grabNums(steamP, /vec2\(([^)]*)\)/, 'steam noise scale'),
+  alpha_edge: grabNums(steamA, /smoothstep\(([^)]*)\)/, 'steam alpha smoothstep'),
+  alpha_scale: one(steamA, /\*\s*([\d.]+)\s*;/, 'steam alpha scale'),
+};
+if (steam.color.length !== 3 || steam.noise_scale.length !== 2 || steam.alpha_edge.length !== 2) {
+  throw new Error('steam vec size');
+}
+assertContains(matsSrc, 'float t = uTime * 0.35 + vSeed * 7.0;', 'steam time literal');
+assertContains(matsSrc, 'float a = smoothstep(0.4, 0.85, n) * edge * 0.6;', 'steam alpha literal');
+
+// Lobby PMREM — lobbySet.js L156/L160/L73 + env card k literals L143-147.
+const envRTLine = lineOf(setSrc, 'this._pmrem.fromScene(', 'lobby PMREM');
+const envNormLine = lineOf(setSrc, 'multiplyScalar(4 / Math.max', 'lobby PMREM normalize');
+const envIntLine = lineOf(setSrc, 'this.environmentIntensity =', 'lobby envIntensity');
+const envSceneArgs = grabNums(envRTLine, /fromScene\(this\._envScene,\s*([\d.]+,\s*[\d.]+,\s*[\d.]+,\s*\{ size:\s*[\d.]+,\s*position: V\([^)]*\))\s*\}\)/, 'lobby PMREM fromScene args');
+// fromScene args: [sigma=0.04, near=0.1, far=100, size=128, posx, posy, posz]
+const pmrem = {
+  sigma: envSceneArgs[0],
+  near: envSceneArgs[1],
+  far: envSceneArgs[2],
+  size: envSceneArgs[3],
+  position: envSceneArgs.slice(4, 7),
+  team_normalize: one(envNormLine, /multiplyScalar\(\s*([\d.]+)\s*\//, 'lobby PMREM normalize'),
+  environment_intensity: one(envIntLine, /environmentIntensity =\s*([\d.]+)/, 'lobby envIntensity'),
+  env_card_k: {
+    door: one(lineOf(setSrc, "'#ffb366', 5)", 'env door k'), /'(?:[^']*)',\s*([\d.]+)\)/, 'env door k'),
+    neon: one(lineOf(setSrc, "'#ffffff', 4)", 'env neon k'), /'(?:[^']*)',\s*([\d.]+)\)/, 'env neon k'),
+    bulbs: one(lineOf(setSrc, "'#ffcf8a', 3)", 'env bulbs k'), /'(?:[^']*)',\s*([\d.]+)\)/, 'env bulbs k'),
+    vending: one(lineOf(setSrc, "'#cfefff', 2.5)", 'env vending k'), /'(?:[^']*)',\s*([\d.]+)\)/, 'env vending k'),
+  },
+};
+assertContains(setSrc, 'fromScene(this._envScene, 0.04, 0.1, 100, { size: 128, position: V(0.8, 1.4, -1.2) })', 'lobby PMREM literal');
+if (envSceneArgs.length !== 7) throw new Error(`lobby PMREM fromScene: expected 7 args, got ${envSceneArgs.length}`);
+
+const materials = { reflection, neon, steam, pmrem };
+
 const doc = {
   schema: 1,
-  source: { commit, files: ['src/game/lobbySet.js', 'src/game/showcase.js'] },
+  source: { commit, files: ['src/game/lobbySet.js', 'src/game/lobbySet-mats.js', 'src/game/showcase.js'] },
   alley: ALLEY,
   cam: { pos: v3(L.CAM.pos), target: v3(L.CAM.target), fov: L.CAM.fov, near: L.CAM.near, far: L.CAM.far },
   quality: QUALITY,
@@ -115,6 +220,7 @@ const doc = {
     set: setToArray(S.SET_MODES),
   },
   emotes: LOB_EMOTES,
+  materials,
 };
 const out = stableStringify(doc) + '\n';
 if (out.includes('NaN') || out.includes('Infinity')) throw new Error('lobbyset.json contains NaN/Infinity');

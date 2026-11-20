@@ -91,6 +91,76 @@
     ],
     "yaw": -0.45
   },
+  "materials": {
+    "neon": {
+      "core_color": [
+        0.1,
+        1,
+        0.35
+      ],
+      "intensity": [
+        7,
+        7,
+        1,
+        5
+      ],
+      "team_a": "#ff8a14",
+      "team_b": "#2f5bff"
+    },
+    "pmrem": {
+      "env_card_k": {
+        "bulbs": 3,
+        "door": 5,
+        "neon": 4,
+        "vending": 2.5
+      },
+      "environment_intensity": 0.6,
+      "far": 100,
+      "near": 0.1,
+      "position": [
+        0.8,
+        1.4,
+        -1.2
+      ],
+      "sigma": 0.04,
+      "size": 128,
+      "team_normalize": 4
+    },
+    "reflection": {
+      "env_map_intensity": 1,
+      "fresnel_f0": 0.02,
+      "fresnel_pow": 5,
+      "fresnel_scale": 0.98,
+      "k_damp": 0.5,
+      "k_ink": 0.5,
+      "water_mix": [
+        0.8,
+        1
+      ]
+    },
+    "steam": {
+      "alpha_edge": [
+        0.4,
+        0.85
+      ],
+      "alpha_scale": 0.6,
+      "card_height": 3.4,
+      "cards": 3,
+      "color": [
+        0.2,
+        0.19,
+        0.21
+      ],
+      "noise_scale": [
+        1.6,
+        3
+      ],
+      "seed_step": 1.7,
+      "time_scale": 0.35,
+      "x": -2.8,
+      "z": -6
+    }
+  },
   "modes": {
     "overlay": [
       "loadout",
@@ -210,6 +280,7 @@
     "commit": "159ba72b7f12566e8189e1c233d145bdd432a2fd",
     "files": [
       "src/game/lobbySet.js",
+      "src/game/lobbySet-mats.js",
       "src/game/showcase.js"
     ]
   },
