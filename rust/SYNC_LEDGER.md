@@ -177,6 +177,28 @@ SHA256 golden 重算钉源；Task69 的 style 表/resolve（含带符号右移 +
 独立键持久化/6 键 wire 同步由真模块 import + crosscheck 钉源，开工实读更正「上游无 locker.js」。
 hitShapes/sim 几何与 inkwave_sim 依赖面零改动。未做 GPU/浏览器/听感伪验收。
 
+## M6 同步状态（2026-11-21，Task 71–74，M6 完成）
+
+M6 收尾矩阵 `logs/task74-m6-matrix-20261120T192332Z.log`：
+`M6_MATRIX_VERDICT=PASS`——九段 + 全 10 独立 crosscheck 回归 + run-all.sh 双跑全量重提取
+`DETERM=BYTE_IDENTICAL` + task71-73 共 3/3 `GATE_VERDICT=PASS` 审计 + `JS_TREE_CLEAN`/
+`SIM_TREE_CLEAN` + headless 4 组合与 boss 600 帧全 EXIT=0；TRUNK 本轮 wasm-bindgen OOM
+SIGKILL → `TRUNK=DEGRADED`（D-T40-1 非阻断，前序 task72 轮 `TRUNK_EXIT=0` 真实通过）。
+Task 71/72/73 各有独立评审闭环（71: 2×P0+4×P1；72: 2×P0+4×P1；73: 0×P0+3×P1）
+全部返工、复验无新 P0/P1，无伪验收。
+
+M6 承接 M5「数据面已钉源、GPU/DOM/听感本体未接」的结论，按「本体接线 + 双轨验收闭环」
+逐任务实施，全程零 `inkwave_sim`/上游 JS 改动：Task 71 首份 render-app 代码——
+`fx/post_pass.rs` + `post_shader.wgsl` 把 grade 12 uniform + composite sat/hurt/flash/vignette
+绑到 Bevy 0.19.1 全屏 pass（low/post-off 全关保底）→ Task 72 DOM 桥（`ui/dom_bridge.rs`
+纯函数 + native 操作序列 + wasm web-sys sink + `#iw-overlay` mount）、`LobbyMeasure` 安全区、
+真实 CharAnim 骨树预览（member 状态 + emote trigger 驱动）、`SetFade` cross-dissolve、
+G-4 SMAA/GTAO 选型裁决（继续登记分支）→ Task 73 18m 远端音频剔除（`audible_at`）、
+`cameraShake`/`showFps` 设置字段消费者收敛。D-M6-1..12 全部登记 M6 REVIEW_CHECKLIST
+（WGSL 观感/DOM 节点/安全区实测/CharAnim mesh/GPU 混合/SMAA-GTAO 接线/showFps 字形/
+18m 听感待用户机复核）；D-T60-2/3、D-T64-4、D-T65-1/-3 等 M5 Non-Goals 维持不变。
+沙箱只交付数据面 + 纯函数/状态机 + 无头可测行为，未做 GPU/浏览器/听感伪验收。
+
 ## M4 后技术债批次（2026-11-11，M4 收尾后独立小批次）
 
 M4 的 41–57 任务体系与 AC-M4-1..5 不变；本批次只清理收尾评审留下的 P2 建议与

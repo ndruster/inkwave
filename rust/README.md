@@ -408,6 +408,10 @@ trunk build --release                        # 本沙箱常 OOM SIGKILL；用户
 | 57 | `logs/task57-m4-matrix-*.log` | 收尾矩阵：文档命令实跑、41–56 日志汇总、上游树守卫；**以日志内 `M4_MATRIX_VERDICT` 为最终口径**，总评审 P0/P1 处置记录见 `tasks.md` Task 57 |
 | 58–69 | `logs/task58..69-gates-*.log` | 逐任务 `GATE_VERDICT=PASS`（12/12）；数值经独立 crosscheck 钉源，GPU/听感项登记复核 |
 | 70 | `logs/task70-m5-matrix-20261120T062621Z.log` | **M5 收尾矩阵 `M5_MATRIX_VERDICT=PASS`**：九段 + 10 crosscheck + run-all 双跑确定性 + 12 任务 verdict 审计 + 上游/sim 守卫；总评审 P0/P1 处置见 `tasks.md` Task 70 |
+| 71 | `logs/task71-gates-20261120T170213Z.log` | `GATE_VERDICT=PASS`（首份 render-app 代码；独立评审 2×P0+4×P1 后复跑；TRUNK 本轮 DEGRADED，前轮 `TRUNK_EXIT=0`） |
+| 72 | `logs/task72-gates-20261120T180923Z.log` | `GATE_VERDICT=PASS`（DOM 桥/CharAnim/cross-dissolve；2×P0+4×P1 后复跑；`TRUNK_EXIT=0`） |
+| 73 | `logs/task73-gates-20261120T185453Z.log` | `GATE_VERDICT=PASS`（18m 剔除/设置消费者；3×P1+5×P2 后复跑；TRUNK DEGRADED） |
+| 74 | `logs/task74-m6-matrix-20261120T192332Z.log` | **M6 收尾矩阵 `M6_MATRIX_VERDICT=PASS`**：九段 + 全 10 crosscheck + run-all 双跑确定性 + 3 任务 verdict 审计 + 上游/sim 守卫 + headless 4 组合/boss；TRUNK DEGRADED（D-T40-1） |
 
 矩阵口径如实披露：41–56 共 **9 个任务的 TRUNK 段 DEGRADED**（41/42/43/44/45/49/54/55/56，
 均为 wasm-bindgen `signal: 9` OOM，D-T40-1 环境性非阻塞），41–53 的
@@ -505,3 +509,41 @@ showcase.js）；`locker.json` 提全表 + resolve/random/swatch reference，`lo
 状态机 + 独立键持久化 + 6 键 style JVal 同步 + 5 项锚测（含带符号右移/outfit 派生 P1 回归）。
 `locker-crosscheck` 299 checks + 九段门禁 PASS（`task69-gates-20261120T045503Z.log`）；D-T69-1/2
 登记，独立评审 3 项 P1 返工闭环。wire/sim/上游 JS 零改动。
+
+## 9. M6（本体接线与双轨验收闭环，Task 71–74 已完成）
+
+**M6 结论**：3 个实施任务（71–73）全部 `GATE_VERDICT=PASS`，收尾矩阵
+`logs/task74-m6-matrix-20261120T192332Z.log` 判 `M6_MATRIX_VERDICT=PASS`（九段 + 全 10 独立
+crosscheck 回归 + run-all 双跑字节一致 + 3 任务 verdict 审计 + 上游/sim 守卫 + headless 4 组合
+与 boss 600 帧）；TRUNK 本轮 wasm-bindgen OOM SIGKILL → `TRUNK=DEGRADED`（D-T40-1 非阻断，
+task72 轮 `TRUNK_EXIT=0` 真实通过）。上游 JS/server 与 `inkwave_sim` 全程零改动。workspace 单测
+448 → 478（+30）。逐任务证据见 `.trae/specs/rust-bevy-port-m6/tasks.md` 各 Completion
+Evidence、偏差见同目录 `REVIEW_CHECKLIST.md` 汇总清单。
+
+**M6 = 本体接线与双轨验收闭环**：承接 M5「数据面已钉源、GPU/DOM/听感本体未接」，把 grade
+pass、DOM 桥、CharAnim 预览、cross-dissolve、音频剔除、设置消费者接上可无头验证的本体；
+GPU/DOM/听感观感继续以 `M6 visual-review` 登记用户机复核，未伪验收。全程零 sim 改动，
+`low` 保底每任务验证不破坏。
+
+**Task 71（后处理 GPU pass 本体）**完成：首份 render-app 代码 `fx/post_pass.rs` +
+`post_shader.wgsl`——`PostFxUniforms`（6×vec4 对齐）、`build_uniforms()` 纯函数、
+`PostFxPlugin`（ExtractComponent + UniformComponent + RenderStartup pipeline + Core3d 全屏节点），
+把 grade 12 uniform + composite sat/hurt/flash/vignette 逐行移植上游 GLSL；low/post-off 全关保底。
+6 项锚测 + 九段门禁 PASS（`task71-gates-20261120T170213Z.log`）；独立评审 2×P0（shader 缺
+uniform binding / grade 被 composite any 门错误折叠）+ 4×P1 返工闭环，D-M6-1..5 登记。
+
+**Task 72（DOM/UI 桥与大厅呈现）**完成：`ui/dom_bridge.rs`（DomOp 纯函数 + native 操作序列 +
+wasm web-sys sink + `#iw-overlay` mount）、`LobbyMeasure` 安全区（native 无剔除）、真实
+CharAnim 骨树预览（member 状态 + emote trigger 驱动）、`SetFade` cross-dissolve（eInOut +
+covered=k≥1）、G-4 SMAA/GTAO 选型裁决（继续登记分支）。16 项锚测 + 九段门禁 PASS
+（`task72-gates-20261120T180923Z.log`）；独立评审 2×P0（covered 杀淡入 / wasm 根节点缺失）
++ 4×P1 返工闭环，D-M6-6..10 登记。
+
+**Task 73（剩余消费者收敛）**完成：`audible_at` 18m 远端音频剔除（系统级超距剔除锚测）、
+`camera_rig` 的 `cameraShake` 设置缩放、`ui/fps.rs` 的 `showFps` 消费者（HUD fps 标签）。
+8 项锚测 + 九段门禁 PASS（`task73-gates-20261120T185453Z.log`）；独立评审 3×P1（生产路径
+剔除锚测 / 无相机通道显式化 / 低档空转断言）+ 5×P2 返工闭环，D-M6-11/12 登记。D-T60-2/3、
+D-T64-4 M5 Non-Goals 维持不接。
+
+**Task 74（收尾）**完成：SYNC_LEDGER M6 段、PORT_MAP M6 图例 + 完成核对、README M6 章、
+M6 收尾矩阵（`M6_MATRIX_VERDICT=PASS`）、总评审 P0/P1 闭环、REVIEW_CHECKLIST M6 汇总清单。

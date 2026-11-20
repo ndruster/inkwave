@@ -61,7 +61,7 @@ M5 汇总 7 组复核项（`.trae/specs/rust-bevy-port-m5/REVIEW_CHECKLIST.md`�
 
 ## Task 72 复核登记（2026-11-21，DOM/UI 桥与大厅呈现收口）
 
-无头可测已锚定：14+ 项 task72 专项测试（DOM 操作序列 create/update/remove/behind/damage/
+无头可测已锚定：16 项 task72 专项测试（DOM 操作序列 create/update/remove/behind/damage/
 low-idle/reconcile、LobbyMeasure.safe_opt、SetFade 淡入淡出、set_fade_update 真系统、
 CharAnim pose 确定性/全骨树/emote 改变姿态、G-4 AA 裁决）+ 九段门禁 PASS。以下为待用户
 GPU/浏览器机器复核项与明确偏差：
@@ -102,6 +102,22 @@ GPU/浏览器机器复核项与明确偏差：
   D-T60-3 muzzle 回写（需新 MatchEvent）、D-T64-4 superjump/bomb explode FX（需新事件）
   维持未接；本任务严格不改 `inkwave_sim` 事件面。
 
-## M6 汇总复核清单（Task 74 定稿时填写）
+## M6 汇总复核清单（Task 74 定稿，2026-11-21）
 
-_待 Task 74 收尾时按实际实施结果填写。_
+沙箱无头可测部分已全部闭环（Task 71/72/73 九段门禁 PASS + `M6_MATRIX_VERDICT=PASS` +
+全 10 crosscheck 回归 + run-all 双跑字节一致 + headless 4 组合/boss 600 帧），上游 JS/server
+与 `inkwave_sim` 依赖面零改动（M6 全程零 sim 改动）。**以下为待用户 GPU/浏览器/听感机复核
+的汇总项**（双轨验收，按任务索引到上方逐任务登记段的 D-M6 偏差，本汇总不构成「已通过」）：
+
+| 复核组 | 任务 | 关键待复核面 | 偏差登记 |
+|---|---|---|---|
+| 后处理本体 | 71 | grade 12 uniform 色彩分级 / composite hurt-flash-vignette 观感、完整 naga 编译、两 pass 合一与 Bloom 先后、HDR target 格式 | D-M6-1..5 |
+| DOM/大厅 | 72 | 名牌 DOM 定位/伤害数字/minimap FX 落点、安全区实测、CharAnim 骨树 mesh、hub⇄room cross-dissolve、SMAA/GTAO 接线裁决 | D-M6-6..10 |
+| 消费者收敛 | 73 | showFps 字形渲染 / 18m 音频剔除听感（listener orientation/occlusion） | D-M6-11/12 |
+
+**M5 偏差承接说明**：M6 全程未推翻 M5 Non-Goals——D-T60-2（footstep surface）、D-T60-3
+（muzzle 回写）、D-T64-4（superjump/bomb FX）、D-T65-1/-3（GTAO/SMAA 本体）等保持 M5 状态；
+M6 只在数据面/无头可测面上接线，未接的 GPU/听感本体继续登记。
+**沙箱口径诚实声明**：M6「本体接线」在沙箱交付的是数据面 + 纯函数/状态机 + 无头可测行为；
+WGSL 完整编译、DOM 真实节点观感、CharAnim mesh、GPU 混合、听感一致性均未伪验收，以
+`M6 visual-review` 登记。用户机复核结论回填后，本清单方可整体勾选。

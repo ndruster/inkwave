@@ -45,7 +45,7 @@
     `JS_TREE_CLEAN`/`SIM_TREE_CLEAN`，`GATE_VERDICT=PASS`；TRUNK 本轮
     wasm-bindgen OOM SIGKILL → `TRUNK=DEGRADED`（D-T40-1 非阻断，前一轮
     `task71-gates-20261120T165034Z.log` `TRUNK_EXIT=0` 真实通过）。
-  - **workspace**：inkwave 单测 448 → **452**（+6 task71，其中替换 4 旧锚为 6）；
+  - **workspace**：inkwave 单测 448 → **454**（+6 task71 锚测）；
     wasm32 check 通过；headless 四组合 + boss 600 帧不 panic；上游 JS/server/sim 零改动。
   - **已知偏差**：D-M6-1（两 pass 合一）/D-M6-2（GTAO/SMAA 未接）/D-M6-3（composite
     子集）/D-M6-4（target 格式/aspect 固定）/D-M6-5（grade 无条件，评审闭环）均登记
@@ -86,10 +86,10 @@
     P1-2（safe=(0,0,0,0) 全剔除回归）已改 `safe_opt()=None`；P1-3（CharAnim 恒定 idle 伪接线）
     已改 member 状态驱动 + emote trigger + bone_hash 锚测；P1-4（SMAA 设计/登记冲突）已统一
     "继续登记"。P2（稳定 key/帧上限/冗余注释/文案）亦全部修复。复验无新 P0/P1。
-  - **确定性/门禁**：`gate-task72.sh` → `tools/verify/logs/task72-gates-20261120T175933Z.log`：
+  - **确定性/门禁**：`gate-task72.sh` → `tools/verify/logs/task72-gates-20261120T180923Z.log`：
     `FMT/CLIPLY/TEST/WASM/TREE/DETERM(三提取器 re-run 字节一致)/XCHK(8 组含 task72×16)/
     TRUNK_EXIT=0/RELEASE_BUILD/HEADLESS(四组合)/HEADLESS_BOSS` 全绿，`GATE_VERDICT=PASS`；
-    `JS_TREE_CLEAN`/`SIM_TREE_CLEAN`。workspace 单测 452 → **470**（+18），wasm32 check 通过。
+    `JS_TREE_CLEAN`/`SIM_TREE_CLEAN`。workspace 单测 454 → **470**（+16），wasm32 check 通过。
   - **已知偏差**：D-M6-6..10 全登记 `REVIEW_CHECKLIST.md`「Task 72 复核登记」；DOM 观感/
     安全区实测/CharAnim mesh/cross-dissolve GPU 混合/SMAA-GTAO 接线均用户机复核，未伪验收。
 
@@ -129,7 +129,7 @@
     与 REVIEW_CHECKLIST 重申不接，未因本任务改动。
 
 ## Task 74: M6 收尾——台账/文档/门禁矩阵/总评审
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: high
 - **Depends On**: Task 71–73
 - **Description**: SYNC_LEDGER M6 段；PORT_MAP「M6 完成核对」+ 图例再扩档；
@@ -142,6 +142,27 @@
     TRUNK DEGRADED 按 D-T40-1 登记。
   - `rule` TR-74.2: M6 矩阵含 M5 全 10 crosscheck 回归 + 新增 M6 守卫（如有）。
 - **Notes**: 沿用 Task 70/57/27/40 收尾流程；预写结论一律以落盘日志 `*_VERDICT` 为准。
+- **Completion Evidence（2026-11-21）**：
+  - **台账/文档**：`rust/SYNC_LEDGER.md` 追加「M6 同步状态（Task 71–74，M6 完成）」；
+    `rust/PORT_MAP.md` 追加 M6 扩档图例 + 「M6 完成核对（Task 74）」8 行表格；
+    `rust/README.md` 九段门禁矩阵追加 71/72/73/74 四行 + 新章「9. M6」；M6 spec.md 的
+    Task71/72/73 实施设计 §0-§7 已在各任务开工时定稿（无验收占位待回填）。
+  - **收尾矩阵**：新增 `gate-task74.sh`（模板 gate-task70.sh，M6 审计 tasks 71-73），
+    `logs/task74-m6-matrix-20261120T192332Z.log`：`M6_MATRIX_VERDICT=PASS`——九段
+    (FMT/CLIPPY/TEST/WASM/TREE/DETERM/XCHK/TRUNK/HEADLESS) + 全 10 crosscheck 全绿 +
+    `DETERM=BYTE_IDENTICAL`（run-all.sh 双跑）+ M6_AUDIT(task71/72/73 最新日志全 PASS) +
+    `JS_TREE_CLEAN`/`SIM_TREE_CLEAN` + headless 4 组合/boss 600 帧全 EXIT=0；
+    TRUNK wasm-bindgen OOM SIGKILL → `TRUNK=DEGRADED`（D-T40-1 非阻断）。
+  - **总评审**：M6 REVIEW_CHECKLIST「M6 汇总复核清单（Task 74 定稿）」已填（四列表格：
+    后处理本体 71→D-M6-1..5 / DOM 大厅 72→D-M6-6..10 / 消费者收敛 73→D-M6-11/12），
+    沙箱口径诚实声明 + M5 偏差承接说明；71/72/73 三轮独立评审 P0/P1 全闭环（复验无新 P0/P1）。
+  - **测试基线**：workspace 单测 448（M5 收尾）→ **478**（+30：task71×6 + task72×16 +
+    task73×8，含测试拆分/适配）；全 10 crosscheck 回归 + 零 sim/上游 JS 改动。
+  - **总评审闭环**：里程碑级独立评审 **0×P0 + 2×P1 + 3×P2**；P1-1（Task71 单测 452→454
+    数字错）与 P1-2（Task72 单测 452→470/+18 → 454→470/+16 + 日志路径更新为最终 T180923Z）
+    已回填；P2（PORT_MAP 锚测数 6/16/8、REVIEW_CHECKLIST task72 16 项、矩阵脚本 TRUNK
+    SIGKILL 守卫限定 wasm-bindgen 错误链）全修，复验后矩阵重跑。评审确认矩阵无吞错、
+    D-M6-1..12 连续登记、M5 Non-Goals 维持、low 保底全程不破坏、零 sim/上游改动。
 
 ---
 

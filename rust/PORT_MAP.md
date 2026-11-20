@@ -16,6 +16,13 @@ M5 扩档图例（Task 70）：`M5 Tn done`（第 n 任务全量落地，含提�
 所有 M5 任务数值均从 `assets/*.json` + 10 个独立 crosscheck 钉源（NFR-M5-6，无手抄），
 最终矩阵口径为 `M5_MATRIX_VERDICT`，见下方「M5 完成核对」。
 
+M6 扩档图例（Task 74）：`M6 Tn done`（本体接线任务全量落地，含纯函数/状态机锚测 + 独立
+crosscheck + 九段门禁 + 独立评审 P0/P1 闭环）· `M6 visual-review`（数据面/无头可测行为已闭环，
+GPU/DOM/听感观感待用户机复核，双轨验收；D-M6-1..12 登记于 M6 REVIEW_CHECKLIST）·
+`M6 wontport`（沿用 M5 事实登记，M6 不新增 wontport；GTAO 无 Bevy 内建且需 prepass，SMAA
+虽有内建但按 G-4「继续登记」分支暂不接线）· 全程零 `inkwave_sim`/上游 JS 改动，最终矩阵口径
+为 `M6_MATRIX_VERDICT`，见下方「M6 完成核对」。
+
 ## 技术栈基线
 
 | 项 | 选型 | 备注 |
@@ -139,6 +146,28 @@ RenderLayers 分层 → 3D 大厅 → 音频总线 → fx composite/DOM 叠层 �
 口径说明：M5「高保真」在沙箱完成的是**数值钉源 + 数据面 + 无头可测行为**；蒙皮/材质/混响
 听感/名牌投影等 GPU 观感以 `M5 visual-review` 登记，待用户 GPU 机复核（NFR-M4-5 双轨）。
 `low` 保底路径（NFR-M5-5）在每任务 headless 冒烟中验证不破坏。
+
+## M6 完成核对（Task 74）
+
+Task 71–73 收尾（本体接线与双轨验收闭环）：后处理 GPU pass 本体 → DOM/UI 桥与大厅呈现 →
+剩余消费者收敛 → 收尾矩阵。上表 M6 相关行按本节判读，逐任务证据见
+`.trae/specs/rust-bevy-port-m6/tasks.md` 各 Completion Evidence，偏差定案见同目录
+`REVIEW_CHECKLIST.md` 汇总清单。
+
+| 核对项 | 结论 | 证据 |
+|---|---|---|
+| 3 任务状态/证据 | 全 `completed` + Completion Evidence（各含独立评审返工闭环） | `tasks.md` Task 71–73 |
+| 九段门禁（每任务） | 3/3 `GATE_VERDICT=PASS`（专项锚测 6/16/8 项） | `logs/task71..73-gates-*.log` |
+| M6 收尾矩阵 | `M6_MATRIX_VERDICT=PASS` | `logs/task74-m6-matrix-20261120T192332Z.log` |
+| 交叉校验 | 全 10 crosscheck 回归全绿（无自证/无手抄） | `tools/*crosscheck.mjs` |
+| 全量重提取确定性 | `DETERM=BYTE_IDENTICAL`（run-all.sh 双跑） | 矩阵日志 |
+| 上游/sim 守卫 | `JS_TREE_CLEAN` + `SIM_TREE_CLEAN`（全程零 sim 改动） | 矩阵日志 |
+| headless 保底 | 4 主题/档位组合 + boss 600 帧全 `EXIT=0` | 矩阵日志 |
+| GPU/DOM/听感 | 双轨登记复核，未伪验收 | `REVIEW_CHECKLIST.md` M6 汇总清单 |
+
+口径说明：M6「本体接线」在沙箱完成的是**数据面 + 纯函数/状态机 + 无头可测行为**；WGSL 完整
+编译、DOM 真实节点观感、CharAnim mesh、GPU 混合、听感一致性以 `M6 visual-review` 登记，待
+用户机复核（双轨）。`low` 保底路径在每任务 headless 冒烟与 task71/73 专项锚测中验证不破坏。
 
 ## 质量档位
 
