@@ -1,0 +1,1102 @@
+{
+  "animation": {
+    "clip_priority": [
+      "dead",
+      "intro",
+      "stun",
+      "roar",
+      "move:phase",
+      "recover",
+      "loco"
+    ],
+    "dur": {
+      "barrage": [
+        0.85,
+        2,
+        0.8
+      ],
+      "charge": [
+        1.15,
+        1.5,
+        0.9
+      ],
+      "crablets": [
+        0.9,
+        0.8,
+        0.6
+      ],
+      "frenzy": [
+        1.2,
+        3,
+        1.7
+      ],
+      "slam": [
+        1.15,
+        1.2,
+        1
+      ],
+      "sweep": [
+        1.15,
+        2.1,
+        0.9
+      ]
+    },
+    "moves": [
+      "slam",
+      "barrage",
+      "sweep",
+      "charge",
+      "crablets",
+      "frenzy"
+    ],
+    "ph": {
+      "act": 1,
+      "rec": 2,
+      "tele": 0
+    }
+  },
+  "hit": [
+    {
+      "radius": 1.8,
+      "socket": "shellF",
+      "weak": false
+    },
+    {
+      "radius": 1.8,
+      "socket": "shellR",
+      "weak": false
+    },
+    {
+      "radius": 1.05,
+      "socket": "body",
+      "weak": false
+    },
+    {
+      "radius": 0.85,
+      "socket": "clawL",
+      "weak": false
+    },
+    {
+      "radius": 0.55,
+      "socket": "clawR",
+      "weak": false
+    },
+    {
+      "radius": 0.4,
+      "socket": "eyeL",
+      "weak": true
+    },
+    {
+      "radius": 0.4,
+      "socket": "eyeR",
+      "weak": true
+    },
+    {
+      "radius": 0.8,
+      "socket": "belly",
+      "weak": true
+    },
+    {
+      "radius": 0.7,
+      "socket": "crackL",
+      "weak": true
+    },
+    {
+      "radius": 0.7,
+      "socket": "crackR",
+      "weak": true
+    }
+  ],
+  "materials": {
+    "skin_bone_count": 100,
+    "slots": [
+      "steel",
+      "cara",
+      "flesh",
+      "eye",
+      "junk"
+    ],
+    "stencil_atlas": true,
+    "stencil_size": 1024
+  },
+  "rig": {
+    "bone_count": 100,
+    "bone_tree_sha256": "3ad2dfb98cdecd11a2ce8db1842ffe145fd0242563c74924cfc7adab19b1f2b1",
+    "bones": [
+      {
+        "name": "base",
+        "parent": "",
+        "rest_q": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "name": "body",
+        "parent": "base",
+        "rest_q": [
+          0,
+          2100000,
+          700000
+        ]
+      },
+      {
+        "name": "shell",
+        "parent": "body",
+        "rest_q": [
+          0,
+          3000000,
+          -1300000
+        ]
+      },
+      {
+        "name": "abdomen",
+        "parent": "shell",
+        "rest_q": [
+          0,
+          2922906,
+          -1913642
+        ]
+      },
+      {
+        "name": "hatchA",
+        "parent": "shell",
+        "rest_q": [
+          970000,
+          4254738,
+          -846532
+        ]
+      },
+      {
+        "name": "hatchB",
+        "parent": "shell",
+        "rest_q": [
+          -970000,
+          4254738,
+          -846532
+        ]
+      },
+      {
+        "name": "hatchC",
+        "parent": "shell",
+        "rest_q": [
+          0,
+          4586340,
+          -3596611
+        ]
+      },
+      {
+        "name": "doorR",
+        "parent": "shell",
+        "rest_q": [
+          -1220000,
+          2637272,
+          1708210
+        ]
+      },
+      {
+        "name": "tearL",
+        "parent": "shell",
+        "rest_q": [
+          1220000,
+          2976696,
+          -1524404
+        ]
+      },
+      {
+        "name": "tearR",
+        "parent": "shell",
+        "rest_q": [
+          -1220000,
+          2976696,
+          -1524404
+        ]
+      },
+      {
+        "name": "head",
+        "parent": "body",
+        "rest_q": [
+          0,
+          2250000,
+          1550000
+        ]
+      },
+      {
+        "name": "belly0",
+        "parent": "body",
+        "rest_q": [
+          0,
+          1370000,
+          2120000
+        ]
+      },
+      {
+        "name": "belly1",
+        "parent": "body",
+        "rest_q": [
+          0,
+          1550000,
+          1350000
+        ]
+      },
+      {
+        "name": "stalkL0",
+        "parent": "head",
+        "rest_q": [
+          380000,
+          2820000,
+          2900000
+        ]
+      },
+      {
+        "name": "stalkL1",
+        "parent": "stalkL0",
+        "rest_q": [
+          520000,
+          3240000,
+          3020000
+        ]
+      },
+      {
+        "name": "eyeL",
+        "parent": "stalkL1",
+        "rest_q": [
+          640000,
+          3640000,
+          3100000
+        ]
+      },
+      {
+        "name": "antL0",
+        "parent": "head",
+        "rest_q": [
+          170000,
+          2610000,
+          3170000
+        ]
+      },
+      {
+        "name": "antL1",
+        "parent": "antL0",
+        "rest_q": [
+          420000,
+          3050000,
+          3850000
+        ]
+      },
+      {
+        "name": "antL2",
+        "parent": "antL1",
+        "rest_q": [
+          920000,
+          3410000,
+          4600000
+        ]
+      },
+      {
+        "name": "antL3",
+        "parent": "antL2",
+        "rest_q": [
+          1500000,
+          3350000,
+          5350000
+        ]
+      },
+      {
+        "name": "mandL",
+        "parent": "head",
+        "rest_q": [
+          160000,
+          1770000,
+          3050000
+        ]
+      },
+      {
+        "name": "stalkR0",
+        "parent": "head",
+        "rest_q": [
+          -380000,
+          2820000,
+          2900000
+        ]
+      },
+      {
+        "name": "stalkR1",
+        "parent": "stalkR0",
+        "rest_q": [
+          -520000,
+          3240000,
+          3020000
+        ]
+      },
+      {
+        "name": "eyeR",
+        "parent": "stalkR1",
+        "rest_q": [
+          -640000,
+          3640000,
+          3100000
+        ]
+      },
+      {
+        "name": "antR0",
+        "parent": "head",
+        "rest_q": [
+          -170000,
+          2610000,
+          3170000
+        ]
+      },
+      {
+        "name": "antR1",
+        "parent": "antR0",
+        "rest_q": [
+          -420000,
+          3050000,
+          3850000
+        ]
+      },
+      {
+        "name": "antR2",
+        "parent": "antR1",
+        "rest_q": [
+          -920000,
+          3410000,
+          4600000
+        ]
+      },
+      {
+        "name": "antR3",
+        "parent": "antR2",
+        "rest_q": [
+          -1500000,
+          3350000,
+          5350000
+        ]
+      },
+      {
+        "name": "mandR",
+        "parent": "head",
+        "rest_q": [
+          -160000,
+          1770000,
+          3050000
+        ]
+      },
+      {
+        "name": "siphon",
+        "parent": "head",
+        "rest_q": [
+          0,
+          1980000,
+          3000000
+        ]
+      },
+      {
+        "name": "nozzle",
+        "parent": "siphon",
+        "rest_q": [
+          0,
+          2000000,
+          3360000
+        ]
+      },
+      {
+        "name": "armL0",
+        "parent": "body",
+        "rest_q": [
+          840000,
+          1810000,
+          2620000
+        ]
+      },
+      {
+        "name": "armL1",
+        "parent": "armL0",
+        "rest_q": [
+          1900000,
+          1250000,
+          3300000
+        ]
+      },
+      {
+        "name": "clawL",
+        "parent": "armL1",
+        "rest_q": [
+          2020000,
+          1050000,
+          4300000
+        ]
+      },
+      {
+        "name": "dactL",
+        "parent": "clawL",
+        "rest_q": [
+          2066975,
+          1148171,
+          5337678
+        ]
+      },
+      {
+        "name": "armR0",
+        "parent": "body",
+        "rest_q": [
+          -840000,
+          1850000,
+          2620000
+        ]
+      },
+      {
+        "name": "armR1",
+        "parent": "armR0",
+        "rest_q": [
+          -1750000,
+          1700000,
+          3350000
+        ]
+      },
+      {
+        "name": "clawR",
+        "parent": "armR1",
+        "rest_q": [
+          -1800000,
+          1600000,
+          4300000
+        ]
+      },
+      {
+        "name": "dactR",
+        "parent": "clawR",
+        "rest_q": [
+          -1820154,
+          1712986,
+          5087832
+        ]
+      },
+      {
+        "name": "leg0c",
+        "parent": "body",
+        "rest_q": [
+          920000,
+          1750000,
+          1700000
+        ]
+      },
+      {
+        "name": "leg0m",
+        "parent": "leg0c",
+        "rest_q": [
+          1260000,
+          1750000,
+          1880000
+        ]
+      },
+      {
+        "name": "leg0t",
+        "parent": "leg0m",
+        "rest_q": [
+          2467964,
+          2464656,
+          3006983
+        ]
+      },
+      {
+        "name": "leg0d",
+        "parent": "leg0t",
+        "rest_q": [
+          2887676,
+          705960,
+          3398558
+        ]
+      },
+      {
+        "name": "leg1c",
+        "parent": "body",
+        "rest_q": [
+          920000,
+          2346214,
+          -472314
+        ]
+      },
+      {
+        "name": "leg1m",
+        "parent": "leg1c",
+        "rest_q": [
+          1480000,
+          2346214,
+          -472314
+        ]
+      },
+      {
+        "name": "leg1t",
+        "parent": "leg1m",
+        "rest_q": [
+          3445478,
+          2775223,
+          130054
+        ]
+      },
+      {
+        "name": "leg1d",
+        "parent": "leg1t",
+        "rest_q": [
+          3787744,
+          705960,
+          234949
+        ]
+      },
+      {
+        "name": "leg2c",
+        "parent": "body",
+        "rest_q": [
+          920000,
+          2671193,
+          -2749788
+        ]
+      },
+      {
+        "name": "leg2m",
+        "parent": "leg2c",
+        "rest_q": [
+          1480000,
+          2671193,
+          -2749788
+        ]
+      },
+      {
+        "name": "leg2t",
+        "parent": "leg2m",
+        "rest_q": [
+          3526086,
+          2905025,
+          -3367328
+        ]
+      },
+      {
+        "name": "leg2d",
+        "parent": "leg2t",
+        "rest_q": [
+          3587469,
+          705960,
+          -3385855
+        ]
+      },
+      {
+        "name": "leg3c",
+        "parent": "body",
+        "rest_q": [
+          -920000,
+          1750000,
+          1700000
+        ]
+      },
+      {
+        "name": "leg3m",
+        "parent": "leg3c",
+        "rest_q": [
+          -1260000,
+          1750000,
+          1880000
+        ]
+      },
+      {
+        "name": "leg3t",
+        "parent": "leg3m",
+        "rest_q": [
+          -2467964,
+          2464656,
+          3006983
+        ]
+      },
+      {
+        "name": "leg3d",
+        "parent": "leg3t",
+        "rest_q": [
+          -2887676,
+          705960,
+          3398558
+        ]
+      },
+      {
+        "name": "leg4c",
+        "parent": "body",
+        "rest_q": [
+          -920000,
+          2346214,
+          -472314
+        ]
+      },
+      {
+        "name": "leg4m",
+        "parent": "leg4c",
+        "rest_q": [
+          -1480000,
+          2346214,
+          -472314
+        ]
+      },
+      {
+        "name": "leg4t",
+        "parent": "leg4m",
+        "rest_q": [
+          -3445478,
+          2775223,
+          130054
+        ]
+      },
+      {
+        "name": "leg4d",
+        "parent": "leg4t",
+        "rest_q": [
+          -3787744,
+          705960,
+          234949
+        ]
+      },
+      {
+        "name": "leg5c",
+        "parent": "body",
+        "rest_q": [
+          -920000,
+          2671193,
+          -2749788
+        ]
+      },
+      {
+        "name": "leg5m",
+        "parent": "leg5c",
+        "rest_q": [
+          -1480000,
+          2671193,
+          -2749788
+        ]
+      },
+      {
+        "name": "leg5t",
+        "parent": "leg5m",
+        "rest_q": [
+          -3526086,
+          2905025,
+          -3367328
+        ]
+      },
+      {
+        "name": "leg5d",
+        "parent": "leg5t",
+        "rest_q": [
+          -3587469,
+          705960,
+          -3385855
+        ]
+      },
+      {
+        "name": "tyre0",
+        "parent": "shell",
+        "rest_q": [
+          -1300000,
+          4045241,
+          890884
+        ]
+      },
+      {
+        "name": "tyre1",
+        "parent": "tyre0",
+        "rest_q": [
+          -1360000,
+          3370131,
+          809479
+        ]
+      },
+      {
+        "name": "buoy0",
+        "parent": "shell",
+        "rest_q": [
+          1200000,
+          4649788,
+          -4122800
+        ]
+      },
+      {
+        "name": "buoy1",
+        "parent": "buoy0",
+        "rest_q": [
+          1340000,
+          4267030,
+          -4289822
+        ]
+      },
+      {
+        "name": "buoy2",
+        "parent": "buoy1",
+        "rest_q": [
+          1400000,
+          3827449,
+          -4403261
+        ]
+      },
+      {
+        "name": "anch0",
+        "parent": "shell",
+        "rest_q": [
+          -350000,
+          4637114,
+          -4184763
+        ]
+      },
+      {
+        "name": "anch1",
+        "parent": "anch0",
+        "rest_q": [
+          -350000,
+          4167749,
+          -4301793
+        ]
+      },
+      {
+        "name": "anch2",
+        "parent": "anch1",
+        "rest_q": [
+          -350000,
+          3693595,
+          -4379111
+        ]
+      },
+      {
+        "name": "anch3",
+        "parent": "anch2",
+        "rest_q": [
+          -350000,
+          3217047,
+          -4436573
+        ]
+      },
+      {
+        "name": "chnL0",
+        "parent": "shell",
+        "rest_q": [
+          1260000,
+          4146997,
+          46996
+        ]
+      },
+      {
+        "name": "chnL1",
+        "parent": "chnL0",
+        "rest_q": [
+          1300000,
+          3801908,
+          -14759
+        ]
+      },
+      {
+        "name": "chnL2",
+        "parent": "chnL1",
+        "rest_q": [
+          1320000,
+          3456819,
+          -76515
+        ]
+      },
+      {
+        "name": "chnL3",
+        "parent": "chnL2",
+        "rest_q": [
+          1320000,
+          3109336,
+          -118414
+        ]
+      },
+      {
+        "name": "chnR0",
+        "parent": "shell",
+        "rest_q": [
+          -1260000,
+          4404378,
+          -2087542
+        ]
+      },
+      {
+        "name": "chnR1",
+        "parent": "chnR0",
+        "rest_q": [
+          -1300000,
+          4004860,
+          -2115571
+        ]
+      },
+      {
+        "name": "chnR2",
+        "parent": "chnR1",
+        "rest_q": [
+          -1320000,
+          3606540,
+          -2153528
+        ]
+      },
+      {
+        "name": "kelp00",
+        "parent": "shell",
+        "rest_q": [
+          1230000,
+          1435910,
+          979150
+        ]
+      },
+      {
+        "name": "kelp01",
+        "parent": "kelp00",
+        "rest_q": [
+          1300000,
+          992738,
+          895495
+        ]
+      },
+      {
+        "name": "kelp02",
+        "parent": "kelp01",
+        "rest_q": [
+          1342000,
+          576779,
+          794977
+        ]
+      },
+      {
+        "name": "kelp10",
+        "parent": "shell",
+        "rest_q": [
+          1230000,
+          1753147,
+          -1651793
+        ]
+      },
+      {
+        "name": "kelp11",
+        "parent": "kelp10",
+        "rest_q": [
+          1300000,
+          1399328,
+          -1724674
+        ]
+      },
+      {
+        "name": "kelp12",
+        "parent": "kelp11",
+        "rest_q": [
+          1342000,
+          1067758,
+          -1815017
+        ]
+      },
+      {
+        "name": "kelp20",
+        "parent": "shell",
+        "rest_q": [
+          -1230000,
+          1663363,
+          -907187
+        ]
+      },
+      {
+        "name": "kelp21",
+        "parent": "kelp20",
+        "rest_q": [
+          -1300000,
+          1148708,
+          -999461
+        ]
+      },
+      {
+        "name": "kelp22",
+        "parent": "kelp21",
+        "rest_q": [
+          -1342000,
+          665239,
+          -1108119
+        ]
+      },
+      {
+        "name": "kelp30",
+        "parent": "shell",
+        "rest_q": [
+          -1230000,
+          2004543,
+          -3736691
+        ]
+      },
+      {
+        "name": "kelp31",
+        "parent": "kelp30",
+        "rest_q": [
+          -1300000,
+          1614982,
+          -3813882
+        ]
+      },
+      {
+        "name": "kelp32",
+        "parent": "kelp31",
+        "rest_q": [
+          -1342000,
+          1249657,
+          -3908295
+        ]
+      },
+      {
+        "name": "kelp40",
+        "parent": "shell",
+        "rest_q": [
+          550000,
+          1350212,
+          1522800
+        ]
+      },
+      {
+        "name": "kelp41",
+        "parent": "kelp40",
+        "rest_q": [
+          620000,
+          924910,
+          1441300
+        ]
+      },
+      {
+        "name": "kelp42",
+        "parent": "kelp41",
+        "rest_q": [
+          662000,
+          525830,
+          1342817
+        ]
+      },
+      {
+        "name": "kelp50",
+        "parent": "shell",
+        "rest_q": [
+          -900000,
+          3909264,
+          1851514
+        ]
+      },
+      {
+        "name": "kelp51",
+        "parent": "kelp50",
+        "rest_q": [
+          -970000,
+          3430351,
+          1763549
+        ]
+      },
+      {
+        "name": "kelp52",
+        "parent": "kelp51",
+        "rest_q": [
+          -1012000,
+          2980637,
+          1658961
+        ]
+      },
+      {
+        "name": "flag0",
+        "parent": "shell",
+        "rest_q": [
+          -1000000,
+          6045913,
+          -3672428
+        ]
+      },
+      {
+        "name": "flag1",
+        "parent": "flag0",
+        "rest_q": [
+          -1000000,
+          6079432,
+          -3950414
+        ]
+      },
+      {
+        "name": "flag2",
+        "parent": "flag1",
+        "rest_q": [
+          -1000000,
+          6110557,
+          -4208545
+        ]
+      }
+    ],
+    "chains": [
+      "tyre",
+      "buoy",
+      "anch",
+      "chnL",
+      "chnR",
+      "kelp0",
+      "kelp1",
+      "kelp2",
+      "kelp3",
+      "kelp4",
+      "kelp5",
+      "flag",
+      "antL",
+      "antR"
+    ]
+  },
+  "schema": 1,
+  "source": {
+    "commit": "19c62df057df8f71f492c1e3873c252f775e2b52",
+    "files": [
+      "src/boss/bossModelGeo.js",
+      "src/boss/bossModel.js",
+      "src/boss/bossAnim.js",
+      "src/boss/bossMats.js",
+      "src/boss/bossModelFx.js"
+    ]
+  },
+  "tri_budget": {
+    "high": {
+      "buckets": {
+        "cara": 18540,
+        "eye": 1040,
+        "flesh": 10944,
+        "junk": 3160,
+        "steel": 25326
+      },
+      "scale": 1,
+      "total": 59010
+    },
+    "low": {
+      "buckets": {
+        "cara": 8978,
+        "eye": 336,
+        "flesh": 5964,
+        "junk": 1232,
+        "steel": 15320
+      },
+      "scale": 0.5,
+      "total": 31830
+    },
+    "medium": {
+      "buckets": {
+        "cara": 11960,
+        "eye": 504,
+        "flesh": 7884,
+        "junk": 1817,
+        "steel": 18118
+      },
+      "scale": 0.72,
+      "total": 40283
+    },
+    "ultra": {
+      "buckets": {
+        "cara": 28184,
+        "eye": 1768,
+        "flesh": 14880,
+        "junk": 4925,
+        "steel": 36220
+      },
+      "scale": 1.3,
+      "total": 85977
+    }
+  }
+}
+

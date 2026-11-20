@@ -362,7 +362,7 @@
     未在沙箱伪验收 GPU 材质/反射/霓虹/蒸汽/PMREM 观感。
 
 ## Task 68: Boss 高保真模型
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: medium
 - **Depends On**: M4 Task 46（占位档语义与 hitShapes 契约）
 - **Description**: bossModelGeo 875 / bossAnim 859 / bossMats 567 / bossModelFx 143
@@ -374,6 +374,21 @@
     ≤150k tri 预算对账；headless boss 600 帧不 panic。
   - `rule` TR-68.2: REVIEW_CHECKLIST 登记（六招动画/weak 点可读性/telegraph，用户机复核）。
 - **Notes**: 蒙皮走 M4 Task 54 的骨树/重放基建；体块剪影档保留为 `low` 档或资产缺失降级。
+- **Completion Evidence** (2026-11-20):
+  - `extract-boss.mjs` **import 真 `bossModelGeo.js`** 调 `buildRig()`/`buildParts()` 得 100 骨
+    骨架（name/parent/量化 rest）、4 档真实 tri 预算（low 31830/medium 40283/high 59010/
+    ultra 85977，全 ≤150k）、5 材质桶+1024 stencil atlas；正则提 HIT 10 项/DUR 六招×3/PH/
+    clip 优先级。`boss-crosscheck.mjs` 独立重 import+正则重解析 721 checks（含每骨 rest_q）。
+  - `boss_model.rs`（新模块）数据面 + 4 项锚测：SHA256 自检、**跨语言骨树 golden 真重算**
+    （boss.json 存每骨量化 rest，Rust std-only SHA256 重算 canonical 串比对 JS 生成 golden，
+    非自证）、HIT/tri 预算逐档、六招 DUR/clip 时间线纯函数（镜像 JS L484-495）。
+    hitShapes 契约（M4 Task41/46）、sim 几何、`inkwave_sim` 依赖面零改动。
+  - 九段门禁 `rust/tools/verify/logs/task68-gates-20261120T042437Z.log`：
+    `FMT/CLIPPY/TEST/WASM/TREE/DETERM/XCHK/TRUNK/RELEASE_BUILD/HEADLESS/
+    HEADLESS_BOSS_EXIT=0`，headless boss **600 帧**真执行，`DETERM=BYTE_IDENTICAL`
+    （extract-boss 双跑），`JS_TREE_CLEAN`、`SIM_TREE_CLEAN`，`GATE_VERDICT=PASS`。
+    独立评审首轮 2 项 P1（台账未收口、Rust golden 自证未重算）已返工，D-T68-1/2 登记于
+    REVIEW_CHECKLIST，未在沙箱伪验收蒙皮/材质/动画/weak/telegraph GPU 观感。
 
 ## Task 69: locker 更衣室
 - **Status**: `pending`

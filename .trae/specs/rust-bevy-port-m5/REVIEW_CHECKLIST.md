@@ -264,3 +264,26 @@ materials）；门禁结论见 `tasks.md` Task 67 Completion Evidence。独立�
   （Task66 size256/envK0.66）数据面已隔离并断言不混用，运行时切换观感需实机确认。
 - [ ] **双相机 clear/order（沿用 D-T61-4）**：占位几何保留于 layer1、主相机 layer0 零改动
   （测试守门）；反射 pass 与大厅 set 的清屏/绘制顺序需用户 GPU 机复核。
+
+## Task 68 复核登记（2026-11-20）
+
+无头可测：4 项 Task68 锚测（SHA256 自检、100 骨树跨语言 golden 重算、HIT/tri 预算逐档、
+六招 DUR/clip 时间线纯函数）+ `boss-crosscheck` 721 checks（含每骨 rest_q）+ headless boss
+600 帧；门禁结论见 `tasks.md` Task 68 Completion Evidence。独立评审首轮 2 项 P1（台账未收口、
+Rust 侧 golden 自证未重算）已返工：`boss.json` 现每骨存量化 rest，Rust 用 std-only SHA256
+真重算 canonical 串比对 JS golden。hitShapes 契约（M4 Task41/46）与 sim 几何零改动。以下为
+**待用户 GPU 复核**（D-T68-1/2）：
+
+- [ ] **六招动画手感（D-T68-1）**：slam/barrage/sweep/charge/crablets/frenzy 的 DUR 与 clip
+  优先级（dead>intro>stun>roar>move:phase>recover>loco）已锚测；蒙皮形变、cross-fade、
+  IK 步态、verlet 次级的动画观感需用户 GPU 机确认。
+- [ ] **weak 点可读性（D-T68-1）**：10 项 HIT（5 weak：eyeL/eyeR/belly/crackL/crackR）已钉测，
+  belly/crack active 条件（stunned|phase≥3|belly>.5 / tear.x>.5）已记录；弱点视觉提示与
+  可读性需用户机确认。
+- [ ] **telegraph 清晰度（D-T68-1）**：8 类地面标记已由 M4 boss_render 覆盖（本任务只换呈现
+  层、不改契约）；标记与高保真模型的视觉叠加清晰度需用户 GPU 机复核。
+- [ ] **材质与 FX 观感（D-T68-1）**：5 蒙皮桶（steel/cara/flesh/eye/junk）+ 1024 stencil atlas、
+  phase-3 enrage 眼发光、蒸汽 vent、4 档几何缩放（tri 31830/40283/59010/85977 全 ≤150k）
+  已锚测；实际材质外观/焦散/蒸汽密度需用户机确认。
+- [ ] **资产构建成本（D-T68-2）**：程序化生成不入库网格二进制（boss.json 仅元数据/种子），
+  运行期 buildRig/buildParts 的构建耗时与 wasm 体积需实机确认；low 档剪影保留为资产缺失降级。

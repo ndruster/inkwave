@@ -593,3 +593,45 @@ GTAO/grade/SMAA/tilt-shift、云/PMREM/海面、alley 材质逐档落地且逐�
 - TR-67.2：REVIEW_CHECKLIST 登记 Task67 复核项（反射清晰度/霓虹 buzz/蒸汽密度/PMREM 光照）。
 - 门禁 `gate-task67.sh`（模板 gate66，DETERM 用 extract-lobbyset 双跑，
   XCHK 跑 task67 专项 + lobbyset/environment crosschecks）。
+
+---
+
+## Task68 实施设计（2026-11-20，开工实读定稿）
+
+### §0 锚点与保守范围
+- 上游 `src/boss/`：`bossModelGeo.js` L318-368 `buildRig()` 程序化生成 **100 骨**
+  （`base/body/shell/…/kelp52/flag2`）；L375-378 `buildParts(rig,quality)` 5 材质桶
+  （steel/cara/flesh/eye/junk）+ `mulberry(1337)`；`QUALITY_K` 4 档（low .5/medium .72/
+  high 1/ultra 1.3）；`bossModel.js` L14-18 `HIT` 10 项 socket/radius/weak + L104-108
+  active 条件（belly: stunned|phase≥3|belly>.5；crack: tear.x>.5）；`bossAnim.js` L22
+  `DUR` 六招×[tele,act,rec]、L23 `PH`、L482-495 `['bm']` 时间线 clip 选择（dead>intro>
+  stun>roar>move:phase>recover>loco）。
+- hitShapes 契约（M4 Task41）不变：sim 几何脱离渲染模型，只换呈现层；`tuning.json::boss.hz`
+  已锚测（boss_render.rs），不重复造。
+
+### §1 提取策略（直接 import 真模块）
+- `extract-boss.mjs` **import 实际 `bossModelGeo.js`**（node_modules/three 可用）调用
+  `buildRig()`/`buildParts()` 得到真实骨树（names+parents+rest SHA256）、5 桶 tris/档位
+  （实测 low 31830/medium 40283/high 59010/ultra 85977，全 ≤150k 预算）、QUALITY_K；
+  配合正则从 `bossModel.js`/`bossAnim.js` 提 HIT/DUR/PH/clip 优先级常量。输出 `assets/boss.json`
+  （source 钉四文件 commit）。`boss-crosscheck.mjs` **独立重解析**：骨树用不同路径（正则统计
+  add() 调用 + 循环展开 或 重 import 但比对 SHA256 由 Rust 侧固定），HIT/DUR/tris 用字面量
+  独立 regex，防提取器回归。
+- 骨树 SHA256：规范序列化每骨 `name|parent|rest(x,y,z)` 行 → sha256，JS 生成钉入 JSON；
+  Rust 数据面用 std-only sha256 比对（同 Task66 量化序列化思路，坐标量化 1e-6）。
+
+### §2 数据面与偏差
+- 新 `boss_model.rs`（或 boss_render.rs 增段）：`BossModelSpec` 提供骨树摘要/HIT/材质桶/
+  tris 预算/clip 选择纯函数（从 `st` 派生 key，镜像 JS L482-495 优先级），`['bm']` 时间线
+  驱动单测用 sim `BossSt` 构造 6 招 movePhase 断言行选择。`low` 档剪影保留为降级路径
+  （Task46 契约）。
+- D-T68-1：蒙皮形变/5 材质+stencil atlas 外观/六招动画手感/weak 点可读性/telegraph/
+  enrage 眼发光/蒸汽 FX 全 GPU 观感不可沙箱验，仅数据面+用户机复核；D-T68-2：高保真模型
+  为程序化生成不入库网格二进制（仅元数据/种子入库），运行期构建成本需实机确认。
+
+### §3 测试与门禁
+- TR-68.1：模型提取确定性（双跑字节一致）+ 骨树 SHA256 + HIT/DUR/材质槽/tri 预算锚测 +
+  clip 时间线纯函数单测 + headless boss **600 帧**（现有 300 帧 smoke 扩到 600）。
+- TR-68.2：REVIEW_CHECKLIST 登记 Task68 复核项（六招动画/weak 点/telegraph）。
+- 门禁 `gate-task68.sh`（模板 gate67，DETERM 用 extract-boss 双跑，XCHK 跑 task68 专项 +
+  boss/environment/lobbyset crosschecks）。

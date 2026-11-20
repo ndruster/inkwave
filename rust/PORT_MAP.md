@@ -103,6 +103,10 @@ Task 66（环境终稿）完成：`environment.json` 扩展提取云/PMREM/远�
 Task 67（3D alley 材质终稿）完成：`lobbyset.json` 扩展提取湿地面反射/霓虹/蒸汽/lobby PMREM
 材质段；`showcase_state.rs` 数据面 + 2 项锚测。`lobbyset-crosscheck` 242 checks（+51）+
 九段门禁 PASS；D-T67-1/2 登记用户机复核。
+Task 68（Boss 高保真模型呈现元数据）完成：`boss.json` import 真模块提取 100 骨树/4 档 tri
+预算/HIT/六招 DUR+clip/5 材质；`boss_model.rs` 跨语言 SHA256 真重算 + clip 纯函数 + 4 锚测。
+`boss-crosscheck` 721 checks + headless boss 600 帧 + 九段门禁 PASS；D-T68-1/2 登记；
+hitShapes/sim 几何不变。
 
 ## 质量档位
 

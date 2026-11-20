@@ -484,3 +484,8 @@ PMREM 材质段（正则无手抄）；`showcase_state.rs` 数据面 + 2 项锚�
 128 ≠ world 256）。`lobbyset-crosscheck` 242 checks（+51）+ 九段门禁 PASS
 （`task67-gates-20261120T035622Z.log`）；D-T67-1/2（GPU 观感用户机复核 / 两套 PMREM 独立）
 已登记，独立评审 1 项 P1 返工闭环。
+**Task 68（Boss 高保真模型呈现元数据）**完成：`boss.json` import 真 JS 模块提取 100 骨树/
+4 档 tri 预算（全 ≤150k）/HIT 10 项/六招 DUR+clip 时间线/5 材质；`boss_model.rs` 数据面
++ 4 项锚测（跨语言骨树 SHA256 真重算 + clip 纯函数）。`boss-crosscheck` 721 checks + headless
+boss 600 帧 + 九段门禁 PASS（`task68-gates-20261120T042437Z.log`）；D-T68-1/2 登记，独立评审
+2 项 P1（台账、golden 自证）返工闭环。hitShapes/sim 几何零改动。

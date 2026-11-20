@@ -17,6 +17,7 @@ mod bench;
 
 mod actors;
 mod audio;
+mod boss_model;
 mod boss_render;
 // Task 54 batch B1: the character spring-pose runtime (≡ src/game/
 // character.js) — headless data core, pinned by char_pose_reference_pinned.
