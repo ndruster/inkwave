@@ -1,0 +1,639 @@
+=== fmt ===
+FMT_EXIT=0
+=== clippy ===
+CLIPPY_EXIT=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.44s
+=== test ===
+TEST_EXIT=101
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.87s
+     Running unittests src/main.rs (target/debug/deps/inkwave-9595b7f24f752b78)
+
+running 479 tests
+test actors::tests::lean_clamps_at_run_speed ... ok
+test actors::tests::team_colors_match_upstream_hex ... ok
+test actors::tests::blink_stays_in_band_and_swings ... ok
+test audio::bus::tests::task63_bus_graph_matches_extracted_topology ... ok
+test audio::bus::tests::task63_ir_is_bit_deterministic_and_matches_js_reference ... ok
+test audio::bus::tests::task63_wet_dry_and_spatial_curves_are_pinned ... ok
+test audio::bus::tests::task63_wet_tail_is_stereo_and_pre_lowpass ... ok
+test audio::graph::tests::delay_feedback_cycle_renders ... ok
+test audio::graph::tests::kill_stops_sources ... ok
+test audio::graph::tests::lfo_modulation_is_applied ... ok
+test audio::graph::tests::panner_downmix_matches_sum ... ok
+test audio::graph::tests::tone_bakes_deterministically_and_finite ... ok
+test audio::boss_audio::tests::music_and_duck_cues_drive_the_runtime ... ok
+test audio::boss_audio::tests::stop_all_clears_pending_and_loops ... ok
+test audio::music::tests::duck_merge_and_envelope ... ok
+test audio::music::tests::full_song_bake_smoke ... ignored, whole-song bakes are minutes of per-note graph rendering
+test audio::music::tests::play_fade_floor_and_unknown_track ... ok
+test audio::music::tests::play_switch_sequence_matches_js ... ok
+test audio::music::tests::remap_routes_battle_requests_to_boss ... ok
+test audio::boss_audio::tests::director_state_syncs_into_the_remap ... ok
+test audio::music::tests::set_volumes_smooths_like_js ... ok
+test audio::music::tests::taper_matches_js ... ok
+test audio::music::tests::compile_song_anchors ... ok
+test audio::sfx_kit::tests::extracted_table_has_all_53_kit_cues ... ok
+test audio::sfx_kit::tests::gate_accepts_a_kit_cue_without_new_code ... ok
+test audio::music::tests::runtime_request_tracks_voices ... ok
+test audio::sfx_kit::tests::kit_meta_feeds_the_gate_with_the_extracted_values ... ok
+test audio::sfx_table::tests::gate_at_and_delay_schedule_the_birth_time ... ok
+test audio::sfx_table::tests::gate_global_voice_cap_evicts_oldest ... ok
+test audio::sfx_table::tests::gate_jitter_bounds ... ok
+test audio::sfx_table::tests::gate_jitter_zero_speed_is_exact_pitch ... ok
+test audio::sfx_table::tests::gate_min_gap_merges_identical_plays ... ok
+test audio::sfx_table::tests::gate_per_name_cap_steals_oldest ... ok
+test audio::sfx_table::tests::gate_zero_volume_is_silent ... ok
+test audio::sfx_kit::tests::footstep_cue_matches_upstream_surface_rule ... ok
+test audio::sfx_table::tests::loop_entries_have_no_one_shot_arm ... ok
+test audio::boss_audio::tests::sfx_and_loop_cues_spawn_and_despawn_players ... ok
+test audio::sfx_table::tests::table_is_complete_and_unique ... ok
+test audio::synth::tests::ahr_and_adsr_endpoints ... ok
+test audio::synth::tests::biquad_bandpass_peak_gain_is_unity ... ok
+test audio::synth::tests::biquad_dc_gains ... ok
+test audio::synth::tests::biquad_peaking_boosts_at_center ... ok
+test audio::synth::tests::drive_curve_reference ... ok
+test audio::synth::tests::mtof_reference ... ok
+test audio::synth::tests::naive_shapes_reference_values ... ok
+test audio::synth::tests::noise_buffer_shape_and_determinism ... ok
+test audio::synth::tests::osc_is_deterministic ... ok
+test audio::synth::tests::pan_mix_scale_delay ... ok
+test audio::synth::tests::param_automation_semantics ... ok
+test audio::synth::tests::perc_endpoints ... ok
+test audio::synth::tests::pink_noise_is_darker_than_white ... ok
+test audio::synth::tests::pink_noise_samples_match_js ... ok
+test audio::synth::tests::pts_and_sweep ... ok
+test audio::synth::tests::pulse_wave_is_band_limited_and_normalized ... ok
+test audio::synth::tests::rng_matches_mulberry32_reference ... ok
+test audio::synth::tests::sine_one_cycle ... ok
+test audio::tests::boss_audio_crablet_cues ... ok
+test audio::tests::boss_audio_events_music_and_loops ... ok
+test audio::tests::boss_audio_hit_dedupe_gates ... ok
+test audio::tests::boss_audio_move_phase_table ... ok
+test audio::tests::cue_mapping_mirrors_upstream_credit_cases ... ok
+test audio::tests::cue_names_mirror_the_js_play_calls ... ok
+test audio::tests::decodable_source_reports_metadata ... ok
+test actors::tests::spawn_and_sync_drive_rig_roots ... ok
+test audio::sfx_table::tests::group_value_goldens ... ok
+test audio::tests::dry_fire_clicks_once_per_cooldown ... FAILED
+test audio::sfx_table::tests::bake_is_deterministic ... ok
+test audio::tests::shot_edge_detects_last_fire_reset ... ok
+test audio::music::tests::bake_short_segment_is_finite_deterministic ... ok
+test audio::tests::task60_footstep_consumer_drains_bakes_and_spawns ... ok
+test audio::tests::mute_switch_stops_spawns_and_global_volume ... ok
+test audio::tests::paused_screen_hears_nothing ... ok
+test audio::tests::shot_and_splat_events_spawn_players ... FAILED
+test audio::tests::task63_stereo_pcm_decoder_metadata ... ok
+test audio::tests::task73_audible_distance_boundary ... ok
+test audio::tests::unknown_names_bake_and_cue_to_none ... ok
+test boss_model::tests::task68_animation_durations_and_clip_timeline ... ok
+test boss_model::tests::task68_bone_tree_matches_js_sha256_golden ... ok
+test boss_model::tests::task68_hit_shapes_and_tri_budget_pinned ... ok
+test boss_model::tests::task68_sha256_self_test ... ok
+test boss_render::tests::barrage_barrel_params_match_js ... ok
+test audio::tests::task63_actor_position_resolves_team1_by_identity ... ok
+test boss_render::tests::charge_lane_params_match_js ... ok
+test boss_render::tests::fan_mesh_matches_js_vertex_layout ... ok
+test boss_render::tests::frenzy_params_match_js ... ok
+test audio::tests::task63_spatial_cue_plays_stereo_wet_voice ... FAILED
+test boss_render::tests::slam_marker_params_match_js ... ok
+test boss_render::tests::sweep_params_match_js ... ok
+test audio::tests::task63_mute_guard_blocks_spatial_bus ... ok
+test char::anim::tests::update_materials_charger_glow ... ok
+test char::anim::tests::update_materials_squid_tank_fill ... ok
+test char::anim::tests::update_materials_invuln_flash ... ok
+test char::anim::tests::update_materials_t0_exact ... ok
+test boss_render::tests::non_boss_match_spawns_nothing ... ok
+test char::bridge::tests::mirror_and_degenerate_rows_never_panic ... ok
+test boss_render::tests::boss_smoke_headless_entities ... ok
+test char::bridge::tests::death_hides_every_part_entity ... ok
+test char::bridge::tests::muzzle_and_head_resolve_in_world ... ok
+test char::bridge::tests::footstep_queue_emits_touchdowns ... ok
+test char::math::tests::euler_yxz_roundtrip ... ok
+test char::math::tests::mulberry32_matches_js_reference_values ... ok
+test char::math::tests::spr_is_deterministic_f32_bank ... ok
+test char::bridge::tests::paused_freezes_pose ... ok
+test char::pinned::kid_squid_form_switch ... ok
+test char::bridge::tests::part_budget_within_45_per_slot ... ok
+test char::rig::tests::char_archive_decodes_to_manifest_counts ... ok
+test char::pinned::char_pose_reference_pinned ... ok
+test char::rig::tests::decode_rejects_corrupt_archives ... ok
+test char::pinned::pose_neutral_and_hold_anchors ... ok
+test char::rig::tests::lamp_specs_parse_from_manifest ... ok
+test char::rig::tests::manifest_mat_classes_all_bucket_and_ids_are_dense ... ok
+test char::rig::tests::embedded_archive_is_byte_identical_to_disk_and_decodes ... ok
+test char::rig::tests::decode_is_deterministic ... ok
+test char::bridge::tests::pose_bridge_30_frames_finite_and_deterministic ... ok
+test char::rig::tests::twins_far_mirror_is_a_negative_determinant ... ok
+test char::tables::tests::tables_load_and_match_js_constants ... ok
+test char::weapon::tests::bow_ring1_matches_extracted_tuning ... ok
+test env_bake::tests::task66_bake_constants_match_extracted_js ... ok
+test env_bake::tests::task66_sha256_self_test ... ok
+test env_bake::tests::task66_swell_components_and_amp_are_pinned ... ok
+test env_bake::tests::task66_theme_cloud_and_env_k_are_finite ... ok
+test env_bake::tests::task66_wave_bake_matches_js_sha256_golden ... ok
+test env_bake::tests::task66_wave_descriptors_are_byte_deterministic ... ok
+test environment::tests::all_env_param_combinations_are_finite_and_coherent ... ok
+test environment::tests::all_tier_theme_combinations_are_finite ... ok
+test environment::tests::default_settings_are_data_driven ... ok
+test environment::tests::env_params_anchor_day_high_and_low_sunset ... ok
+test environment::tests::env_state_cycles_tier_and_theme ... ok
+test environment::tests::fog_color_is_the_js_horizon_sky_mid_lerp ... ok
+test environment::tests::grade_defaults_and_theme_overlay ... ok
+test environment::tests::map_theme_uses_the_real_js_fallback_chain ... ok
+test environment::tests::quality_presets_match_the_js_table ... ok
+test environment::tests::themes_are_extracted_and_anchor_key_values ... ok
+test fx::aa_decision::tests::task72_aa_decision_high_gate_but_not_wired ... ok
+test fx::aa_decision::tests::task72_aa_decision_low_is_all_off ... ok
+test fx::aa_decision::tests::task72_aa_decision_multisampled_disables_smaa ... ok
+test fx::aa_decision::tests::task72_aa_decision_post_off_forces_all_off ... ok
+test fx::api::tests::after_timings ... ok
+test fx::api::tests::contract_apis_spawn ... ok
+test char::rig::tests::manifest_rows_reconcile_with_archive_instances ... ok
+test fx::api::tests::determinism_double_run ... ok
+test fx::api::tests::frame_surface ... ok
+test fx::api::tests::near_culling ... ok
+test fx::api::tests::player_recipes ... ok
+test fx::api::tests::immediate_apis_and_caps ... ok
+test fx::api::tests::super_water_misc_recipes ... ok
+test fx::composite::tests::task64_composite_spec_matches_extracted_js ... ok
+test fx::api::tests::weapon_and_boss_recipes ... ok
+test fx::composite::tests::task64_damage_number_pool_combo_cap_and_expiry ... ok
+test fx::composite::tests::task64_minimap_fx_lifecycle_and_landing_age ... ok
+test fx::composite::tests::task64_minimap_fx_push_and_events ... ok
+test fx::composite::tests::task64_decay_and_pool_specs_are_pinned ... ok
+test fx::composite::tests::task64_pass_gate_low_tier_forces_all_off ... ok
+test char::rig::tests::rig_tree_draw_call_budget_per_tier ... ok
+test fx::hooks::tests::ambient_feather_and_spray_fire_with_camera ... ok
+test fx::composite::tests::task64_production_system_low_tier_forces_all_overlays_off ... ok
+test char::rig::tests::rig_tree_has_the_manifest_bone_hierarchy ... ok
+test fx::hooks::tests::charger_fire_drives_beam_trail ... ok
+test fx::hooks::tests::dive_emerge_cycle_via_submerged ... ok
+test fx::hooks::tests::fire_event_muzzles_and_disables_projectile_fallback ... ok
+test fx::hooks::tests::pools_shrink_as_particles_age_out ... ok
+test fx::hooks::tests::form_pop_edge_on_kid_squid_transition ... ok
+test fx::hooks::tests::hit_send_drives_hit_splash ... ok
+test fx::hooks::tests::respawn_resets_state ... ok
+test fx::hooks::tests::polling_drives_land_jump_and_footsteps ... ok
+test fx::hooks::tests::slam_polling_fallback_fires_when_event_never_arrives ... ok
+test fx::hooks::tests::special_use_and_slam_events ... ok
+test fx::hooks::tests::stats_shape_matches_js_l711 ... ok
+test fx::particles::tests::beams_replace_first_consuming_only_the_seed_rand ... ok
+test fx::particles::tests::collider_probe_budget ... ok
+test fx::particles::tests::color_forms_srgb_and_named ... ok
+test fx::particles::tests::drops_recycle_at_cap ... ok
+test fx::particles::tests::ghost_rot_is_zero_others_random ... ok
+test fx::particles::tests::kill_is_swap_remove ... ok
+test fx::particles::tests::mark_pillar_immediate_no_rand_defaults ... ok
+test fx::particles::tests::motes_shift_the_stream ... ok
+test fx::particles::tests::quality_presets_map_to_config_particles ... ok
+test fx::particles::tests::ripple_hook_or_decal ... ok
+test fx::particles::tests::schedule_cap_and_timing ... ok
+test fx::particles::tests::sprites_rings_shells_random_replace ... ok
+test fx::particles::tests::update_clamps_dt ... ok
+test fx::particles::tests::water_crossing_and_paint_landing ... ok
+test fx::post_pass::tests::task71_composite_activity_is_forwarded_neutrally ... ok
+test fx::post_pass::tests::task71_default_is_identity_and_pass_off ... ok
+test fx::post_pass::tests::task71_grade_12_uniforms_are_pinned ... ok
+test fx::post_pass::tests::task71_high_tier_idle_still_enables_grade ... ok
+test fx::post_pass::tests::task71_low_tier_and_post_off_force_pass_off ... ok
+test fx::post_pass::tests::task71_shader_binding_matches_rust_uniform_struct ... ok
+test fx::post_process::tests::task65_grade_chain_is_12_uniforms_and_pinned ... ok
+test fx::post_process::tests::task65_gtao_smaa_tilt_params_are_pinned ... ok
+test fx::post_process::tests::task65_pass_order_matches_renderer_composer ... ok
+test fx::post_process::tests::task65_quality_tier_switches_and_low_all_off ... ok
+test fx::render::tests::quadbuf_builds_a_valid_indexed_batch ... ok
+test fx::render::tests::sprite_alpha_ramps_in_and_out ... ok
+test fx::hooks::tests::splat_event_draws_ghost_and_counts ... ok
+test fx::screen_fx::tests::decay_all_settles_to_idle ... ok
+test fx::screen_fx::tests::edge_point_stays_in_bounds ... ok
+test fx::hooks::tests::superjump_polling_launch_and_land ... ok
+test fx::hooks::tests::water_splat_adds_sea_splash ... ok
+test fx::screen_fx::tests::lens_splat_recycles_at_capacity ... ok
+test fx::screen_fx::tests::full_frame_smoke_no_nan ... ok
+test fx::screen_fx::tests::flood_in_sequence_covers_and_recedes ... ok
+test fx::screen_fx::tests::reset_is_partial_like_js_object_assign ... ok
+test fx::screen_fx::tests::countdown_sets_urgency_baseline ... ok
+test fx::screen_fx::tests::phase_transitions_reset_and_fadeout ... ok
+test fx::screen_fx::tests::punch_spring_is_stable_and_settles ... ok
+test fx::screen_fx::tests::reveal_iris_opens_and_finishes ... ok
+test fx::screen_fx::tests::respawn_local_starts_reveal ... ok
+test fx::screen_fx::tests::slam_blasts_with_dedup ... ok
+test fx::swim_wake::tests::buffers_have_no_nan ... ok
+test fx::swim_wake::tests::local_swimmer_first_far_bots_culled_at_38m ... ok
+test fx::swim_wake::tests::non_swimmers_are_never_selected ... ok
+test fx::swim_wake::tests::reset_clears_slots ... ok
+test fx::swim_wake::tests::results_phase_stops_selection ... ok
+test fx::swim_wake::tests::teleport_inserts_break_and_leak_frees_slot ... ok
+test fx::swim_wake::tests::trail_pushes_spaced_points_and_head_closes ... ok
+test fx::zone_marks::tests::band_geometry_is_finite_and_indexed ... ok
+test fx::zone_marks::tests::build_seeds_centres_and_ghost_sweep ... ok
+test fx::zone_marks::tests::capture_event_sets_flash_and_flood_front ... ok
+test fx::zone_marks::tests::contest_and_held_flags ... ok
+test fx::zone_marks::tests::events_drive_build_clear_and_active_sync ... ok
+test fx::zone_marks::tests::over_dimms_vis_to_055 ... ok
+test fx::zone_marks::tests::rotation_wipe_cancels_inflight_fill ... ok
+test ink_render::level_wgsl_tests::level_wgsl_all_nine_ink_chunks_marked ... ok
+test ink_render::level_wgsl_tests::level_wgsl_array_lengths_match_js_constants ... ok
+test ink_render::level_wgsl_tests::level_wgsl_binding_contract_complete ... ok
+test ink_render::level_wgsl_tests::level_wgsl_braces_and_parens_balance ... ok
+test ink_render::level_wgsl_tests::level_wgsl_key_functions_present ... ok
+test ink_render::level_wgsl_tests::level_wgsl_uniform_table_parity ... ok
+test fx::screen_fx::tests::splat_local_victim_starts_flood_and_attacker_kill_flash ... ok
+test fx::screen_fx::tests::superjump_polling_edges_drive_geyser ... ok
+test fx::screen_fx::tests::water_splat_adds_34_droplets ... ok
+test ink_render::tests::tr12_1_no_override_keeps_bots ... ok
+test ink_render::tests::demo_replay_leaves_the_boss_mode_behind ... ok
+test ink_ripple::tests::dead_slot_reuse_and_negative_age ... ok
+test ink_ripple::tests::flood_jet_gate_and_ripple ... ok
+test ink_ripple::tests::flood_jet_params_pins ... ok
+test ink_ripple::tests::full_table_score_eviction_order ... ok
+test ink_ripple::tests::ink_splat_conversion_marks_specks_cosmetic ... ok
+test ink_ripple::tests::pack_uniforms_verbatim_copy ... ok
+test ink_ripple::tests::reset_pokes_like_js ... ok
+test ink_ripple::tests::rip_n_matches_texlib_document ... ok
+test ink_ripple::tests::rippled_near_gate_pins ... ok
+test ink_ripple::tests::score_formula_pins ... ok
+test ink_ripple::tests::source_apply_dispatch ... ok
+test ink_ripple::tests::splat_gate_dedupes_via_rippled_near ... ok
+test ink_ripple::tests::splat_gate_semantics ... ok
+test ink_ripple::tests::splat_params_pins ... ok
+test ink_ripple::tests::view_cull_38m ... ok
+test input::tests::diagonal_is_normalised_like_the_js_stick ... ok
+test input::tests::move_basis_matches_js_forward_right ... ok
+test input::tests::move_dir_decomposes_to_camera_axes ... ok
+test level_render::tests::level_ext_u_tl_tables_equal_slot_uniforms ... ok
+test level_render::tests::level_params_defaults_take_doc_values ... ok
+test level_render::tests::texlib_placeholders_have_one_layer_per_bake_layer ... ok
+test level_render::tests::wiring_feeds_ripple_wake_and_clock ... ok
+test ink_render::tests::demo_boss_hp_tracks_the_difficulty_tier ... ok
+test locker::tests::task69_resolve_matches_js_partial_and_high_seed ... ok
+test level_render::tests::wiring_freezes_when_paused ... ok
+test locker::tests::task69_selection_state_machine_and_wire_roundtrip ... ok
+test locker::tests::task69_resolve_wrap_and_random_are_deterministic ... ok
+test locker::tests::task69_style_persistence_is_separate_and_tolerant ... ok
+test locker::tests::task69_tables_and_reference_pinned ... ok
+test ink_render::tests::demo_boss_match_drives_and_records_events ... ok
+test net::match_link::tests::tr24_local_roster_index_follows_prune_gate ... ok
+test ink_render::tests::tr12_1_player_input_drives_slot0 ... ok
+test net::match_link::tests::tr24_local_slot_follows_leave_removal ... ok
+test net::match_link::tests::tr24_build_net_match_roster_order ... ok
+test net::native_transport::tests::native_connect_welcome_ping_close ... ok
+test net::native_transport::tests::native_join_ladder_rejects_unknown_room ... ok
+test net::match_link::tests::tr24_lobby_flow_two_clients ... ok
+test net::native_transport::tests::origin_for_maps_ws_scheme ... ok
+test net::native_transport::tests::resolve_relay_base_prefers_cli_override ... ok
+test nettest::tests::tr26_parse_full_host_config ... ok
+test nettest::tests::tr26_parse_join_keeps_case_and_shape ... ok
+test nettest::tests::tr26_parse_no_seam_params_is_none ... ok
+test nettest::tests::tr26_parse_only_net_create_counts ... ok
+test nettest::tests::tr39_parse_loadout_knobs ... ok
+test net::match_link::tests::tr24_match_end_returns_lobby ... ok
+test props::tests::blink_sphere_winds_outward ... ok
+test props::tests::decode_rejects_corrupt_archives ... ok
+test net::native_transport::tests::native_transport_end_to_end_against_relay_shim ... ok
+test props::tests::fmt_fixed_negative_tie_matches_tofixed ... ok
+test props::tests::manifest_lamps_and_murals_are_sane ... ok
+test nettest::tests::tr46_boss_b_arrival_gates_on_the_follower_role ... ok
+test props::tests::mapthumb_golden_audit ... ignored
+test props::tests::manifest_meta_counts_are_self_consistent ... ok
+test props::tests::mode_filter_matches_variants_js ... ok
+test props::tests::mural_rows_reconcile_with_layout_markers ... ok
+test props::tests::mapthumb_goldens_match_byte_for_byte ... ok
+test props::tests::special_archive_decodes_with_empty_tables ... ok
+test quality::tests::tier_anti_tiling_flag ... ok
+test quality::tests::tier_from_env_defaults_and_overrides ... ok
+test quality::tests::tier_name_roundtrip ... ok
+test quality::tests::tier_paint_atlas_sizes ... ok
+test quality::tests::tier_shadow_semantics ... ok
+test quality::tests::tier_texlib_size_table ... ok
+test settings::tests::audio_buses_start_from_the_saved_sliders_via_taper ... ok
+test settings::tests::defaults_come_from_the_extracted_table ... ok
+test settings::tests::env_overrides_win_and_are_never_persisted ... ok
+test settings::tests::from_json_merges_defaults_and_clamps ... ok
+test settings::tests::low_tier_keeps_the_headless_playable_path ... ok
+test settings::tests::non_finite_value_does_not_discard_the_document ... ok
+test settings::tests::quality_names_match_table ... ok
+test settings::tests::save_load_chain_persists_without_boot_overrides ... ok
+test settings::tests::settings_roundtrip_write_read_apply ... ok
+test settings::tests::slider_steps_match_the_js_005_grid ... ok
+test texlib::bake::tests::bake_is_byte_deterministic ... ok
+test texlib::bake::tests::box_down_rounds_and_clamps ... ok
+test texlib::bake::tests::build_mips_shape ... ok
+test texlib::bake::tests::flat_program_channel_semantics ... ok
+test texlib::bake::tests::mini_fbm_golden_sha256 ... ok
+test texlib::bake::tests::neutral_surf_defaults ... ok
+test texlib::bake::tests::sha256_self_test ... ok
+test texlib::bake::tests::srgb_encode_pins ... ok
+test texlib::bake::tests::store8_pins ... ok
+test props::tests::special_kit_parts_map_to_templates ... ok
+test texlib::materials::tests::bake_sanity ... ok
+test texlib::materials::tests::registry_covers_25_base_layers ... ok
+test texlib::materials::tests::bake_goldens ... ok
+test texlib::materials_stage::tests::bake_sanity ... ok
+test texlib::materials_stage::tests::registry_covers_21_stage_layers ... ok
+test texlib::r#gen::tests::aa_endpoints_are_exact ... ok
+test texlib::r#gen::tests::edge_prof_pins_node_reference ... ok
+test texlib::r#gen::tests::fbm_r_pins_and_empty ... ok
+test texlib::r#gen::tests::gn_is_periodic ... ok
+test texlib::r#gen::tests::gn_pins_and_lattice_zero ... ok
+test texlib::r#gen::tests::gr_maps_to_unit_range ... ok
+test texlib::r#gen::tests::hf_hf2_are_exact_f32 ... ok
+test texlib::r#gen::tests::hu_pins_node_reference ... ok
+test texlib::r#gen::tests::jd_sd_rb_and_helpers ... ok
+test texlib::r#gen::tests::lin_decodes_srgb ... ok
+test texlib::r#gen::tests::pcg_pins_node_reference ... ok
+test texlib::r#gen::tests::request_builders_mirror_glsl ... ok
+test texlib::r#gen::tests::wor_r_is_periodic ... ok
+test texlib::r#gen::tests::wor_r_pins_and_invariants ... ok
+test texlib::r#gen::tests::wrp_wraps_negatives_into_period ... ok
+test texlib::res::tests::bake_all_small_size_is_complete ... ok
+test texlib::res::tests::bake_poll_swaps_placeholders_in_place ... ok
+test texlib::res::tests::bake_timing_report ... ignored, bake timing measurement (release only)
+test texlib::res::tests::chain_bytes_matches_wgpu_layer_layout ... ok
+test texlib::materials_stage::tests::bake_goldens ... ok
+test texlib::res::tests::mip_count_for_pins ... ok
+test texlib::res::tests::inert_bake_never_touches_images ... ok
+test texlib::res::tests::pack_layers_offsets_and_neutral_fill ... ok
+test texlib::res::tests::used_layer_indices_dedups_and_resolves ... ok
+test texlib::schema::tests::extracted_constants_pin_js_sources ... ok
+test texlib::schema::tests::on_wall_on_top_resolution ... ok
+test texlib::schema::tests::slot_map_pins_level_material_literal ... ok
+test texlib::schema::tests::slot_uniform_tables_match_construction ... ok
+test texlib::schema::tests::stage_layers_appended_in_registry_order ... ok
+test texlib::schema::tests::base_layer_meta_pins_texlib_js ... ok
+test texlib::schema::tests::texlib_json_parses_with_expected_shape ... ok
+test ui::boss_hud::tests::callout_timeout_3s2 ... ok
+test ui::boss_hud::tests::chip_hold_then_lagging_drain ... ok
+test ui::boss_hud::tests::defeat_sunk_and_gone ... ok
+test ui::boss_hud::tests::event_stream_smoke_no_panic ... ok
+test ui::boss_hud::tests::hp_fallback_from_live_read ... ok
+test ui::boss_hud::tests::intro_fill_gates_and_curve ... ok
+test ui::boss_hud::tests::move_callout_lifecycle ... ok
+test ui::boss_hud::tests::notch_crossings_latch ... ok
+test ui::boss_hud::tests::phase_banner_shield_pips ... ok
+test ui::boss_hud::tests::setmode_seeds_from_live_hp ... ok
+test ui::boss_hud::tests::stun_open_window ... ok
+test ui::boss_hud::tests::times_up_ending_and_guards ... ok
+test ui::boss_hud::tests::writebar_pct_and_low ... ok
+test ui::dom_bridge::tests::task72_behind_plate_produces_no_node ... ok
+test ui::dom_bridge::tests::task72_damage_number_updates_text_in_place ... ok
+test ui::dom_bridge::tests::task72_low_tier_idle_is_empty_ops ... ok
+test ui::dom_bridge::tests::task72_plate_create_then_update_then_remove ... ok
+test ui::dom_bridge::tests::task72_reconcile_keys_is_deterministic ... ok
+test ui::fps::tests::task73_fps_ema_is_stable_and_rejects_bad_delta ... ok
+test ui::fps::tests::task73_fps_text_setting_gates_visibility ... ok
+test ui::minimap::tests::boss_dot_normalises ... ok
+test ui::minimap::tests::clamp_u8_matches_uint8_clamped ... ok
+test ui::minimap::tests::clock_edges ... ok
+test ui::minimap::tests::clock_first_refresh_then_bands ... ok
+test ui::minimap::tests::compose_flash_decay_window ... ok
+test ui::minimap::tests::draw_base_full_deck_uniform_block_matches_js_formula ... ok
+test ui::minimap::tests::draw_base_grate_hatch_alternates ... ok
+test ui::minimap::tests::draw_base_sea_and_sunset_palette ... ok
+test ui::minimap::tests::draw_ink_all_zero_and_all_one ... ok
+test ui::minimap::tests::draw_ink_band_rows_only_touch_band ... ok
+test ui::minimap::tests::draw_ink_bilinear_edge_values ... ok
+test ui::minimap::tests::draw_ink_emboss_dark_rim ... ok
+test ui::minimap::tests::draw_ink_emboss_lit_rim ... ok
+test ui::minimap::tests::draw_ink_fast_path_team2_and_dead_cell ... ok
+test ui::minimap::tests::draw_zones_active_fill_and_outline ... ok
+test ui::minimap::tests::draw_zones_inactive_ghost_is_dashed_and_unfilled ... ok
+test ui::minimap::tests::hex_rgb_parses_like_world_hex_color ... ok
+test ui::minimap::tests::lin2s_known_values ... ok
+test ui::minimap::tests::map_layout_corner_and_expanded ... ok
+test ui::minimap::tests::player_dots_filter_and_transform ... ok
+test ui::minimap::tests::player_dots_flip_mirrors_and_adds_pi ... ok
+test ui::minimap::tests::player_dots_special_override_keeps_swimmer_visible ... ok
+test ui::minimap::tests::projector_flip_mirrors_both_axes ... ok
+test ui::minimap::tests::projector_matches_js_canvas_math ... ok
+test ui::minimap::tests::draw_base_and_ink_are_bytewise_deterministic ... ok
+test ui::minimap::tests::smooth_matches_js ... ok
+test ui::minimap::tests::spring_settles_to_target ... ok
+test ui::minimap::tests::zone_paths_project_corners ... ok
+test ui::online::tests::tr24_code_char_feedback ... ok
+test ui::online::tests::tr24_error_copy_matches_errmap ... ok
+test ui::online::tests::tr24_first_empty_and_auto_join_armed ... ok
+test ui::online::tests::tr24_leave_confirm_two_step ... ok
+test ui::online::tests::tr24_list_names_and_waiting_banner ... ok
+test ui::online::tests::tr24_project_hub_gating ... ok
+test ui::online::tests::tr24_project_start_enable_needs_all_ready ... ok
+test ui::online::tests::tr24_run_cmd_maps_to_session ... ok
+test ui::online::tests::tr24_settle_error_routing ... ok
+test ui::online::tests::tr24_start_block_banner ... ok
+test ui::online::tests::tr39_loadout_cmds_converge_and_sanitize ... ok
+test ui::online::tests::tr39_project_lobby_mode_and_loadout ... ok
+test ui::online::tests::tr39_set_mode_host_only_and_broadcast ... ok
+test ui::online::tests::tr39_start_roster_carries_loadout ... ok
+test ui::preview_anim::tests::task72_emote_state_changes_bone_pose_vs_idle ... ok
+test ui::preview_anim::tests::task72_preview_pose_has_full_bone_tree ... ok
+test ui::preview_anim::tests::task72_preview_pose_is_deterministic_frame_by_frame ... ok
+test ui::preview_anim::tests::task72_slot_seed_is_stable_and_distinct ... ok
+test ui::showcase_scene::tests::placeholder_geometry_uses_only_extracted_dimensions ... ok
+test ui::showcase_scene::tests::task62_previews_and_nameplates_follow_roster ... ok
+test ui::showcase_scene::tests::task72_set_fade_update_dissolves_in_before_covered ... ok
+test ui::showcase_scene::tests::wired_systems_build_gate_and_drive_the_second_camera ... ok
+test ui::showcase_state::tests::emote_table_maps_dances ... ok
+test ui::showcase_state::tests::extracted_camera_poses_and_alley_dims ... ok
+test ui::showcase_state::tests::extracted_lobbyset_anchors ... ok
+test ui::showcase_state::tests::frame_sync_keeps_emotes_and_emits_weapon_cues ... ok
+test ui::showcase_state::tests::loadout_change_cues_follow_the_js_branches ... ok
+test ui::showcase_state::tests::low_tier_keeps_the_minimal_lobby_ui ... ok
+test ui::showcase_state::tests::mode_transitions_and_full_frame ... ok
+test ui::showcase_state::tests::online_view_maps_code_ready_weapon_and_roster ... ok
+test ui::showcase_state::tests::scene_switch_sequence_is_idempotent ... ok
+test ui::showcase_state::tests::task62_emote_event_maps_peer_id_to_slot_and_replays ... ok
+test ui::showcase_state::tests::task62_emote_t0_and_trigger_are_extracted ... ok
+test ui::showcase_state::tests::task62_nameplates_follow_roster_and_flags ... ok
+test ui::showcase_state::tests::task62_nametag_projection_matches_js_rules ... ok
+test ui::showcase_state::tests::task67_low_tier_keeps_reflection_and_steam_off ... ok
+test ui::showcase_state::tests::task67_material_params_match_upstream_literals ... ok
+test ui::showcase_state::tests::task72_lobby_measure_defaults_match_js ... ok
+test ui::showcase_state::tests::task72_set_fade_ramp_and_covered ... ok
+test ui::minimap::tests::raster_tables_build_is_deterministic_on_tidewater ... ok
+test net::native_transport::tests::native_broadcast_and_send_to_between_two_clients ... ok
+test ui::tests::apply_action_transitions_and_freeze ... ok
+test ui::tests::fmt_clock_matches_upstream_ceil ... ok
+test ui::tests::boss_hud_headless_drain_updates_labels ... ok
+test ui::tests::results_text_boss_branch_shows_outcome_hp_and_time ... ok
+test ui::tests::results_text_shows_the_zones_final_count ... ok
+test ui::tests::results_text_uses_winner_and_percents ... ok
+test props::tests::every_stage_archive_decodes_to_its_manifest ... ok
+test ui::tests::splat_text_covers_all_credit_cases ... ok
+test ui::tests::feed_drains_expires_and_mirrors_labels ... ok
+test ui::tests::pause_edge_flips_hud_and_pause ... ok
+test ui::tests::stats_rows_boss_mode_shows_dmg_and_weak_columns ... ok
+test ui::tests::task73_fps_hud_update_writes_label ... ok
+test ui::tests::timer_color_states ... ok
+test ui::tests::task59_settings_state_machine_and_document_roundtrip ... ok
+test ui::tests::tr39_cycle_helpers ... ok
+test world::tests::batch_params_rederive_from_keys ... ok
+test world::tests::boom_next_shrinks_on_wall_and_clamps ... ok
+test world::tests::embedded_tidewater_batches_to_expected_keys ... ok
+test world::tests::emit_box_makes_24_verts_36_indices ... ok
+test world::tests::emit_box_uvs_are_face_metres_zero_to_size ... ok
+test world::tests::emit_sphere_is_wound_outward_for_front_cull ... ok
+test world::tests::face_frame_matches_js_table ... ok
+test world::tests::frame_of_box_is_axis_aligned ... ok
+test world::tests::frame_of_obox_rotates_axes_by_rot_y ... ok
+test world::tests::frame_of_ramp_is_right_handed_and_spans_low_to_high ... ok
+test world::tests::grounded_probe_fires_for_walls_at_the_floor ... ok
+test world::tests::hex_color_parses ... ok
+test world::tests::pattern_slot_clamps_to_texlib_table ... ok
+test world::tests::single_box_makes_six_orientation_batches ... ok
+test world::tests::task73_camera_shake_setting ... ok
+test world::tests::task73_low_tier_presentation_all_off ... ok
+test world::tests::vfov_matches_camera_rig_formula ... ok
+test ui::tests::task59_settings_click_system_applies_and_saves ... ok
+test ui::tests::screens_switch_display_and_timer_follows_clock ... ok
+test ui::tests::tr24_net_mode_results_buttons ... ok
+test audio::tests::synthesis_is_bounded_finite_and_deterministic ... ok
+test audio::sfx_table::tests::smoke_bake_every_name has been running for over 60 seconds
+test audio::sfx_table::tests::smoke_bake_every_name ... ok
+
+failures:
+
+---- audio::tests::dry_fire_clicks_once_per_cooldown stdout ----
+
+thread 'audio::tests::dry_fire_clicks_once_per_cooldown' (557363) panicked at crates/inkwave/src/audio.rs:1472:14:
+called `Option::unwrap()` on a `None` value
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- audio::tests::shot_and_splat_events_spawn_players stdout ----
+
+thread 'audio::tests::shot_and_splat_events_spawn_players' (557372) panicked at crates/inkwave/src/audio.rs:1428:14:
+called `Option::unwrap()` on a `None` value
+
+---- audio::tests::task63_spatial_cue_plays_stereo_wet_voice stdout ----
+
+thread 'audio::tests::task63_spatial_cue_plays_stereo_wet_voice' (557393) panicked at crates/inkwave/src/audio.rs:2045:9:
+shot cue must spawn
+
+
+failures:
+    audio::tests::dry_fire_clicks_once_per_cooldown
+    audio::tests::shot_and_splat_events_spawn_players
+    audio::tests::task63_spatial_cue_plays_stereo_wet_voice
+
+test result: FAILED. 473 passed; 3 failed; 3 ignored; 0 measured; 0 filtered out; finished in 70.69s
+
+error: test failed, to rerun pass `-p inkwave --bin inkwave`
+=== wasm ===
+WASM_EXIT=0
+    Checking inkwave v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.66s
+=== tree ===
+TREE_EXIT=0
+inkwave_sim v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave_sim)
+├── glam v0.30.10
+│   └── serde_core v1.0.229
+├── serde v1.0.229
+│   ├── serde_core v1.0.229
+│   └── serde_derive v1.0.229 (proc-macro)
+│       ├── proc-macro2 v1.0.107
+│       │   └── unicode-ident v1.0.26
+│       ├── quote v1.0.47
+│       │   └── proc-macro2 v1.0.107 (*)
+│       └── syn v3.0.6
+│           ├── proc-macro2 v1.0.107 (*)
+│           ├── quote v1.0.47 (*)
+│           └── unicode-ident v1.0.26
+└── serde_json v1.0.151
+    ├── itoa v1.0.18
+    ├── memchr v2.8.3
+    ├── serde_core v1.0.229
+    └── zmij v1.0.23
+=== determinism: postprocess + screenfx extraction re-run ===
+DETERM=BYTE_IDENTICAL
+84e973d0bc75f530a02f887915abedb71c8cb86ef1cdf98da25b8036ade19f6e  assets/postprocess.json
+06fe11d91682c0255cbce31ffa441580fbd617854713e547d778eb7d6b46f1c8  assets/screenfx.json
+extract-postprocess: 0d7ab048 -> /root/work/project/inkwave/rust/assets/postprocess.json
+extract-screenfx: a48f1546 -> /root/work/project/inkwave/rust/assets/screenfx.json
+DETERM_EXIT=0
+=== xchk: task73 + postprocess + screenfx + environment + lobbyset + boss + locker + props ===
+XCHK_TASK73_EXIT=0
+XCHK_POSTPROCESS_EXIT=0
+XCHK_SCREENFX_EXIT=0
+XCHK_ENV_EXIT=0
+XCHK_LOBBYSET_EXIT=0
+XCHK_BOSS_EXIT=0
+XCHK_LOCKER_EXIT=0
+XCHK_PROPS_EXIT=0
+   Compiling inkwave v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 21.74s
+     Running unittests src/main.rs (target/debug/deps/inkwave-9595b7f24f752b78)
+
+running 6 tests
+test audio::tests::task73_audible_distance_boundary ... ok
+test ui::fps::tests::task73_fps_text_setting_gates_visibility ... ok
+test ui::fps::tests::task73_fps_ema_is_stable_and_rejects_bad_delta ... ok
+test world::tests::task73_camera_shake_setting ... ok
+test world::tests::task73_low_tier_presentation_all_off ... ok
+test ui::tests::task73_fps_hud_update_writes_label ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 473 filtered out; finished in 0.04s
+
+postprocess crosscheck: OK (54 assertions, commit 0d7ab048)
+screenfx crosscheck: OK (67 assertions, commit a48f1546)
+environment-crosscheck: 139 checks OK (4 quality rows, 3 themes, 8 map themes, grade/bloom defaults, Task 66 bake constants)
+lobbyset-crosscheck: 242 checks OK (ALLEY/CAM/3 quality rows/8 bearing spots/hub + showcase constants/SLOTS/PED/DRUM/SWIM/mode sets/emotes + Task67 materials)
+boss-crosscheck: 721 checks OK (100-bone tree+SHA256, 4-tier tri budgets, 10 HIT, 6-move DUR/PH, 5 material slots, upstream pin)
+locker-crosscheck: 299 checks OK (9 skin/10 outfit/8 iris/8 hair/4 hat/4 brows/10 presets, resolve/random/swatch, 4 tabs/6 causes, network sync, upstream pin)
+props-crosscheck tidewater: placements=280 instances=1257 tris(manifest Σ placements)=659358 ok
+props-crosscheck kelpline: placements=223 instances=714 tris(manifest Σ placements)=430450 ok
+props-crosscheck halyard: placements=229 instances=1064 tris(manifest Σ placements)=592408 ok
+props-crosscheck saltpan: placements=351 instances=1223 tris(manifest Σ placements)=439352 ok
+props-crosscheck crossmarket: placements=264 instances=1284 tris(manifest Σ placements)=889046 ok
+props-crosscheck lockgate: placements=217 instances=705 tris(manifest Σ placements)=328648 ok
+props-crosscheck terraces: placements=282 instances=869 tris(manifest Σ placements)=575620 ok
+props-crosscheck cargo: placements=223 instances=714 tris(manifest Σ placements)=430946 ok
+props-crosscheck: OK
+XCHK_EXIT=0
+=== trunk build (one attempt, SIGKILL false-green guard, D-T40-1) ===
+2026-11-20T18:29:51.026134Z  INFO 🚀 Starting trunk 0.21.14
+2026-11-20T18:29:51.030666Z  INFO 📦 starting build
+2026-11-20T18:29:51.030754Z  INFO ⏫ Found an update of trunk: 0.21.14 -> 0.22.2
+   Compiling inkwave v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave)
+    Finished `release` profile [optimized] target(s) in 57.16s
+2026-11-20T18:31:40.510234Z ERROR ❌ error
+error from build pipeline
+
+Caused by:
+    0: HTML build pipeline failed (1 errors), showing first
+    1: error from asset pipeline
+    2: running wasm-bindgen
+    3: wasm-bindgen call to executable '/root/.cargo/bin/wasm-bindgen' with args: '["--target=web", "--out-dir=/root/work/project/inkwave/rust/target/wasm-bindgen/release", "--out-name=inkwave", "/root/work/project/inkwave/rust/target/wasm32-unknown-unknown/release/inkwave.wasm", "--no-typescript"]' returned a bad status: signal: 9 (SIGKILL)
+2026-11-20T18:31:40.512576Z ERROR error from build pipeline
+2026-11-20T18:31:40.512588Z  INFO   1: HTML build pipeline failed (1 errors), showing first
+2026-11-20T18:31:40.512591Z  INFO   2: error from asset pipeline
+2026-11-20T18:31:40.512593Z  INFO   3: running wasm-bindgen
+2026-11-20T18:31:40.512595Z  INFO   4: wasm-bindgen call to executable '/root/.cargo/bin/wasm-bindgen' with args: '["--target=web", "--out-dir=/root/work/project/inkwave/rust/target/wasm-bindgen/release", "--out-name=inkwave", "/root/work/project/inkwave/rust/target/wasm32-unknown-unknown/release/inkwave.wasm", "--no-typescript"]' returned a bad status: signal: 9 (SIGKILL)
+TRUNK_EXIT=1
+=== headless ===
+HEADLESS_COMBO day/low EXIT=0
+HEADLESS_COMBO sunset/low EXIT=0
+HEADLESS_COMBO golden/high EXIT=0
+HEADLESS_COMBO day/ultra EXIT=0
+RELEASE_BUILD_EXIT=0
+HEADLESS_EXIT=0
+HEADLESS_BOSS_EXIT=0
+   Compiling inkwave v0.1.0-m1 (/root/work/project/inkwave/rust/crates/inkwave)
+    Finished `release` profile [optimized] target(s) in 55.74s
+[inkwave] boot: sim crate 0.1.0-m1 (headless = true)
+[inkwave] headless frames complete
+[inkwave] boot: sim crate 0.1.0-m1 (headless = true)
+[inkwave] headless frames complete
+[inkwave] boot: sim crate 0.1.0-m1 (headless = true)
+[inkwave] headless frames complete
+[inkwave] boot: sim crate 0.1.0-m1 (headless = true)
+[inkwave] headless frames complete
+[inkwave] boot: sim crate 0.1.0-m1 (headless = true)
+[inkwave] headless boss: frames=600 bt=10.0 hp=93600/93600 phase=1 events=3
+=== upstream tree guards ===
+JS_TREE_CLEAN
+SIM_TREE_CLEAN
+=== verdict ===
+STAGE_FAIL TEST=101
+TRUNK=DEGRADED: 1 attempt, rc=1, signal:9 hits=2
+(wasm-bindgen OOM SIGKILL in the sandbox — environmental, D-T40-1 precedent)
+GATE_VERDICT=FAIL
+GATES_DONE

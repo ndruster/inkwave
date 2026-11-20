@@ -451,6 +451,30 @@ pub(crate) fn phase_cue(
     }
 }
 
+/// M6 Task 73 / D-T60-5: the task-prescribed maximum audible distance (18 m).
+/// Upstream `audio.js` (read at implementation time) uses 3-D distance +
+/// panner `maxDistance=max(60,ref*20)` with a smoothing low-pass — no 18 m hard
+/// cut constant was found — so 18 m is the D-T60-5 policy, not a claim of JS
+/// constant parity (listening parity is a user-machine item, D-M6-12). A
+/// spatial cue whose source is farther than this from the camera is dropped
+/// before the voice gate. 2-D cues (`source=None`, e.g. clock) are never
+/// culled. Squared distance avoids `sqrt`; non-finite positions are rejected.
+pub const MAX_AUDIBLE_DIST: f32 = 18.0;
+
+/// Pure audibility test for a spatial cue (TR-73.1). `None` source = 2-D bus
+/// cue → always audible. Returns false for non-finite positions/camera.
+#[must_use]
+pub fn audible_at(source: Option<[f32; 3]>, camera: [f32; 3], max_dist: f32) -> bool {
+    let Some(p) = source else {
+        return true; // 2-D cue: upstream plays on the master bus regardless
+    };
+    if !p.iter().all(|v| v.is_finite()) || !camera.iter().all(|v| v.is_finite()) {
+        return false;
+    }
+    let d2 = (p[0] - camera[0]).powi(2) + (p[1] - camera[1]).powi(2) + (p[2] - camera[2]).powi(2);
+    d2 <= max_dist * max_dist
+}
+
 /// `M` toggles the master mute (TR-14.1 "设置可静音"); every other frame
 /// collects the cues due and spawns one-shot `AudioPlayer` entities.
 ///
@@ -542,8 +566,17 @@ pub fn audio_sfx(
         return;
     }
     let camera = cameras.iter().next();
+    // M6 Task 73 / D-T60-5: cull spatial cues beyond 18 m from the camera
+    // listener (≡ upstream). The camera position is the listen point; 2-D
+    // cues (clock/judgement, source=None) pass through `audible_at` untouched.
+    // No MainCamera (headless/test contexts) ⇒ no listener ⇒ skip culling,
+    // preserving the pre-Task73 behaviour there (D-M6-12).
+    let cam_pos = camera.map(|t| t.translation.to_array());
     let shot_kind = demo.m.kinds.first().copied().unwrap_or(WeaponKind::Shooter);
     for (c, source) in cues {
+        if cam_pos.is_some_and(|p| !audible_at(source, p, MAX_AUDIBLE_DIST)) {
+            continue;
+        }
         for (name, vol) in sfx_cue(c, shot_kind) {
             // Lazy bake: the graph render runs once per name, cached after.
             let Some((handle, dur)) = sfx.cue(&mut pcm, name) else {
@@ -1064,6 +1097,84 @@ mod tests {
     use bevy::audio::AudioPlugin;
     use inkwave_sim::actor::SplatCause;
     use inkwave_sim::collision::CollisionWorld;
+
+    /// TR-73.1 / review P1-1: drive the REAL `audio_sfx` system with a camera
+    /// placed >18 m from the local actor and assert the shot cue is CULLED
+    /// (no voice spawned); then move the camera near and assert it spawns.
+    /// This proves the 18 m cull is wired into the production loop, not just
+    /// present as an unused pure function.
+    #[test]
+    fn task73_audio_sfx_culls_far_cue_with_camera() {
+        let mut app = audio_test_app();
+        let (px, py, pz) = {
+            let d = app.world().resource::<DemoSim>();
+            let a = &d.m.actors[0];
+            (a.pos.x, a.pos.y, a.pos.z)
+        };
+        // Far listener (>18 m) — but NOT near enough to break spatial rendering.
+        let cam = app
+            .world_mut()
+            .spawn((MainCamera, Transform::from_xyz(px + 40.0, py, pz)))
+            .id();
+        app.world_mut().resource_mut::<SoundState>().prev_last_fire = 100.0;
+        app.update();
+        assert!(
+            spawned_handles(&mut app).is_empty(),
+            "shot >18 m from listener must be culled"
+        );
+        // Move the camera to the actor → the same cue now spawns. Re-arm the
+        // edge tracker (the first update consumed the last_fire drop).
+        *app.world_mut().get_mut::<Transform>(cam).unwrap() =
+            Transform::from_xyz(px, py + 2.0, pz + 6.0);
+        app.world_mut().resource_mut::<SoundState>().prev_last_fire = 100.0;
+        app.update();
+        assert!(
+            !spawned_handles(&mut app).is_empty(),
+            "shot within 18 m must spawn"
+        );
+    }
+
+    /// TR-73.1 / review P1-2: the headless fixture has NO MainCamera, so the
+    /// production `cam_pos.is_some_and(...)` guard intentionally skips culling
+    /// ("no listener ⇒ no distance cull", D-M6-12). Anchor this explicitly so
+    /// the shared fixture's behaviour is a documented design, not a backdoor.
+    /// (The real cull path is anchored by `task73_audio_sfx_culls_far_cue_with_camera`.)
+    #[test]
+    fn task73_no_camera_retains_all_cues() {
+        let mut app = audio_test_app();
+        // audio_test_app() spawns no MainCamera (read its body above), so the
+        // production `cam_pos.is_some_and(...)` guard skips culling here.
+        app.world_mut().resource_mut::<SoundState>().prev_last_fire = 100.0;
+        app.update();
+        assert!(
+            !spawned_handles(&mut app).is_empty(),
+            "no MainCamera ⇒ no listener ⇒ cues retained (D-M6-12)"
+        );
+    }
+
+    /// TR-73.1: 18 m audible cull — squared-distance boundary, 2-D cue
+    /// passthrough and non-finite rejection (D-T60-5).
+    #[test]
+    fn task73_audible_distance_boundary() {
+        let cam = [0.0, 0.0, 0.0];
+        assert!(audible_at(Some([17.9, 0.0, 0.0]), cam, MAX_AUDIBLE_DIST));
+        assert!(audible_at(Some([0.0, 18.0, 0.0]), cam, MAX_AUDIBLE_DIST));
+        assert!(!audible_at(Some([18.1, 0.0, 0.0]), cam, MAX_AUDIBLE_DIST));
+        assert!(!audible_at(Some([0.0, 0.0, 30.0]), cam, MAX_AUDIBLE_DIST));
+        // 2-D bus cue: always audible regardless of "distance".
+        assert!(audible_at(None, cam, MAX_AUDIBLE_DIST));
+        // Non-finite source or camera rejected.
+        assert!(!audible_at(
+            Some([f32::NAN, 0.0, 0.0]),
+            cam,
+            MAX_AUDIBLE_DIST
+        ));
+        assert!(!audible_at(
+            Some([1.0, 0.0, 0.0]),
+            [f32::INFINITY, 0.0, 0.0],
+            MAX_AUDIBLE_DIST
+        ));
+    }
 
     /// TR-60.1: the production footstep consumer drains the bridge queue
     /// (the M4 tests were the only drainer), bakes a REAL base-table cue,
@@ -1983,9 +2094,17 @@ mod tests {
     #[test]
     fn task63_spatial_cue_plays_stereo_wet_voice() {
         let mut app = audio_test_app();
+        // M6 Task 73: place the listener near the local actor so the shot cue
+        // passes the new 18 m audible cull (this test is about spatial bus
+        // rendering, not distance culling — that is anchored separately).
+        let (px, py, pz) = {
+            let demo = app.world().resource::<DemoSim>();
+            let a = &demo.m.actors[0];
+            (a.pos.x, a.pos.y, a.pos.z)
+        };
         app.world_mut().spawn((
             MainCamera,
-            Transform::from_xyz(0.0, 2.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
+            Transform::from_xyz(px, py + 2.0, pz + 6.0).looking_at(Vec3::new(px, py, pz), Vec3::Y),
         ));
         app.world_mut().resource_mut::<SoundState>().prev_last_fire = 100.0;
         app.update();

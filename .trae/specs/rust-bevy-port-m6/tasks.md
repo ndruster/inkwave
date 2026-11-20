@@ -94,7 +94,7 @@
     安全区实测/CharAnim mesh/cross-dissolve GPU 混合/SMAA-GTAO 接线均用户机复核，未伪验收。
 
 ## Task 73: 剩余消费者收敛（零 sim 改动）
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: medium
 - **Depends On**: M5 Task 59/60/64
 - **Description**: 远端 18m 音频剔除接线（D-T60-5）；`showFps`/`cameraShake` 等已有消费者
@@ -106,6 +106,27 @@
     `low` 档音频关闭路径回归。
   - `rule` TR-73.2: REVIEW_CHECKLIST 登记听感复核项。
 - **Notes**: 严格不改 `inkwave_sim` 事件面，不与 M5 Non-Goals 冲突。
+- **Completion Evidence（2026-11-21）**：
+  - **18m 剔除（D-T60-5）**：新增 `audio.rs::audible_at`（平方距离，2-D cue 直通、非有限拒绝）
+    与 `MAX_AUDIBLE_DIST=18.0`，`audio_sfx` 循环按相机听点剔除超距 spatial cue（无 MainCamera
+    时无听点不剔除，D-M6-12）。18m 是任务规定策略（实读 audio.js 无 18m 硬截断常量，不伪称
+    上游等价）。
+  - **设置接线**：`camera_rig` 用 `shake_applied(camera_shake:f64, amount:f64)` 缩放 boss 抖动
+    （0 禁用/1 全量，来自 environment.json）；`show_fps` 经新 `ui/fps.rs`（`FpsDisplay` EMA +
+    `fps_text`）写 HUD `LabelRole("fps")` 节点（`fps_hud_update.after(ui_update)` 防覆盖）。
+  - **独立评审闭环**：首轮 **0×P0 + 3×P1 + 5×P2**；P1-1（缺生产路径剔除锚测）已加系统级
+    `task73_audio_sfx_culls_far_cue_with_camera`（超距剔除/近距 spawn）；P1-2（测试走"无相机
+    跳过"通道）已加 `task73_no_camera_retains_all_cues` 显式声明有意设计；P1-3（低档 shake
+    空转断言）已改为"post 全关 + 设置跟随用户"诚实不变量。P2（系统顺序 `.after`、spec 签名
+    回写、18m 出处澄清、死字段移除、crosscheck 措辞）全修。复验无新 P0/P1。
+  - **确定性/门禁**：`gate-task73.sh` → `tools/verify/logs/task73-gates-<ts>.log`：8 项 task73
+    锚测 + 7 组 crosscheck；FMT/CLIPLY/TEST/WASM/TREE/DETERM/XCHK/RELEASE_BUILD/HEADLESS
+    (四组合)/HEADLESS_BOSS 全绿，`GATE_VERDICT=PASS`；TRUNK 环境 DEGRADED（D-T40-1 wasm-bindgen
+    OOM SIGKILL，非阻断）；`JS_TREE_CLEAN`/`SIM_TREE_CLEAN`（零 sim 改动）。workspace 单测
+    470 → **478**（+8 task73）。
+  - **已知偏差**：D-M6-11（showFps 观感）/D-M6-12（18m 剔除听感）登记 `REVIEW_CHECKLIST.md`；
+    D-T60-2（footstep surface）/D-T60-3（muzzle 回写）/D-T64-4（superjump/bomb FX）在 spec §4
+    与 REVIEW_CHECKLIST 重申不接，未因本任务改动。
 
 ## Task 74: M6 收尾——台账/文档/门禁矩阵/总评审
 - **Status**: `pending`

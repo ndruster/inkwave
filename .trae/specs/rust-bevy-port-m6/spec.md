@@ -206,6 +206,64 @@ M6 收尾矩阵全绿；上游树/sim 依赖面守卫通过；独立只读总评
 
 ---
 
+## Task73 实施设计（2026-11-21，开工时实读定稿）
+
+### §0 范围（零 sim 改动，纯消费者收敛）
+- **18m 远端音频剔除（D-T60-5）**：实读 `audio.rs` L515-591 的 `audio_sfx` —— cues 已携带
+  `Option<[f32;3]>` 世界源（Task63），但**未做距离剔除**，所有 splat/shot 无论远近都进 gate+
+  spawn。剔除策略 18m 由 D-T60-5 任务规定（上游 `audio.js` 实读只有 3-D 距离 + panner
+  `maxDistance=max(60,ref*20)` 平滑低通，**未找到 18m 硬截断常量**；听感等价性留 D-M6-12
+  用户机复核，不声称来自上游常量）。接线点：`for (c,source) in cues` 前对每个 `Some(p)` 计算
+  与 camera.translation 的距离，`p > 18m` 跳过（2-D `None` 直通）；无 MainCamera（headless
+  夹具）⇒ 无听点 ⇒ 不剔除（D-M6-12）。纯函数 `audible_at(Option<[f32;3]>,camera,max_dist)->bool`
+  + 系统级剔除锚测（有 camera 超距剔除 / 近距 spawn / 无 camera 保留）。
+- **showFps**：实读 `settings.rs` —— `Settings.show_fps: bool`（提取自 environment.json
+  `defaultSettings.showFps`）无消费者。接线：`ui/fps.rs` 的 `FpsDisplay` EMA + HUD
+  `LabelRole("fps")` 节点 + `fps_hud_update`（`.after(ui_update)` 防覆盖），headless 以系统级
+  写标签锚测，真实字形观感用户机复核（D-M6-11）。
+- **cameraShake**：实读 `world.rs camera_rig` —— shake **无条件**应用；`Settings.camera_shake:
+  f64`（0..1，提取自 environment.json）未被读取。接线：`shake_applied(camera_shake: f64,
+  amount: f64) -> f64`（乘性缩放，0 禁用、1 全量），`camera_rig` 用其结果抖动；headless 锚测。
+- **明确不接**（保持 M5 偏差，不推翻 Non-Goals）：muzzle 回写（D-T60-3，需新 MatchEvent）、
+  footstep surface（D-T60-2，数据模型无 surface 字段）、superjump/bomb explode FX（D-T64-4，
+  需新事件）。本任务只接不依赖新 MatchEvent 的消费者。
+- **严格零 sim 改动**：`inkwave_sim` 事件面/任何文件不动；门禁 `SIM_TREE_CLEAN` 守。
+
+### §1 18m 音频剔除
+- 新增纯函数 `audible_at(source: [f32;3], camera: [f32;3], max_dist: f32) -> bool`（距离平方
+  比较避免 sqrt），`MAX_AUDIBLE_DIST = 18.0`（上游常量，零手抄——从 audio.js 提取，若
+  audio.js 是硬编码则注明来源 commit）。
+- `audio_sfx` 在遍历 cues 时对 `Some(pos)` 过滤：`if !audible_at(pos, cam_pos, 18.0) { continue }`；
+  `None`（2-D clock cue）保留。headless 锚测：`audible_at` 边界（17.9 true / 18.1 false）、
+  `None` cue 不被过滤、muted 仍然静音。
+
+### §2 showFps / cameraShake 设置接线
+- Fps HUD：在 HUD 资源/系统里加 `FpsDisplay` 状态（bool+value），由 `Settings.show_fps` 门控；
+  native 无文本渲染锚点，以「开关切换是否产生 fps 状态更新」数据面锚测；真实 FPS 文本渲染
+  用户机复核（D-M6-11）。
+- cameraShake：`camera_rig` 加 `settings_game: Res<Settings>`（或现有 Settings 资源），
+  抖动条件 `settings_game.camera_shake && shake.amount > 0.0`。锚测：纯条件函数
+  `shake_applied(camera_shake: bool, amount: f32) -> bool`。
+
+### §3 SFX 行为收敛（不依赖新事件）
+- 实读 audio.rs 的 `sfx_cue`/`phase_cue`/`splat_cue` —— 这些纯函数已覆盖所有现有 MatchEvent
+  的 SFX 映射；本任务只做「18m 剔除 + 设置字段接线」，不新增 cue 映射（保持 D-T60-2/3/64-4）。
+
+### §4 偏差登记（REVIEW_CHECKLIST Task 73 段）
+- D-M6-11：showFps 为数据面开关锚测，真实 FPS 文本观感用户机复核。
+- D-M6-12：18m 剔除以相机 translation 为听点（≡ JS）；上游可能用 listener orientation/occlusion，
+  观感用户机复核。
+- 重申不接项：D-T60-2（footstep surface）、D-T60-3（muzzle 回写）、D-T64-4（superjump/bomb FX）
+  保持 M5 状态，不因本任务改动。
+
+### §5 门禁与锚测
+- `gate-task73.sh`（模板 gate-task69.sh）：DETERM 双跑 postprocess+screenfx；XCHK task73
+  专项（≥6 锚测：audible 边界/2D cue/mute/shake 条件/fps 开关/低档仍全关）+ 8 组 crosscheck。
+- headless 四组合 + boss 600 帧不 panic；wasm32 check；九段全绿；SIM_TREE_CLEAN；上游 JS 零改动。
+
+
+---
+
 ## Task72 实施设计（2026-11-21，开工时实读定稿）
 
 ### §0 范围（实读结论：AC-M6-2 的「接线 + 逐项登记」双口径）

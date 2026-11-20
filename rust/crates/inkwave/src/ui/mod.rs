@@ -40,6 +40,8 @@ pub mod online;
 // M6 Task 72: platform-neutral DOM overlay bridge + real CharAnim preview.
 pub mod dom_bridge;
 pub mod preview_anim;
+// M6 Task 73: showFps setting consumer (headless-anchorable data plane).
+pub mod fps;
 // Task 56 batch C: 3D showcase lobby state + placeholder Bevy set.
 pub mod showcase_scene;
 pub mod showcase_state;
@@ -719,6 +721,23 @@ pub fn build_ui(mut commands: Commands) {
             TextColor(Color::WHITE),
         ),
         ChildOf(timer_panel),
+    ));
+
+    // M6 Task 73: FPS label (showFps setting). Top-left, hidden when off.
+    commands.spawn((
+        (
+            LabelRole("fps"),
+            Text::new(""),
+            TextFont::from_font_size(14.0),
+            TextColor(Color::srgba(1.0, 1.0, 1.0, 0.8)),
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(6.0),
+                left: Val::Px(8.0),
+                ..default()
+            },
+        ),
+        ChildOf(hud),
     ));
 
     // Task 46 batch C2 — boss HUD placeholder档 (≡ hud-boss.js `_mount`):
@@ -2246,6 +2265,23 @@ fn roster_row(lob: &online::LobbyView, k: usize) -> (String, Option<Color>) {
 /// Every write is guarded by an equality check (upstream hud.js caches the
 /// last string and only touches the DOM on change) so unchanged frames don't
 /// mark `Text`/`Node` dirty and retrigger text measurement + layout.
+/// M6 Task 73: write the resolved FPS text into the `LabelRole("fps")` HUD
+/// node. `show_fps=false` writes "" (hidden); the pure logic lives in
+/// [`fps::FpsDisplay`] and is headless-anchored there (D-M6-11).
+pub fn fps_hud_update(
+    time: Res<Time>,
+    settings: Res<crate::settings::Settings>,
+    mut display: ResMut<fps::FpsDisplay>,
+    mut labels: Query<(&LabelRole, &mut Text)>,
+) {
+    let text = display.update(time.delta_secs_f64(), settings.show_fps);
+    for (role, mut label) in &mut labels {
+        if role.0 == "fps" && label.0.as_str() != text {
+            label.0 = text.clone();
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub fn ui_update(
     st: Res<UiState>,
@@ -2597,6 +2633,33 @@ pub fn settings_clicks(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// TR-73.1: drive the real `fps_hud_update` system — with showFps=off the
+    /// "fps" label stays empty, with on it becomes "N FPS". The headless
+    /// substitute for the real glyph rendering (D-M6-11).
+    #[test]
+    fn task73_fps_hud_update_writes_label() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.init_resource::<Time>();
+        app.init_resource::<fps::FpsDisplay>();
+        let mut settings = crate::settings::Settings::defaults();
+        settings.show_fps = false;
+        app.insert_resource(settings);
+        let label = app
+            .world_mut()
+            .spawn((LabelRole("fps"), Text::new("stale")))
+            .id();
+        app.add_systems(Update, fps_hud_update);
+        app.update();
+        assert_eq!(app.world().get::<Text>(label).unwrap().0, "", "off hides");
+        app.world_mut()
+            .resource_mut::<crate::settings::Settings>()
+            .show_fps = true;
+        app.update();
+        let text = app.world().get::<Text>(label).unwrap().0.clone();
+        assert!(text.ends_with(" FPS"), "on writes fps, got {text}");
+    }
 
     #[test]
     fn fmt_clock_matches_upstream_ceil() {

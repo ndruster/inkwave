@@ -84,6 +84,24 @@ GPU/浏览器机器复核项与明确偏差：
 - [ ] **名牌遮挡/过渡观感**：8 名牌的 behind/safe 判定、hub⇄room 淡入淡出曲线在四档 +
   三主题下的实际画面。
 
+## Task 73 复核登记（2026-11-21，剩余消费者收敛，零 sim 改动）
+
+无头可测已锚定：8 项 task73 专项测试（audible 18m 边界 / 2-D cue 直通 / 有 camera 系统级
+超距剔除 / 无 camera 全保留 / cameraShake 设置缩放 / showFps 文本门 / fps_hud_update 系统级
+写标签 / low 档 post 全关且设置跟随用户）+ 九段门禁 PASS，
+`inkwave_sim` 与上游 JS 均零改动。以下为用户机复核项与保持的偏差：
+
+- [ ] **D-M6-11 showFps 观感**：`showFps` 设置门控数据面已接（HUD `LabelRole("fps")` 写
+  "N FPS"/""），真实字形渲染/位置与 JS 对照待用户机复核；native headless 以系统级写入
+  断言替代真实像素。
+- [ ] **D-M6-12 18m 音频剔除**：`audible_at` 以相机 translation 为听点、18m 平方距离剔除
+  spatial cue（2-D clock cue 直通，无 camera 时不剔除）；18m 是 D-T60-5 规定策略——实读上游
+  `audio.js` 只有 3-D 距离 + panner `maxDistance=max(60,ref*20)` 平滑低通，**未发现 18m 硬截断
+  常量**，故不声称与上游常量等价；实际听感（含 listener orientation/occlusion）用户机复核。
+- [ ] **保持 M5 偏差（不因本任务改动）**：D-T60-2 footstep surface（数据模型无 surface 字段）、
+  D-T60-3 muzzle 回写（需新 MatchEvent）、D-T64-4 superjump/bomb explode FX（需新事件）
+  维持未接；本任务严格不改 `inkwave_sim` 事件面。
+
 ## M6 汇总复核清单（Task 74 定稿时填写）
 
 _待 Task 74 收尾时按实际实施结果填写。_

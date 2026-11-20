@@ -668,6 +668,8 @@ impl Plugin for WorldPlugin {
         .init_resource::<crate::ui::UiState>()
         .init_resource::<crate::ui::Feed>()
         .init_resource::<crate::ui::HitFlash>()
+        // M6 Task 73: showFps display state (headless-anchorable data plane).
+        .init_resource::<crate::ui::fps::FpsDisplay>()
         // Task 24: the net-match link resources (plan Step 4).
         .init_resource::<crate::net::match_link::NetMatchState>()
         .init_resource::<crate::net::match_link::NetEvents>()
@@ -776,6 +778,11 @@ impl Plugin for WorldPlugin {
                 // (screen hops) and before the environment refresh consumer;
                 // registered outside the chain to stay below Bevy's tuple cap.
                 crate::ui::settings_clicks.after(crate::ui::ui_state_machine),
+                // M6 Task 73: showFps label write (independent of the chain's
+                // LabelRole query; registered outside to stay below tuple cap).
+                // Explicit .after(ui_update) prevents a future "fps" branch in
+                // ui_update from silently overwriting our label (review P2-1).
+                crate::ui::fps_hud_update.after(crate::ui::ui_update),
                 (
                     // Task 54 batch C2: the pose bridge — CharAnim state →
                     // rig tree writes; runs right after the root sync group
@@ -1155,6 +1162,17 @@ fn environment_controls(
 /// Third-person follow of the local player (`demo.player_slot` — slot 0
 /// offline, the net roster's local index in a net match, JS
 /// `rig.follow(m.local)`): the pivot tracks the actor's visual position,
+/// M6 Task 73: effective camera-shake amount = user setting (0..1) × event
+/// amount. `cameraShake=0` disables all quake; 1 is the full upstream amount.
+#[must_use]
+pub(crate) fn shake_applied(camera_shake: f64, amount: f64) -> f64 {
+    if amount <= 0.0 {
+        0.0
+    } else {
+        (camera_shake.clamp(0.0, 1.0) * amount).max(0.0)
+    }
+}
+
 /// look comes from `PlayerControls`, and the boom shrinks when a wall blocks
 /// the line of sight (cameraRig.js follow).
 #[allow(clippy::too_many_arguments)] // Bevy system injection (Task 46 adds the shake read).
@@ -1164,6 +1182,8 @@ fn camera_rig(
     pc: Res<crate::input::PlayerControls>,
     demo: Res<crate::ink_render::DemoSim>,
     settings: Res<crate::input::LookSettings>,
+    // M6 Task 73: the user `cameraShake` multiplier (0..1) gates the quake.
+    game_settings: Res<crate::settings::Settings>,
     shake: Res<crate::boss_render::BossShake>,
     time: Res<Time>,
     mut q: Query<(&mut Transform, &mut Projection), With<MainCamera>>,
@@ -1195,10 +1215,12 @@ fn camera_rig(
     // Task 46 placeholder quake (JS boss.js L182 `emit('shake', {amount:
     // 0.9})` on defeat): high-frequency camera jitter scaled by the decaying
     // amount. Directional screenfx is Task 51.
-    if shake.amount > 0.0 {
+    // M6 Task 73: cameraShake setting scales (and at 0 disables) the quake.
+    let shake_amt = shake_applied(game_settings.camera_shake, shake.amount as f64) as f32;
+    if shake_amt > 0.0 {
         let t = time.elapsed_secs();
         cam_pos += Vec3::new((t * 41.0).sin(), (t * 53.0).sin() * 0.7, (t * 37.0).cos())
-            * (shake.amount * 0.08);
+            * (shake_amt * 0.08);
     }
 
     // FOV from the user setting (horizontal at the 16/9 reference,
@@ -1217,6 +1239,42 @@ fn camera_rig(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// TR-73.1: cameraShake setting gates/scales the quake (settings.json
+    /// cameraShake 0..1). 0 disables, 1 is the full event amount.
+    #[test]
+    fn task73_camera_shake_setting() {
+        assert_eq!(shake_applied(0.0, 0.9), 0.0, "setting 0 disables quake");
+        assert!((shake_applied(1.0, 0.9) - 0.9).abs() < 1e-6);
+        assert!((shake_applied(0.5, 0.8) - 0.4).abs() < 1e-6);
+        assert_eq!(shake_applied(1.0, 0.0), 0.0, "no event → no quake");
+        assert_eq!(shake_applied(-1.0, 0.9), 0.0, "sanitized negative → 0");
+    }
+
+    /// TR-73.1: low tier keeps the post combo all-off (M5 保底) and the
+    /// presentation settings take their least-intrusive DEFAULTS. cameraShake
+    /// follows the user setting (NOT force-disabled by low tier): the default
+    /// scales an event fully while an explicit 0 silences it (review P1-3).
+    #[test]
+    fn task73_low_tier_post_all_off_settings_follow_user() {
+        use crate::fx::post_process::effective_combo;
+        let s = crate::settings::Settings::defaults();
+        let combo = effective_combo("low", true);
+        assert!(
+            combo.msaa == 0 && !combo.bloom && !combo.gtao && !combo.smaa,
+            "low-tier post combo all-off (M5 保底 untouched)"
+        );
+        assert!(!s.show_fps, "showFps default off");
+        assert!(
+            (shake_applied(s.camera_shake, 0.5) - 0.5 * s.camera_shake).abs() < 1e-6,
+            "cameraShake scales the event by the user setting"
+        );
+        assert_eq!(
+            shake_applied(0.0, 0.5),
+            0.0,
+            "user setting 0 disables quake"
+        );
+    }
     use inkwave_sim::geometry::BrushCommon;
 
     fn sample() -> StageLayout {
