@@ -25,6 +25,7 @@ mod char;
 // Task 55 batch A: the extracted THEMES / grade / QUALITY data layer
 // (≡ environment.js + renderer.js + config.js, no GPU dependencies).
 mod environment;
+mod locker;
 // M5 Task 66: environment bake data plane (cloud / PMREM / reflection / sea),
 // anchored to the extracted bake constants in environment.json.
 pub mod env_bake;

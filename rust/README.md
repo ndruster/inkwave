@@ -489,3 +489,8 @@ PMREM 材质段（正则无手抄）；`showcase_state.rs` 数据面 + 2 项锚�
 + 4 项锚测（跨语言骨树 SHA256 真重算 + clip 纯函数）。`boss-crosscheck` 721 checks + headless
 boss 600 帧 + 九段门禁 PASS（`task68-gates-20261120T042437Z.log`）；D-T68-1/2 登记，独立评审
 2 项 P1（台账、golden 自证）返工闭环。hitShapes/sim 几何零改动。
+**Task 69（locker 更衣室）**完成：开工实读更正（无 locker.js，面在 character-style.js/menus.js/
+showcase.js）；`locker.json` 提全表 + resolve/random/swatch reference，`locker.rs` 数据面 + 选择
+状态机 + 独立键持久化 + 6 键 style JVal 同步 + 5 项锚测（含带符号右移/outfit 派生 P1 回归）。
+`locker-crosscheck` 299 checks + 九段门禁 PASS（`task69-gates-20261120T045503Z.log`）；D-T69-1/2
+登记，独立评审 3 项 P1 返工闭环。wire/sim/上游 JS 零改动。

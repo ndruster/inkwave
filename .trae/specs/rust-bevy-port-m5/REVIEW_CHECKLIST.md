@@ -287,3 +287,23 @@ Rust 侧 golden 自证未重算）已返工：`boss.json` 现每骨存量化 res
   已锚测；实际材质外观/焦散/蒸汽密度需用户机确认。
 - [ ] **资产构建成本（D-T68-2）**：程序化生成不入库网格二进制（boss.json 仅元数据/种子），
   运行期 buildRig/buildParts 的构建耗时与 wasm 体积需实机确认；low 档剪影保留为资产缺失降级。
+
+## Task 69 复核登记（2026-11-20）
+
+无头可测：5 项 Task69 锚测（表/reference、resolve/random 确定性、outfit 派生 + 高 seed 带符号
+右移两条 P1 回归、独立键持久化宽容解码、状态机 + style JVal 往返）+ `locker-crosscheck`
+299 checks；门禁结论见 `tasks.md` Task 69 Completion Evidence。开工实读更正：上游**无**
+`locker.js`，面在 character-style.js + menus.js + showcase.js。独立评审首轮 3 项 P1
+（outfit 派生忽略已解析 hair/skin、JS `>>` 带符号右移、D-T69-1 持久化未落地）已返工复验。
+以下为**待用户 GPU 复核**（D-T69-2）：
+
+- [ ] **3D 预览观感（D-T69-2）**：locker tab（kids/hair/face/outfit）与 style→CharAnim 颜色/
+  pattern 数据面已锚测；角色 3D 预览的造型/换装即时刷新需用户 GPU 机确认。
+- [ ] **切换动画流畅度（D-T69-2）**：setStyle cause（hair/eyes/skin/outfit/preset/random）
+  语义已实现为状态机；showcase.js 的 spin/dip/squash-pop 切换动画观感与流畅度需实机确认。
+- [ ] **布料 shader 图案（D-T69-2）**：OUTFITS 10 项的 pattern 索引 0-9 已钉测；上游
+  `character-mats.js` 的 `uPattern` ShaderMaterial 图案（Rust rig 暂用烘焙顶点色、未 port
+  shader face）观感需用户机复核。
+- [ ] **与 loadout/profile 联动（D-T69-1）**：style 6 键整包经 `net.setMe({style})` 同步、
+  独立键持久化（native 文件 / wasm `inkwave.rust.style`，不覆写 JS profile）已锚测；
+  profile 名称/武器/装扮的端到端联动与多端同步观感需实机确认。

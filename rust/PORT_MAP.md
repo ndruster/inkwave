@@ -107,6 +107,9 @@ Task 68（Boss 高保真模型呈现元数据）完成：`boss.json` import 真�
 预算/HIT/六招 DUR+clip/5 材质；`boss_model.rs` 跨语言 SHA256 真重算 + clip 纯函数 + 4 锚测。
 `boss-crosscheck` 721 checks + headless boss 600 帧 + 九段门禁 PASS；D-T68-1/2 登记；
 hitShapes/sim 几何不变。
+Task 69（locker 更衣室）完成：全 style 表 + resolve/random/swatch 提取（`locker.json`），
+`locker.rs` 状态机 + 独立键持久化 + 6 键 style JVal 同步 + 5 锚测（带符号右移/P1 回归）。
+`locker-crosscheck` 299 checks + 九段门禁 PASS；D-T69-1/2 登记；wire/sim 不变。
 
 ## 质量档位
 

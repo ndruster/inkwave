@@ -391,7 +391,7 @@
     REVIEW_CHECKLIST，未在沙箱伪验收蒙皮/材质/动画/weak/telegraph GPU 观感。
 
 ## Task 69: locker 更衣室
-- **Status**: `pending`
+- **Status**: `completed`
 - **Priority**: medium
 - **Depends On**: Task 58（kit 几何）；Task 61（分层）
 - **Description**: character-outfit 更衣室（M4 wontport 项转正）：服装/皮肤选择 UI +
@@ -402,6 +402,26 @@
     headless 不 panic。
   - `rule` TR-69.2: REVIEW_CHECKLIST 登记（预览观感/切换流畅度）。
 - **Notes**: 若上游 outfit 依赖贴图 atlas/ShaderMaterial（Task 53 顺延项），需一并评估。
+- **Completion Evidence** (2026-11-20):
+  - **开工实读更正**：上游无 `locker.js`，面在 `character-style.js`（表 + resolve/random/swatch）、
+    `menus.js`（tabs/setStyle cause/_syncMe）、`showcase.js`（3D 预览）。`extract-locker.mjs`
+    slice+eval 字面量表 → `assets/locker.json`（9 skin/10 outfit/8 iris/8 hair/4 hat/4 brows/
+    10 presets + reference 调用 + 4 tabs/6 causes，无手抄）；`locker-crosscheck.mjs` 独立 import
+    真模块 + 正则重解析 299 checks。
+  - `locker.rs`（新模块）：`Style/resolve_partial/random_style/style_swatch/LockerState` 状态机
+    + `style_jval`/`style_from_jval`（6 键整包对齐 `_syncMe` 的 `net.setMe({style})`）+ 独立键
+    持久化（native `$HOME/.inkwave/style.json`/`INKWAVE_LOCKER_PATH`、wasm
+    `inkwave.rust.style`，D-T69-1 不覆写 JS profile）+ 5 项锚测。网络同步走 `inkwave_sim`
+    已透传的 `style: Option<JVal>`，wire/sim/上游 JS/几何零改动。
+  - **首轮评审 3 项 P1 返工**：(a) `resolve_partial` 的 outfit 派生改用已解析 hair/skin 局部变量
+    (JS L89)；(b) `js_shr()` 复刻 JS 带符号右移（`seed as i32 >> n`，seed≥2^31 不同于逻辑右移）；
+    (c) D-T69-1 持久化补齐（save/load + 宽容逐键解码）。两条 resolve 语义以 JS 真模块 reference
+    调用钉入 locker.json + Rust 数据驱动回归 + crosscheck 独立重算。
+  - 九段门禁 `rust/tools/verify/logs/task69-gates-20261120T045503Z.log`：
+    `FMT/CLIPPY/TEST/WASM/TREE/DETERM/XCHK/TRUNK/RELEASE_BUILD/HEADLESS/HEADLESS_BOSS_EXIT=0`，
+    `DETERM=BYTE_IDENTICAL`（extract-locker 双跑），`JS_TREE_CLEAN`、`SIM_TREE_CLEAN`，
+    `GATE_VERDICT=PASS`。D-T69-1/2 登记于 REVIEW_CHECKLIST，未在沙箱伪验收 3D 预览/布料
+    shader/切换动画 GPU 观感。
 
 ## Task 70: M5 收尾——台账/文档/门禁矩阵/总评审
 - **Status**: `pending`

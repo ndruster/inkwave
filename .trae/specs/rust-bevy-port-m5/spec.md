@@ -635,3 +635,51 @@ GTAO/grade/SMAA/tilt-shift、云/PMREM/海面、alley 材质逐档落地且逐�
 - TR-68.2：REVIEW_CHECKLIST 登记 Task68 复核项（六招动画/weak 点/telegraph）。
 - 门禁 `gate-task68.sh`（模板 gate67，DETERM 用 extract-boss 双跑，XCHK 跑 task68 专项 +
   boss/environment/lobbyset crosschecks）。
+
+---
+
+## Task69 实施设计（2026-11-20，开工实读定稿）
+
+### §0 锚点校正与保守范围
+- **开工实读更正**：上游**无 `src/ui/locker.js`**（tasks.md 文案按此写）；实际 locker 面 =
+  `src/game/character-style.js`（数据表 + `resolveStyle/randomStyle/styleSwatch/applyStyleUniforms`，
+  L13-122）+ `src/ui/menus.js`（`LOCKER_TABS` L153-158、`_style/_saveStyle` L1446-1458、
+  `setStyle(style,cause)` L1652-1657、`_syncMe` L2384-2398）+ `src/game/showcase.js`（`showLocker`
+  L1105、`setStyle` L1159 cause: hair/eyes/skin/outfit/preset/random + spin/dip/squash-pop 动画）。
+  按实读文件立锚，不按不存在的 locker.js。
+- 数据表（全字面量，APPEND-ONLY L5-6，索引不可重排）：SKIN_TONES/NAMES 9、OUTFITS/NAMES 10
+  （shirt/shorts/shoe/sole/sock/strap/pattern）、IRIS/NAMES 8、HAIR_STYLE_NAMES 8、HATS/NAMES 4、
+  BROWS/NAMES 4、PRESETS 10（id/name/blurb/style 6 键）。`wrap(v,n)=((round(v)%n)+n)%n`；
+  resolveStyle 派生缺省（hair=seed%8、skin=(seed>>3)%9、outfit=(hair+skin+(seed>>6))%10、
+  eyes=(seed>>9)%8、hat/brows 默认 0）；randomStyle hat 1/3 概率（rng()<0.34）。
+- **网络同步**：`_syncMe` 比对 me.style 后 `net.setMe({style})`（6 键整包），`inkwave_sim`
+  已透传 `style: Option<JVal>`（session.rs L302/431/656-658）、`set_me()` L1152+，不改 wire。
+- 衣料图案是 `character-mats.js` ShaderMaterial（uPattern 0-9 分支），非贴图 atlas；Rust rig
+  当前不 port shader face（hue 走烘焙顶点色），属 GPU 观感登记项。
+
+### §1 提取与数据面
+- `extract-locker.mjs` 正则提 character-style.js 全表 + resolveStyle/randomStyle 常量 +
+  menus.js LOCKER_TABS/cause 集合 → `assets/locker.json`（pin 上游 commit）；`locker-crosscheck.mjs`
+  独立重解析。**无手抄**（NFR-M5-6）。
+- `locker.rs`（新模块）：`Outfit/Skin/Iris/Preset/Style` 结构 + `resolve_style`（镜像 wrap/派生，
+  Rust 用 i64 算术避免 JS 位运算差异，seed 按 u32 处理）+ `random_style`（rng 注入）+ `style_swatch`
+  + **选择状态机**（LockerState：tab 切换/换项/预设/随机，cause 语义≡menus.js），
+  `include_str! locker.json`，缺键硬错。
+- 持久化：`locker.rs` 复用 settings.rs 的载体模式（native 文件 `$HOME/.inkwave/style.json`
+  或 `INKWAVE_LOCKER_PATH`，wasm `localStorage['inkwave.rust.style']`），独立键（D-T69-1，
+  不覆写 JS `inkwave.profile`）；`to_json/from_json` 宽容逐键 + `save_style/load_style`；
+  网络同步面构造 `style` JVal（6 键整包）对齐 `_syncMe`。
+- 首轮评审 P1 修复：`resolve_partial` 的 outfit 派生改用**已解析的 hair/skin 局部变量**
+  （JS L89 语义），`js_shr()` 用 `seed as i32 >> n` 复刻 JS **带符号**右移（seed≥2^31 时
+  不同于逻辑右移）；两条语义以 JS 真模块 reference 调用钉入 locker.json + Rust 数据驱动
+  回归测试 + crosscheck 独立重算。
+
+### §2 偏差与测试
+- D-T69-1：style 持久化用独立键，不与 JS profile 共享；D-T69-2：3D 预览/布料 shader 图案/
+  切换动画（spin/dip/squash-pop）GPU 观感不可沙箱验，仅数据面+用户机复核。
+- TR-69.1：表长度/名字对齐、APPEND-ONLY 索引、resolveStyle wrap/seed 确定性（含部分 hair/skin
+  → outfit 派生、seed≥2^31 带符号右移两条回归）、randomStyle 确定性（注入 rng）、swatch 映射、
+  状态机换项/预设/随机、style JVal 往返、独立键持久化宽容解码 + headless 不 panic。
+- TR-69.2：REVIEW_CHECKLIST 登记（预览观感/切换流畅度/与 loadout 联动）。
+- 门禁 `gate-task69.sh`（模板 gate68，DETERM 用 extract-locker 双跑，XCHK 跑 task69 专项 +
+  locker/environment/lobbyset/boss crosschecks）。

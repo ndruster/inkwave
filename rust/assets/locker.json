@@ -1,0 +1,445 @@
+{
+  "reference": {
+    "random_out": {
+      "brows": 1,
+      "eyes": 1,
+      "hair": 0,
+      "hat": 0,
+      "outfit": 5,
+      "skin": 8
+    },
+    "resolved_default": {
+      "brows": 0,
+      "eyes": 0,
+      "hair": 0,
+      "hat": 0,
+      "outfit": 0,
+      "skin": 0
+    },
+    "resolved_hair_skin": {
+      "brows": 0,
+      "eyes": 0,
+      "hair": 5,
+      "hat": 0,
+      "outfit": 0,
+      "skin": 3
+    },
+    "resolved_high_seed": {
+      "brows": 0,
+      "eyes": 0,
+      "hair": 0,
+      "hat": 0,
+      "outfit": 0,
+      "skin": 2
+    },
+    "resolved_partial": {
+      "brows": 0,
+      "eyes": 0,
+      "hair": 1,
+      "hat": 0,
+      "outfit": 3,
+      "skin": 4
+    },
+    "swatch": {
+      "eyes": [
+        "#ffcf3a",
+        "#ff7a00"
+      ],
+      "shirt": "#f4f2ec",
+      "shoe": "#272b34",
+      "shorts": "#27304a",
+      "skin": "#ffd9c2",
+      "sock": "#f7f7f4",
+      "strap": "#30343d"
+    }
+  },
+  "schema": 1,
+  "source": {
+    "commit": "a48f1546b220f60d5e257017120da32cc8ee8dd5",
+    "files": [
+      "src/game/character-style.js",
+      "src/ui/menus.js",
+      "src/game/showcase.js"
+    ]
+  },
+  "tables": {
+    "brows": {
+      "kinds": [
+        "classic",
+        "bold",
+        "arched",
+        "straight"
+      ],
+      "names": [
+        "Classic",
+        "Bold",
+        "Arched",
+        "Straight"
+      ]
+    },
+    "hair": {
+      "count": 8,
+      "names": [
+        "Tide",
+        "Spike",
+        "Twin",
+        "Bob",
+        "Pony",
+        "Crest",
+        "Knot",
+        "Swoop"
+      ]
+    },
+    "hat": {
+      "kinds": [
+        "none",
+        "cap",
+        "beanie",
+        "bucket"
+      ],
+      "names": [
+        "None",
+        "Snapback",
+        "Beanie",
+        "Bucket Hat"
+      ]
+    },
+    "iris": {
+      "gradients": [
+        [
+          "#ffcf3a",
+          "#ff7a00"
+        ],
+        [
+          "#4ff0dc",
+          "#0b7fb0"
+        ],
+        [
+          "#c9a2ff",
+          "#5b2ad6"
+        ],
+        [
+          "#a8f56a",
+          "#1d9a4a"
+        ],
+        [
+          "#ffa3cf",
+          "#d0246e"
+        ],
+        [
+          "#e6b36a",
+          "#6b3a14"
+        ],
+        [
+          "#e4f4ff",
+          "#4f7fc4"
+        ],
+        [
+          "#ff8f6b",
+          "#b3121c"
+        ]
+      ],
+      "names": [
+        "Amber",
+        "Lagoon",
+        "Violet",
+        "Lime",
+        "Rose",
+        "Hazel",
+        "Frost",
+        "Ember"
+      ]
+    },
+    "outfit": {
+      "items": [
+        {
+          "pattern": 0,
+          "shirt": "#f4f2ec",
+          "shoe": "#272b34",
+          "shorts": "#27304a",
+          "sock": "#f7f7f4",
+          "sole": "#f4f2ec",
+          "strap": "#30343d"
+        },
+        {
+          "pattern": 1,
+          "shirt": "#2b2e36",
+          "shoe": "#f3f2ee",
+          "shorts": "#cfbb92",
+          "sock": "#f7f7f4",
+          "sole": "#c98b4e",
+          "strap": "#24262c"
+        },
+        {
+          "pattern": 2,
+          "shirt": "#bfc5cf",
+          "shoe": "#f3f2ee",
+          "shorts": "#1f2127",
+          "sock": "#2a2c33",
+          "sole": "#2a2c33",
+          "strap": "#2a2c33"
+        },
+        {
+          "pattern": 3,
+          "shirt": "#f2e6c9",
+          "shoe": "#3a3f4b",
+          "shorts": "#3a5683",
+          "sock": "#f7f7f4",
+          "sole": "#f4f2ec",
+          "strap": "#3a3f4b"
+        },
+        {
+          "pattern": 4,
+          "shirt": "#f3efe4",
+          "shoe": "#ece9e0",
+          "shorts": "#2c3038",
+          "sock": "#f5f4ef",
+          "sole": "#c69256",
+          "strap": "#2a3550"
+        },
+        {
+          "pattern": 5,
+          "shirt": "#26282e",
+          "shoe": "#1e2026",
+          "shorts": "#4a5160",
+          "sock": "#1e2026",
+          "sole": "#f2f1ec",
+          "strap": "#1b1d22"
+        },
+        {
+          "pattern": 6,
+          "shirt": "#5f6446",
+          "shoe": "#6a5238",
+          "shorts": "#b5a37f",
+          "sock": "#e6e0d0",
+          "sole": "#2b2622",
+          "strap": "#3b3a2c"
+        },
+        {
+          "pattern": 7,
+          "shirt": "#ebe4d6",
+          "shoe": "#f2f1ec",
+          "shorts": "#41608f",
+          "sock": "#f7f7f4",
+          "sole": "#d9cbb0",
+          "strap": "#39404f"
+        },
+        {
+          "pattern": 8,
+          "shirt": "#f2f2ef",
+          "shoe": "#23262d",
+          "shorts": "#23262d",
+          "sock": "#f7f7f4",
+          "sole": "#f2f1ec",
+          "strap": "#23262d"
+        },
+        {
+          "pattern": 9,
+          "shirt": "#1f2a44",
+          "shoe": "#f2f1ec",
+          "shorts": "#1f2a44",
+          "sock": "#f7f7f4",
+          "sole": "#1f2a44",
+          "strap": "#161b29"
+        }
+      ],
+      "names": [
+        "Basic Ringer",
+        "Night Pinstripe",
+        "Raglan Runner",
+        "Chevron Tee",
+        "Breton Stripe",
+        "Splatter Tee",
+        "Splat Camo",
+        "Dip-Dye Tee",
+        "Pro Jersey",
+        "Track Top"
+      ]
+    },
+    "presets": [
+      {
+        "blurb": "Fresh off the ferry, ringer tee and long tentacles.",
+        "id": "rookie",
+        "name": "Rookie",
+        "style": {
+          "brows": 0,
+          "eyes": 0,
+          "hair": 0,
+          "hat": 0,
+          "outfit": 0,
+          "skin": 0
+        }
+      },
+      {
+        "blurb": "Track-top sprinter with a spiky quiff.",
+        "id": "dash",
+        "name": "Dash",
+        "style": {
+          "brows": 1,
+          "eyes": 1,
+          "hair": 1,
+          "hat": 0,
+          "outfit": 9,
+          "skin": 5
+        }
+      },
+      {
+        "blurb": "Twin tails, breton stripes, always first to the ferry deck.",
+        "id": "pip",
+        "name": "Pip",
+        "style": {
+          "brows": 2,
+          "eyes": 4,
+          "hair": 2,
+          "hat": 0,
+          "outfit": 4,
+          "skin": 4
+        }
+      },
+      {
+        "blurb": "Dip-dyed and unbothered.",
+        "id": "coral",
+        "name": "Coral",
+        "style": {
+          "brows": 0,
+          "eyes": 5,
+          "hair": 3,
+          "hat": 0,
+          "outfit": 7,
+          "skin": 3
+        }
+      },
+      {
+        "blurb": "Ponytail up, jersey on, game face.",
+        "id": "marlo",
+        "name": "Marlo",
+        "style": {
+          "brows": 1,
+          "eyes": 7,
+          "hair": 4,
+          "hat": 0,
+          "outfit": 8,
+          "skin": 1
+        }
+      },
+      {
+        "blurb": "Mohawk crest and a splatter tee. Loud.",
+        "id": "riptide",
+        "name": "Riptide",
+        "style": {
+          "brows": 3,
+          "eyes": 3,
+          "hair": 5,
+          "hat": 0,
+          "outfit": 5,
+          "skin": 7
+        }
+      },
+      {
+        "blurb": "Low bun under a bucket hat, splat camo, very patient charger main.",
+        "id": "nori",
+        "name": "Nori",
+        "style": {
+          "brows": 3,
+          "eyes": 2,
+          "hair": 6,
+          "hat": 3,
+          "outfit": 6,
+          "skin": 6
+        }
+      },
+      {
+        "blurb": "Side-swept and too cool for the lobby.",
+        "id": "suki",
+        "name": "Suki",
+        "style": {
+          "brows": 2,
+          "eyes": 6,
+          "hair": 7,
+          "hat": 0,
+          "outfit": 1,
+          "skin": 8
+        }
+      },
+      {
+        "blurb": "Beanie season, all season.",
+        "id": "kelp",
+        "name": "Kelp",
+        "style": {
+          "brows": 0,
+          "eyes": 3,
+          "hair": 3,
+          "hat": 2,
+          "outfit": 2,
+          "skin": 2
+        }
+      },
+      {
+        "blurb": "Snapback, raglan, harbour regular.",
+        "id": "skipper",
+        "name": "Skipper",
+        "style": {
+          "brows": 1,
+          "eyes": 0,
+          "hair": 0,
+          "hat": 1,
+          "outfit": 3,
+          "skin": 5
+        }
+      }
+    ],
+    "skin": {
+      "names": [
+        "Rosy",
+        "Peach",
+        "Tan",
+        "Cocoa",
+        "Porcelain",
+        "Honey",
+        "Olive",
+        "Chestnut",
+        "Ebony"
+      ],
+      "tones": [
+        "#ffd9c2",
+        "#eab48e",
+        "#b37a52",
+        "#6e4429",
+        "#f9e1d3",
+        "#d9a577",
+        "#c29a72",
+        "#8f5a3a",
+        "#4a2c20"
+      ]
+    }
+  },
+  "ui": {
+    "set_style_causes": [
+      "hair",
+      "eyes",
+      "skin",
+      "outfit",
+      "preset",
+      "random"
+    ],
+    "tabs": [
+      {
+        "id": "kids",
+        "label": "SQUIDKIDS"
+      },
+      {
+        "id": "hair",
+        "label": "HAIR"
+      },
+      {
+        "id": "face",
+        "label": "FACE"
+      },
+      {
+        "id": "outfit",
+        "label": "OUTFIT"
+      }
+    ]
+  }
+}
+
